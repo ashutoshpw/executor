@@ -8,6 +8,7 @@ export { HostedAppManagementApi } from "./app-management.ts";
 import { CatalogEntry, CatalogUnavailable } from "@executor-js/catalog/contracts";
 import { Context, Schema } from "effect";
 import { HostedGroups } from "./groups.ts";
+import { HostedBlobSettings } from "./blob-settings.ts";
 import { HostedMcpConnections } from "./mcp-connections.ts";
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/http-api";
 import {
@@ -176,6 +177,7 @@ export const HostedApi = HttpApi.make("executor-hosted")
     HostedTools,
     HostedOrganization,
     HostedGroups,
+    HostedBlobSettings,
     HostedResourceAccess,
     HostedOAuthClients,
     HostedAppData,

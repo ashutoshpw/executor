@@ -49,6 +49,7 @@ const errorMessage = Match.type<HostedError>().pipe(
         members_changed:
           "Organization membership changed. Your changes were not saved. Close this form and select the current members.",
       })[reason],
+    BlobTtlOutOfRange: () => "Choose a file lifetime between 1 hour and 365 days.",
     RegistryError: registryErrorMessage,
     AppAccessDenied: () => "You do not have permission to change this app.",
     AppSlugTaken: () => "Another app name produces this address. Choose a different name.",
