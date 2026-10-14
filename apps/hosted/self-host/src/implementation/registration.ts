@@ -31,6 +31,8 @@ const User = Schema.Struct({
 });
 const Organization = Schema.Struct({ id: Schema.String });
 const Membership = Schema.Struct({ organizationId: Schema.String });
+const RoleMembership = Schema.Struct({ userId: Schema.String, role: Schema.String });
+const Candidate = Schema.Struct({ id: Schema.String, name: Schema.String, email: Schema.String });
 const Instance = Schema.Struct({
   ownerUserId: Schema.String,
   primaryOrganizationId: Schema.String,
@@ -80,6 +82,12 @@ const adapterFor = (ctx: GenericEndpointContext) =>
 const isSsoCallback = (ctx: GenericEndpointContext) =>
   ctx.path === "/callback/:id" && ctx.params?.id === "sso";
 
+const memberPage = 500;
+
+/** Better Auth stores several roles as one comma-separated string. */
+const administers = (role: string) =>
+  role.split(",").some((part) => part === "owner" || part === "admin");
+
 /** The persisted instance record; absent until first-run setup completes. */
 const instanceRecord = (ctx: GenericEndpointContext) =>
   Effect.gen(function* () {
@@ -91,6 +99,17 @@ const instanceRecord = (ctx: GenericEndpointContext) =>
       }),
     );
     return row === null ? null : yield* decode(Instance, row);
+  });
+
+/** The signed-in person, who must be the instance owner. */
+const requireInstanceOwner = (ctx: GenericEndpointContext) =>
+  Effect.gen(function* () {
+    const session = yield* call(() => getSessionFromCtx(ctx));
+    if (session === null) return yield* Effect.fail(new APIError("UNAUTHORIZED"));
+    const instance = yield* instanceRecord(ctx);
+    if (instance?.ownerUserId !== session.user.id)
+      return yield* deny("Only the instance owner can do this.");
+    return session.user;
   });
 
 /** SSO users join the setup organization, so it must exist before an account is created. */
@@ -403,6 +422,100 @@ export const selfHostRegistration = (settings: Effect.Success<typeof selfHostAut
             return ctx.json({ instanceOwner: instance?.ownerUserId === session.user.id });
           }),
         ),
+      ),
+      // People the owner may hand the instance to: owners and admins of at least one organization.
+      selfHostTransferCandidates: createAuthEndpoint(
+        "/self-host/transfer-candidates",
+        { method: "GET" },
+        (ctx) =>
+          run(
+            Effect.gen(function* () {
+              const owner = yield* requireInstanceOwner(ctx);
+              const adapter = yield* adapterFor(ctx);
+              // Read every page, in a stable order, so no eligible person is left out.
+              const ids = new Set<string>();
+              for (let offset = 0; ; offset += memberPage) {
+                const page = yield* call(() =>
+                  adapter.findMany({
+                    model: "member",
+                    where: [
+                      { field: "role", operator: "contains", value: "owner", connector: "OR" },
+                      { field: "role", operator: "contains", value: "admin", connector: "OR" },
+                    ],
+                    sortBy: { field: "id", direction: "asc" },
+                    limit: memberPage,
+                    offset,
+                  }),
+                ).pipe(Effect.flatMap((rows) => decode(Schema.Array(RoleMembership), rows)));
+                for (const row of page)
+                  if (administers(row.role) && row.userId !== owner.id) ids.add(row.userId);
+                if (page.length < memberPage) break;
+              }
+              if (ids.size === 0) return ctx.json({ candidates: [] });
+              const candidates = yield* call(() =>
+                adapter.findMany({
+                  model: "user",
+                  where: [{ field: "id", operator: "in", value: Array.from(ids) }],
+                  sortBy: { field: "email", direction: "asc" },
+                  limit: ids.size,
+                }),
+              ).pipe(Effect.flatMap((rows) => decode(Schema.Array(Candidate), rows)));
+              return ctx.json({
+                candidates: candidates.map(({ id, name, email }) => ({ id, name, email })),
+              });
+            }),
+          ),
+      ),
+      // Ownership moves in one transaction, and only from the owner the request was checked as.
+      transferSelfHostOwnership: createAuthEndpoint(
+        "/self-host/transfer-ownership",
+        { method: "POST", body: z.object({ userId: z.string().min(1) }) },
+        (ctx) =>
+          run(
+            call(
+              async () =>
+                await runWithTransaction(ctx.context.adapter, () =>
+                  run(
+                    Effect.gen(function* () {
+                      const owner = yield* requireInstanceOwner(ctx);
+                      const adapter = yield* adapterFor(ctx);
+                      const target = ctx.body.userId;
+                      const invalid = (message: string) =>
+                        Effect.fail(new APIError("BAD_REQUEST", { message }));
+                      if (target === owner.id)
+                        return yield* invalid("You already own this instance.");
+                      const user = yield* call(() =>
+                        adapter.findOne({ model: "user", where: [{ field: "id", value: target }] }),
+                      );
+                      if (user === null) return yield* invalid("That person does not exist.");
+                      const roles = yield* call(() =>
+                        adapter.findMany({
+                          model: "member",
+                          where: [{ field: "userId", value: target }],
+                          limit: 1000,
+                        }),
+                      ).pipe(Effect.flatMap((rows) => decode(Schema.Array(RoleMembership), rows)));
+                      if (!roles.some((row) => administers(row.role)))
+                        return yield* invalid(
+                          "Choose someone who owns or administers an organization.",
+                        );
+                      const moved = yield* call(() =>
+                        adapter.updateMany({
+                          model: "selfHostInstance",
+                          where: [
+                            { field: "key", value: instanceKey },
+                            { field: "ownerUserId", value: owner.id },
+                          ],
+                          update: { ownerUserId: target },
+                        }),
+                      );
+                      if (moved !== 1) return yield* deny("Only the instance owner can do this.");
+                      return { status: true };
+                    }),
+                  ),
+                ),
+            ).pipe(Effect.map((result) => ctx.json(result))),
+          ),
       ),
       selfHostConfiguration: createAuthEndpoint("/self-host/config", { method: "GET" }, (ctx) =>
         run(

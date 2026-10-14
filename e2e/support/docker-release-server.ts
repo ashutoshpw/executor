@@ -7,6 +7,16 @@ import { createServer } from "node:net";
 import { driver } from "./platform.ts";
 import { containerNpmRegistry } from "./npm-registry.ts";
 
+/** The organization first-run setup creates is the one with this handle. */
+export const setupOrganization = <A extends { readonly slug: string }>(
+  organizations: ReadonlyArray<A>,
+) => {
+  const found = organizations.find((item) => item.slug === "executor");
+  return found === undefined
+    ? Effect.die("Setup did not create the executor organization")
+    : Effect.succeed(found);
+};
+
 /** Start the image under test, set up its owner and organization; removed when the scope closes. */
 export const releasedServer = Effect.gen(function* () {
   const processes = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -108,10 +118,12 @@ export const releasedServer = Effect.gen(function* () {
     .getSetCookie()
     .map((part) => part.split(";")[0])
     .join("; ");
-  const [organization] = yield* json(
-    Schema.NonEmptyArray(Schema.Struct({ id: Schema.String })),
+  // Setup names its organization "executor"; pick it by that handle, whatever else is listed.
+  const organizations = yield* json(
+    Schema.Array(Schema.Struct({ id: Schema.String, slug: Schema.String })),
     "/api/auth/organization/list",
   );
+  const organization = yield* setupOrganization(organizations);
   const prefix = `/api/organizations/${organization.id}`;
   /** Create an app from `files` and deploy it. */
   const deploy = (name: string, files: ReadonlyArray<{ path: string; content: string }>) =>
