@@ -32,6 +32,8 @@ import {
 import { LoadedWorkerBuild } from "../contracts/worker-build.ts";
 import type { Executor } from "../contracts/executor.ts";
 import { runtimeAdapter } from "./runtime.ts";
+import { userContentPath } from "./host-user-content.ts";
+import { userContentRequest } from "./user-content-host.ts";
 import { appRuntime, buildLoadSpan } from "./app-runtime.ts";
 import { appWorker } from "./app-runner.ts";
 import { encodeLoadedBuild } from "./remote-app-runner.ts";
@@ -51,11 +53,18 @@ const encodedJson = Schema.fromJsonString(Schema.Json);
 class HostCallbacks extends RpcTarget implements AppHostCallbacks {
   readonly #elicit: Callback | null;
   readonly #control: Callback | null;
+  readonly #blobs: Callback | null;
   readonly #load: () => Promise<string>;
-  constructor(elicit: Callback | null, control: Callback | null, load: () => Promise<string>) {
+  constructor(
+    elicit: Callback | null,
+    control: Callback | null,
+    blobs: Callback | null,
+    load: () => Promise<string>,
+  ) {
     super();
     this.#elicit = elicit;
     this.#control = control;
+    this.#blobs = blobs;
     this.#load = load;
   }
   async elicit(input: string) {
@@ -66,6 +75,10 @@ class HostCallbacks extends RpcTarget implements AppHostCallbacks {
     if (this.#control === null) throw new Error("This invocation cannot manage workflows");
     return JSON.stringify(json(await this.#control(Schema.decodeUnknownSync(encodedJson)(input))));
   }
+  async blobs(input: string) {
+    if (this.#blobs === null) throw new Error("This invocation cannot keep files");
+    return JSON.stringify(json(await this.#blobs(Schema.decodeUnknownSync(encodedJson)(input))));
+  }
   load() {
     return this.#load();
   }
@@ -75,6 +88,8 @@ class HostCallbacks extends RpcTarget implements AppHostCallbacks {
 export const workerdHostHandler = (options: {
   readonly executor: Effect.Effect<Executor>;
   readonly blobs: BlobStorage;
+  /** The store the runner's file transfers reach; without it the host serves none. */
+  readonly userContent?: BlobStorage;
 }) =>
   Effect.gen(function* () {
     const services = yield* Effect.context<never>();
@@ -156,7 +171,7 @@ export const workerdHostHandler = (options: {
           }
         }
       });
-    return Effect.gen(function* () {
+    const workflowCommand = Effect.gen(function* () {
       const request = yield* HttpServerRequest.HttpServerRequest;
       const command = yield* request.json.pipe(
         Effect.flatMap(Schema.decodeUnknownEffect(WorkflowHostCommand)),
@@ -175,6 +190,15 @@ export const workerdHostHandler = (options: {
       Effect.flatMap(Schema.encodeUnknownEffect(WorkflowRpcResult)),
       Effect.flatMap(HttpServerResponse.json),
     );
+    return Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      // The runner's user-content transfers share this binding; they carry bytes, not commands.
+      if (new URL(request.url, "https://host.internal").pathname.startsWith(userContentPath))
+        return options.userContent === undefined
+          ? HttpServerResponse.empty({ status: 404 })
+          : yield* userContentRequest(options.userContent);
+      return yield* workflowCommand;
+    });
   });
 
 /** Transport lifetime belongs to the host; each RPC scope owns its cancellation. */
@@ -217,10 +241,12 @@ export const connectedWorkerdApps = (blobs: BlobStorage, transport: WorkerdTrans
             ...invocation,
             elicitation: capabilities.elicit !== null,
             workflowControls: capabilities.controls !== null,
+            blobs: capabilities.blobs != null,
           }).pipe(Effect.mapError(protocolFailure));
           const callbacks = new HostCallbacks(
             capabilities.elicit,
             capabilities.controls,
+            capabilities.blobs ?? null,
             async () => encodeLoadedBuild(await capabilities.load()),
           );
           return yield* rpc((api) =>

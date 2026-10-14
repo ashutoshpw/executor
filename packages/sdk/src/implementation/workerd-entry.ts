@@ -35,6 +35,7 @@ import {
 import { EvaluatedCommandJson, EvaluatedReplyJson } from "@executor-js/app-data/evaluated";
 import { makeAppRunner } from "./app-runner.ts";
 import { credentialFetch, credentialKey } from "./credential-handles.ts";
+import { hostUserContentStore } from "./host-user-content.ts";
 import {
   defaultAppWorkerLimit,
   defaultAppWorkerIdleSeconds,
@@ -218,6 +219,8 @@ const runner = (env: Environment, context: Pick<ExecutionContext, "waitUntil" | 
         catch: (cause) => cause,
       }),
     outbound: appOutbound(context),
+    // File transfers go through the product, which owns the user-content store.
+    userContent: hostUserContentStore(env.HOST),
     credentialKey: credentials(env),
     data: (app) => {
       const target = env.DATA.getByName(app);
@@ -337,7 +340,7 @@ class AppApi extends RpcTarget {
   async invoke(value: string, callbacks: RpcStub<AppHostCallbacks>): Promise<string> {
     return this.#run(
       Schema.decodeUnknownEffect(Schema.fromJsonString(WorkerInvocation))(value).pipe(
-        Effect.flatMap(({ elicitation, workflowControls, ...invocation }) =>
+        Effect.flatMap(({ elicitation, workflowControls, blobs, ...invocation }) =>
           runner(this.#env, this.#context).invoke(invocation, {
             load: async () =>
               Schema.decodeUnknownSync(Schema.fromJsonString(LoadedWorkerBuild))(
@@ -353,6 +356,12 @@ class AppApi extends RpcTarget {
               ? async (input) =>
                   Schema.decodeUnknownSync(encodedJson)(
                     await callbacks.control(JSON.stringify(input)),
+                  )
+              : null,
+            blobs: blobs
+              ? async (input) =>
+                  Schema.decodeUnknownSync(encodedJson)(
+                    await callbacks.blobs(JSON.stringify(input)),
                   )
               : null,
           }),

@@ -58,6 +58,8 @@ export interface RemoteCapabilities {
   readonly load?: () => Promise<string>;
   readonly elicit: Callback | null;
   readonly controls: Callback | null;
+  /** The product's file operations; absent from a caller that predates file handles. */
+  readonly blobs?: Callback | null;
   readonly workflow: RemoteWorkflow | null;
 }
 
@@ -105,6 +107,7 @@ const releaseCapabilities = (remote: RemoteCapabilities) => {
   release(remote.load);
   release(remote.elicit);
   release(remote.controls);
+  release(remote.blobs);
   if (remote.workflow !== null)
     for (const callback of [
       remote.workflow.do,
@@ -191,6 +194,7 @@ export const remoteCapabilities = (capabilities: AppCapabilities, signal: AbortS
       load: async () => encodeLoadedBuild(await capabilities.load()),
       elicit: capabilities.elicit,
       controls: capabilities.controls,
+      blobs: capabilities.blobs ?? null,
       workflow,
     } satisfies RemoteCapabilities;
   });
@@ -231,6 +235,7 @@ const localCapabilities = (remote: RemoteCapabilities, load: () => Promise<Loade
       load,
       elicit: remote.elicit,
       controls: remote.controls,
+      blobs: remote.blobs ?? null,
       ...(execution === undefined ? {} : { workflow: execution }),
     } satisfies AppCapabilities;
   });
@@ -270,6 +275,7 @@ export const serveAppRunner = (
           const {
             elicitation: _elicitation,
             workflowControls: _controls,
+            blobs: _blobs,
             ...decoded
           } = yield* Schema.decodeUnknownEffect(encodedInvocation)(invocation);
           const build = yield* Schema.decodeUnknownEffect(BuildId)(decoded.build);
@@ -330,6 +336,7 @@ export const remoteAppRunner = <E>(remote: RemoteAppRunner<Effect.Effect<string,
           ...invocation,
           elicitation: capabilities.elicit !== null,
           workflowControls: capabilities.controls !== null,
+          blobs: capabilities.blobs != null,
         }).pipe(Effect.mapError(() => new RuntimeProtocolFailed()));
         const callbacks = yield* remoteCapabilities(capabilities, lifetime.signal);
         return yield* result(remote.invoke(encoded, callbacks));

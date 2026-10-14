@@ -39,12 +39,16 @@ export const WorkerInvocation = Schema.Struct({
   /** Whether the invocation may ask for input or manage workflows through its callbacks. */
   elicitation: Schema.Boolean,
   workflowControls: Schema.Boolean,
+  /** Whether the invocation may keep files through its callbacks. */
+  blobs: Schema.optionalKey(Schema.Boolean),
 });
 export type WorkerInvocation = typeof WorkerInvocation.Type;
 /** Only these capabilities cross from a live app invocation back to the product. */
 export interface AppHostCallbacks extends RpcTarget {
   elicit(input: string): Promise<string>;
   control(input: string): Promise<string>;
+  /** The product's file operations for the invocation. Only called when `blobs` was set. */
+  blobs(input: string): Promise<string>;
   /** The invocation's encoded build, read only when the runner cold-starts its Worker. */
   load(): Promise<string>;
 }

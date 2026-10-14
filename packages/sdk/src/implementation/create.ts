@@ -39,7 +39,14 @@ import { makeDeclarationCache, makeDeclarations } from "./declarations.ts";
 import { makeListings } from "./listings.ts";
 import { makeToolSearch } from "./tool-search.ts";
 import { makeEvents } from "./events.ts";
-import { AppEventSink, RuntimeProtocolFailed, type Runtime } from "../contracts/runtime.ts";
+import {
+  AppEventSink,
+  InvocationBlobs,
+  RuntimeProtocolFailed,
+  type Runtime,
+} from "../contracts/runtime.ts";
+import { BlobUnavailable } from "apps/contracts";
+import { makeBlobControl } from "./blob-control.ts";
 
 /** Capture host cryptography; caller owns database and platform resource lifetimes. */
 export const createExecutor = (
@@ -78,10 +85,29 @@ export const createExecutor = (
           ),
     };
     const base = toEffectRuntime(options.runtime, options.blobs, cache);
+    // Files: each invocation's control answers for the app's owner, read when a file operation
+    // runs, so an invocation that never touches files never reads it.
+    const userContent = options.userContent;
+    const fileControl: typeof InvocationBlobs.Service =
+      userContent === undefined
+        ? undefined
+        : (app) =>
+            makeBlobControl({
+              userContent,
+              app,
+              owner: storedApp(db, { app: AppId.make(app) }).pipe(
+                Effect.map((stored) => stored.owner),
+                Effect.mapError(() => new BlobUnavailable()),
+              ),
+            });
+    const withFiles = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      Effect.provideService(effect, InvocationBlobs, fileControl);
     const runtime: Runtime = {
       ...base,
-      call: (input) => base.call(input).pipe(Effect.provideService(AppEventSink, sink)),
-      mutate: (input) => base.mutate(input).pipe(Effect.provideService(AppEventSink, sink)),
+      call: (input) => base.call(input).pipe(Effect.provideService(AppEventSink, sink), withFiles),
+      mutate: (input) =>
+        base.mutate(input).pipe(Effect.provideService(AppEventSink, sink), withFiles),
+      query: (input) => base.query(input).pipe(withFiles),
       webhook: (input) => base.webhook(input).pipe(Effect.provideService(AppEventSink, sink)),
     };
     // The operator's own OAuth clients, by ID; their tokens are managed.
@@ -158,6 +184,7 @@ export const createExecutor = (
       workflows.controls,
       options.hooks,
     );
+    const owners = makeOwners(db);
     const connections = makeAccountConnections(db, credentials, crypto, options.hooks);
     const { add, replaceCredentials, ...accountOperations } = makeAccounts(
       db,
@@ -275,7 +302,27 @@ export const createExecutor = (
         activate: (input) => apps.activate(input).pipe(Effect.tap((app) => activated(app.id))),
         checkCredentials,
       },
-      owners: makeOwners(db),
+      owners: {
+        ...owners,
+        // An owner's files go with it: retired here, removed from the store by the next sweep. The
+        // removal workflow sweeps the owner twice, so a failure here is retried.
+        remove: (input) =>
+          owners
+            .remove(input)
+            .pipe(
+              Effect.tap(() =>
+                userContent === undefined
+                  ? Effect.void
+                  : userContent.handles
+                      .retireOwner(input.owner)
+                      .pipe(
+                        Effect.catch(() =>
+                          Effect.logWarning("An owner's files could not be retired yet"),
+                        ),
+                      ),
+              ),
+            ),
+      },
       publications: catalog.publications,
       registry: catalog.registry,
       skills: makeSkills(db, runtime, crypto, declarations, options.blobs),
