@@ -81,6 +81,23 @@ export function useOrganizationRoute() {
   if (value === null) throw new Error("Organization route context is missing");
   return value;
 }
+/** Moves to another organization's apps, as the organization switcher does. */
+export function useSwitchOrganization() {
+  const registry = useContext(RegistryContext);
+  const navigate = useNavigate();
+  return async (item: { readonly id: OrganizationId; readonly slug: string }) => {
+    const previous = registry.get(organizationTargetAtom(OrganizationSlug.make(item.slug)));
+    if (previous !== undefined && previous !== item.id) {
+      window.location.assign(`/org/${encodeURIComponent(item.slug)}/apps`);
+      return;
+    }
+    registry.set(organizationTargetAtom(OrganizationSlug.make(item.slug)), item.id);
+    await navigate({
+      to: "/org/$organizationSlug/apps",
+      params: { organizationSlug: item.slug },
+    });
+  };
+}
 /**
  * Show only content errors; keep the dashboard and navigation mounted. A refusal shows itself;
  * until access succeeds, a server render shows `pending` instead of the page.
@@ -557,7 +574,7 @@ export function OrganizationSwitcher({ allowCreate = true }: { readonly allowCre
   const organizations = useAtomValue(organizationsAtom);
   const organization = useContext(OrganizationContext);
   const route = useOrganizationRoute();
-  const registry = useContext(RegistryContext);
+  const switchOrganization = useSwitchOrganization();
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -615,18 +632,7 @@ export function OrganizationSwitcher({ allowCreate = true }: { readonly allowCre
                     return;
                   }
                   setOpen(false);
-                  const previous = registry.get(
-                    organizationTargetAtom(OrganizationSlug.make(item.slug)),
-                  );
-                  if (previous !== undefined && previous !== item.id) {
-                    window.location.assign(`/org/${encodeURIComponent(item.slug)}/apps`);
-                    return;
-                  }
-                  registry.set(organizationTargetAtom(OrganizationSlug.make(item.slug)), item.id);
-                  await navigate({
-                    to: "/org/$organizationSlug/apps",
-                    params: { organizationSlug: item.slug },
-                  });
+                  await switchOrganization(item);
                 }}
               >
                 <OrganizationAvatar name={item.name} logo={item.logo} />

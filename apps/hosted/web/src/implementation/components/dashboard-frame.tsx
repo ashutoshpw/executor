@@ -1,17 +1,5 @@
 import { Link, useLocation } from "@tanstack/react-router";
 import { HugeiconsIcon } from "@hugeicons/react";
-import {
-  BoxesIcon,
-  FingerPrintIcon,
-  Home01Icon,
-  Key01Icon,
-  Plug01Icon,
-  Settings05Icon,
-  Shield01Icon,
-  UserCircleIcon,
-  UserGroupIcon,
-  UserIcon,
-} from "@hugeicons/core-free-icons";
 import type { ReactNode } from "react";
 import { parseAccountSearch } from "../../contracts/navigation.ts";
 import type { OrganizationAccess } from "@executor-js/hosted-server/organization";
@@ -19,20 +7,9 @@ import { DashboardShell as SharedShell } from "@executor-js/ui/dashboard/shell";
 import { Skeleton } from "@executor-js/ui/components/skeleton";
 import { SessionMenu } from "./auth.tsx";
 import { useDocumentationUrl } from "../documentation.ts";
-
-const items = [
-  { to: "/org/$organizationSlug", label: "Home", icon: Home01Icon, exact: true },
-  { to: "/org/$organizationSlug/apps", label: "Apps", icon: BoxesIcon },
-  { to: "/org/$organizationSlug/connect", label: "Connections", icon: Plug01Icon },
-  { to: "/org/$organizationSlug/accounts", label: "Accounts", icon: UserCircleIcon },
-  { to: "/org/$organizationSlug/approvals", label: "Approvals", icon: Shield01Icon },
-  { to: "/org/$organizationSlug/groups", label: "Groups", icon: UserGroupIcon },
-] as const;
-const settings = {
-  to: "/org/$organizationSlug/organization",
-  label: "Settings",
-  icon: Settings05Icon,
-} as const;
+import { accountItems, items, settings } from "./navigation-items.ts";
+import { CommandBar, type CommandBarItem } from "./command-bar.tsx";
+import { CommandBarProvider, CommandBarTrigger } from "./command-bar-context.tsx";
 
 function NavigationItem({
   item,
@@ -103,13 +80,6 @@ export function DashboardNavigation({
   );
 }
 
-/** Personal settings belong to the signed-in user, not to the organization in the URL. */
-const accountItems = [
-  { to: "/account/profile", label: "Profile", icon: UserIcon },
-  { to: "/account/security", label: "Security", icon: FingerPrintIcon },
-  { to: "/account/tokens", label: "Tokens", icon: Key01Icon },
-] as const;
-
 /** Links for the account area; none of them take an organization. */
 export function AccountNavigation() {
   const { search } = useLocation();
@@ -153,6 +123,7 @@ export function DashboardFrame({
   notice,
   pendingPage = "apps",
   account = false,
+  commandItems,
   children,
 }: {
   readonly organizationSlug?: string;
@@ -167,6 +138,8 @@ export function DashboardFrame({
   readonly pendingPage?: string;
   /** Account pages have no organization settings link; their wordmark returns to the root. */
   readonly account?: boolean;
+  /** The host's own organization pages, offered by the command bar after the common ones. */
+  readonly commandItems?: ReadonlyArray<CommandBarItem> | undefined;
   readonly children: ReactNode;
 }) {
   const docsUrl = useDocumentationUrl();
@@ -176,40 +149,44 @@ export function DashboardFrame({
     children: <span>executor</span>,
   };
   return (
-    <SharedShell
-      docsUrl={docsUrl}
-      brand={
-        account ? (
-          <Link to="/" {...brand} />
-        ) : organizationSlug === undefined ? (
-          <div {...brand} />
-        ) : (
-          <Link to="/org/$organizationSlug" params={{ organizationSlug }} {...brand} />
-        )
-      }
-      banner={banner}
-      support={support}
-      notice={notice}
-      navigation={
-        <>
-          {navigation}
-          {!account && (
-            <NavigationItem
-              item={settings}
-              organizationSlug={organizationSlug}
-              pendingPage={pendingPage}
-            />
-          )}
-        </>
-      }
-      footer={
-        <div className="hosted-identity w-full py-0 px-[4px] [&_.session-menu]:border-t [&_.session-menu]:border-t-border">
-          {organization}
-          <SessionMenu organization={account ? undefined : organizationSlug} />
-        </div>
-      }
-    >
-      {children}
-    </SharedShell>
+    <CommandBarProvider>
+      <SharedShell
+        docsUrl={docsUrl}
+        search={<CommandBarTrigger />}
+        brand={
+          account ? (
+            <Link to="/" {...brand} />
+          ) : organizationSlug === undefined ? (
+            <div {...brand} />
+          ) : (
+            <Link to="/org/$organizationSlug" params={{ organizationSlug }} {...brand} />
+          )
+        }
+        banner={banner}
+        support={support}
+        notice={notice}
+        navigation={
+          <>
+            {navigation}
+            {!account && (
+              <NavigationItem
+                item={settings}
+                organizationSlug={organizationSlug}
+                pendingPage={pendingPage}
+              />
+            )}
+          </>
+        }
+        footer={
+          <div className="hosted-identity w-full py-0 px-[4px] [&_.session-menu]:border-t [&_.session-menu]:border-t-border">
+            {organization}
+            <SessionMenu organization={account ? undefined : organizationSlug} />
+          </div>
+        }
+      >
+        {children}
+      </SharedShell>
+      <CommandBar organizationSlug={account ? undefined : organizationSlug} extra={commandItems} />
+    </CommandBarProvider>
   );
 }

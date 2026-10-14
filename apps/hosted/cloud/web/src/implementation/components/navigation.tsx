@@ -1,4 +1,5 @@
-import { Link } from "@tanstack/react-router";
+import { useMemo } from "react";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { CreditCardIcon } from "@hugeicons/core-free-icons";
 
@@ -39,5 +40,21 @@ export function CloudNavigation({
     >
       {content}
     </Link>
+  );
+}
+
+/** Billing in the command bar, beside the common pages. */
+export function useCloudCommandItems(organizationSlug: string) {
+  const navigate = useNavigate();
+  return useMemo(
+    () => [
+      {
+        label: "Billing",
+        icon: CreditCardIcon,
+        onSelect: () =>
+          void navigate({ to: "/org/$organizationSlug/billing", params: { organizationSlug } }),
+      },
+    ],
+    [navigate, organizationSlug],
   );
 }
