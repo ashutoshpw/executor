@@ -165,6 +165,7 @@ export function PagePending({
         <WebhookSetupLoading />
       </WebhookSetupFrame>
     );
+  if (page === undefined) return <PageSkeleton title="Home" />;
   if (page === "apps" && item === "add") return <PageSkeleton title="Add app" />;
   if (page === "accounts") return <PageSkeleton title="Account" />;
   if (page === "apps") return <PageSkeleton title="App" />;

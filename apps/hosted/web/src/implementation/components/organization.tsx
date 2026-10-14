@@ -81,19 +81,19 @@ export function useOrganizationRoute() {
   if (value === null) throw new Error("Organization route context is missing");
   return value;
 }
-/** Moves to another organization's apps, as the organization switcher does. */
+/** Moves to another organization's Home page, as the organization switcher does. */
 export function useSwitchOrganization() {
   const registry = useContext(RegistryContext);
   const navigate = useNavigate();
   return async (item: { readonly id: OrganizationId; readonly slug: string }) => {
     const previous = registry.get(organizationTargetAtom(OrganizationSlug.make(item.slug)));
     if (previous !== undefined && previous !== item.id) {
-      window.location.assign(`/org/${encodeURIComponent(item.slug)}/apps`);
+      window.location.assign(`/org/${encodeURIComponent(item.slug)}`);
       return;
     }
     registry.set(organizationTargetAtom(OrganizationSlug.make(item.slug)), item.id);
     await navigate({
-      to: "/org/$organizationSlug/apps",
+      to: "/org/$organizationSlug",
       params: { organizationSlug: item.slug },
     });
   };
@@ -264,7 +264,7 @@ function ResumeOrganization({
     children
   ) : (
     <Navigate
-      to="/org/$organizationSlug/apps"
+      to="/org/$organizationSlug"
       params={{ organizationSlug: organization }}
       state={{ organizationResume: { organization, reference: organization, userId } }}
       replace
@@ -480,7 +480,7 @@ export function OrganizationEntry({ allowCreate = true }: { readonly allowCreate
   const only = organizations.value.length === 1 ? organizations.value[0] : undefined;
   if (only)
     return (
-      <Navigate to="/org/$organizationSlug/apps" params={{ organizationSlug: only.slug }} replace />
+      <Navigate to="/org/$organizationSlug" params={{ organizationSlug: only.slug }} replace />
     );
   return (
     <HostedEntry
@@ -491,10 +491,7 @@ export function OrganizationEntry({ allowCreate = true }: { readonly allowCreate
           <div className="flex flex-col gap-2">
             {organizations.value.map((organization) => (
               <Button key={organization.id} variant="outline" asChild>
-                <Link
-                  to="/org/$organizationSlug/apps"
-                  params={{ organizationSlug: organization.slug }}
-                >
+                <Link to="/org/$organizationSlug" params={{ organizationSlug: organization.slug }}>
                   {organization.name}
                 </Link>
               </Button>
@@ -505,7 +502,7 @@ export function OrganizationEntry({ allowCreate = true }: { readonly allowCreate
           (allowCreate ? (
             <CreateOrganization
               onCreated={({ slug }) =>
-                navigate({ to: "/org/$organizationSlug/apps", params: { organizationSlug: slug } })
+                navigate({ to: "/org/$organizationSlug", params: { organizationSlug: slug } })
               }
             >
               <h2>Create an organization</h2>
@@ -534,7 +531,7 @@ export function OrganizationDestination({
     : undefined;
   if (!target && organizations.waiting) return <Spinner />;
   return target ? (
-    <Navigate to="/org/$organizationSlug/apps" params={{ organizationSlug: target.slug }} replace />
+    <Navigate to="/org/$organizationSlug" params={{ organizationSlug: target.slug }} replace />
   ) : (
     <EmptyState
       title="Unable to open this organization"
@@ -669,7 +666,7 @@ export function OrganizationSwitcher({ allowCreate = true }: { readonly allowCre
             onCreated={async ({ slug }) => {
               setCreating(false);
               await navigate({
-                to: "/org/$organizationSlug/apps",
+                to: "/org/$organizationSlug",
                 params: { organizationSlug: slug },
               });
             }}

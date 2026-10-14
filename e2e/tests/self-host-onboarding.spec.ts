@@ -114,8 +114,8 @@ layer(TestLive, { excludeTestServices: true })("Self-host onboarding", (it) => {
         yield* browser.use("Open the dashboard when ready", (page) =>
           page.getByRole("link", { name: "Open dashboard", exact: false }).click(),
         );
-        yield* browser.use("The new organization opens Apps", (page) =>
-          page.waitForURL(`${origin}/org/*/apps`),
+        yield* browser.use("The new organization opens Home", (page) =>
+          page.waitForURL(`${origin}/org/*`),
         );
         const dashboard = yield* browser.use("Remember the organization destination", (page) =>
           Promise.resolve(page.url()),

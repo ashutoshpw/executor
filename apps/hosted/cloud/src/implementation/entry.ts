@@ -66,7 +66,7 @@ export const resolveCloudEntry = (
       if (only)
         return {
           kind: "redirect" as const,
-          location: `/org/${encodeURIComponent(only.slug)}/apps`,
+          location: `/org/${encodeURIComponent(only.slug)}`,
         };
       return CloudEntryPage.make({
         kind: "page",
