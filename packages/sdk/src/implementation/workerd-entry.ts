@@ -77,6 +77,7 @@ interface DataEntrypoint {
     load: () => Promise<typeof FacetBundle.Type>,
     elicit: Callback | null,
     controls: Callback | null,
+    blobs: Callback | null,
   ): Promise<unknown>;
   cancel(id: string): Promise<void>;
   unload(identity: string): Promise<boolean>;
@@ -225,9 +226,9 @@ const runner = (env: Environment, context: Pick<ExecutionContext, "waitUntil" | 
     data: (app) => {
       const target = env.DATA.getByName(app);
       return {
-        invoke: (input, load, elicit, controls) =>
+        invoke: (input, load, elicit, controls, blobs) =>
           Effect.tryPromise({
-            try: () => target.invoke(input, load, elicit, controls),
+            try: () => target.invoke(input, load, elicit, controls, blobs),
             catch: (cause) => cause,
           }),
         cancel: (id) =>
@@ -392,9 +393,10 @@ export class AppDataSupervisor extends DurableObject<Environment> {
     load: () => Promise<typeof FacetBundle.Type>,
     elicit: Callback | null,
     controls: Callback | null,
+    blobs: Callback | null = null,
   ) {
     const result = Effect.runPromise(
-      (await this.#supervisor).invoke(input, load, elicit, controls),
+      (await this.#supervisor).invoke(input, load, elicit, controls, blobs),
     );
     // The supervisor owns rollback even if the original RPC caller disconnects.
     this.ctx.waitUntil(

@@ -174,6 +174,7 @@ const FacetEntrypoint = Schema.declare(
       elicitation: ((input: unknown) => Promise<unknown>) | null,
       workflows: ((input: unknown) => Promise<unknown>) | null,
       cache: ((input: unknown) => Promise<unknown>) | null,
+      blobs: ((input: unknown) => Promise<unknown>) | null,
     ) => Promise<unknown>;
     finish?: (id: string) => Promise<void>;
     cancel: (id: string) => Promise<void>;
@@ -520,6 +521,7 @@ export const makeFacetSupervisor = (
       load: () => Promise<typeof FacetBundle.Type>,
       elicitation: ((input: unknown) => Promise<unknown>) | null,
       workflows: ((input: unknown) => Promise<unknown>) | null,
+      blobs: ((input: unknown) => Promise<unknown>) | null,
       waited: (ms: number) => void,
       starts: FacetStarts,
     ) =>
@@ -575,6 +577,7 @@ export const makeFacetSupervisor = (
                                 Effect.orDie,
                               ),
                             ),
+                      blobs,
                     ),
                   )
                   .then(Result.succeed, Result.fail);
@@ -682,6 +685,7 @@ export const makeFacetSupervisor = (
         load: () => Promise<typeof FacetBundle.Type>,
         elicitation: ((input: unknown) => Promise<unknown>) | null = null,
         workflows: ((input: unknown) => Promise<unknown>) | null = null,
+        blobs: ((input: unknown) => Promise<unknown>) | null = null,
       ) =>
         Effect.suspend(() => {
           // The first call or event an instance receives woke it, before its clock started.
@@ -732,6 +736,7 @@ export const makeFacetSupervisor = (
                     load,
                     elicitation,
                     workflows,
+                    blobs,
                     (ms) => {
                       waitMs += ms;
                     },

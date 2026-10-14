@@ -10,6 +10,8 @@ import { hostedAppUi, appAddresses } from "@executor-js/hosted-server/app-ui";
 import { cloudAppUiBase } from "./contracts/app-ui.ts";
 import { cloudAppDomains } from "./infrastructure/app-domains.ts";
 import { AppRepositoryRecovery, WorkflowHost } from "@executor-js/sdk/core";
+import { makeFileHandleStore, sweepFileHandles } from "@executor-js/sdk/blobs";
+import { cloudUserContent } from "./infrastructure/blobs.ts";
 import { AppWorkflows } from "./infrastructure/workflows.ts";
 import { cloudDataSteps } from "./infrastructure/data-steps.ts";
 import { expireIdleAgentGrants } from "@executor-js/app-management/data-steps";
@@ -362,6 +364,22 @@ export default Api.make(
       Effect.scoped,
       Effect.catch(() => Effect.logWarning("Idle agent grant expiry failed")),
     );
+    // Files whose lifetime ended leave the bucket, then their rows. Each pass is bounded, and the
+    // next picks up a backlog.
+    const userContent = yield* cloudUserContent;
+    const fileHandleExpiry = Effect.gen(function* () {
+      const sql = yield* Effect.flatten(GroupDatabase);
+      yield* sweepFileHandles({
+        handles: makeFileHandleStore({ sql, table: "hosted_file_handles" }),
+        store: userContent,
+      });
+    }).pipe(
+      Effect.provide(executor),
+      reportErrors,
+      Effect.scoped,
+      Effect.withSpan("job.file_handles.expire"),
+      Effect.catch(() => Effect.logWarning("File handle expiry failed")),
+    );
     const jobs = yield* cloudBackgroundJobs;
     yield* jobs.schedule(
       "* * * * *",
@@ -378,6 +396,7 @@ export default Api.make(
       "workflow-reconcile",
       "app-domain-heartbeat",
     );
+    yield* jobs.schedule("*/10 * * * *", "file-handle-expiry");
     yield* jobs.schedule("17 4 * * *", "billing-reconcile", "agent-grant-expiry");
     const backgroundJobs = {
       "organization-removal": organizationRemovals,
@@ -391,6 +410,7 @@ export default Api.make(
       "workflow-reconcile": workflowReconcile,
       "billing-reconcile": billingReconcile,
       "agent-grant-expiry": agentGrantExpiry,
+      "file-handle-expiry": fileHandleExpiry,
     } satisfies Record<BackgroundJob, unknown>;
 
     const egress = yield* cloudEgress;

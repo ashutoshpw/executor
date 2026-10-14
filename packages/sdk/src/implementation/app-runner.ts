@@ -68,6 +68,8 @@ export interface AppDataHost {
     load: () => Promise<typeof FacetBundle.Type>,
     elicit: Callback | null,
     controls: Callback | null,
+    /** The runner's file transfer for this call, which the facet's bridge hands to `ctx.blobs`. */
+    blobs: Callback | null,
   ) => Effect.Effect<unknown, unknown>;
   readonly cancel: (id: string) => Effect.Effect<void, unknown>;
   readonly cache: (namespace: string, command: unknown) => Effect.Effect<unknown, unknown>;
@@ -740,6 +742,21 @@ export const makeAppRunner = (host: AppRunnerHost) => {
     Effect.gen(function* () {
       const id = crypto.randomUUID();
       const { command } = invocation;
+      // The runner moves the file bytes, whichever isolate runs the app: the facet's bridge only
+      // hands this transfer to `ctx.blobs`.
+      const store = host.userContent;
+      const transfer =
+        capabilities.blobs == null || store === undefined
+          ? null
+          : blobTransfer({
+              control: capabilities.blobs,
+              store,
+              outbound: host.outbound(invocation.app),
+              signal: (yield* Effect.acquireRelease(
+                Effect.sync(() => new AbortController()),
+                (controller) => Effect.sync(() => controller.abort()),
+              )).signal,
+            });
       const result = yield* target
         .invoke(
           {
@@ -768,6 +785,7 @@ export const makeAppRunner = (host: AppRunnerHost) => {
           },
           capabilities.elicit,
           capabilities.controls,
+          transfer,
         )
         .pipe(
           waiting,

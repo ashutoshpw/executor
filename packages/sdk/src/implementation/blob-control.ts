@@ -111,7 +111,13 @@ export const makeBlobControl = (options: {
   return (input) =>
     Schema.decodeUnknownEffect(BlobControlCommand)(input).pipe(
       Effect.mapError((): BlobError => new BlobNotFound({ id: "" })),
-      Effect.flatMap(run),
+      Effect.flatMap((command) =>
+        run(command).pipe(
+          Effect.withSpan("sdk.blobs.control", {
+            attributes: { "executor.blob.operation": command.op },
+          }),
+        ),
+      ),
       Effect.map((value) => ({ ok: true as const, value })),
       Effect.catchCause((cause) => {
         if (Cause.hasInterrupts(cause)) return Effect.interrupt;

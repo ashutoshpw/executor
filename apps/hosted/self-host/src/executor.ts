@@ -18,9 +18,15 @@ export const selfHostExecutor = (egress: HostEgress) =>
       // A wildcard listener also accepts loopback connections.
       const listener = hostname === "0.0.0.0" || hostname === "::" ? "127.0.0.1" : hostname;
       const blobs = filesystemBlobStore({ directory: path.resolve(directory, "builds") });
+      // What apps store as files by handle. Private to the instance, like the data directory.
+      const userContent = filesystemBlobStore({
+        directory: path.resolve(directory, "user-content"),
+        mode: 0o700,
+      });
       const host = yield* workerdApps({
         directory: path.resolve(directory, "workerd"),
         blobs,
+        userContent,
         executor,
         legacyDataDirectories: [
           path.resolve(directory, "app-data"),
@@ -40,6 +46,7 @@ export const selfHostExecutor = (egress: HostEgress) =>
       return {
         ...host,
         blobs,
+        userContent,
         repositories: nativeRepositories(path.resolve(directory, "repositories")),
       };
     }),
