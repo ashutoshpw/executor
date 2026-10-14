@@ -39,7 +39,7 @@
   --color-foreground: var(--foreground);
   --color-card: var(--background);
   --color-card-foreground: var(--foreground);
-  --color-popover: var(--background);
+  --color-popover: var(--popover);
   --color-popover-foreground: var(--foreground);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
@@ -61,6 +61,7 @@
 :root {
   color-scheme: light;
   --background: #fff;
+  --popover: #fff;
   --foreground: #111;
   --primary: #0a0a0a;
   --primary-foreground: #fff;
@@ -76,12 +77,14 @@
 :root.dark {
   color-scheme: dark;
   --background: #0a0a0a;
+  /* Raised above the page, since a shadow cannot separate a dark surface from a dark page. */
+  --popover: #121212;
   --foreground: #ededed;
   --primary: #fff;
   --primary-foreground: #0a0a0a;
   --muted: #111;
   --muted-foreground: #9a9a9a;
-  --accent: #1a1a1a;
+  --accent: #1f1f1f;
   --destructive: #e0726a;
   --border: #242424;
   --input: #333;
@@ -93,12 +96,13 @@
   :root:not(.light):not(.dark) {
     color-scheme: dark;
     --background: #0a0a0a;
+    --popover: #121212;
     --foreground: #ededed;
     --primary: #fff;
     --primary-foreground: #0a0a0a;
     --muted: #111;
     --muted-foreground: #9a9a9a;
-    --accent: #1a1a1a;
+    --accent: #1f1f1f;
     --destructive: #e0726a;
     --border: #242424;
     --input: #333;
