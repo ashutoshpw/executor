@@ -344,3 +344,37 @@ export default defineApp(
 
 `list` describes available tools; `resolve` returns the matching query or
 mutation declaration.
+
+## Return files as handles
+
+A tool result carries at most 100,000 bytes, so a file is never returned inline. Keep it with
+`ctx.blobs` and return the handle it gives back, a small `{ id, sha256, size, contentType,
+expiresAt }` object:
+
+```ts
+const handle = await ctx.blobs.fromUrl("https://example.com/report.pdf", {
+  headers: ctx.app.accounts.service.headers(),
+});
+return { file: handle };
+```
+
+`fromUrl(url, init?)` makes the request on the host with the app's network rules and
+credentials and streams the body into the host's file store, so the bytes never enter your
+code; a non-2xx answer fails with `BlobUpstreamFailed`. `init` takes `method`, `headers`,
+a text `body` of at most 64 KiB, `contentType`, and `expectedSize` and `expectedSha256` to
+refuse a different file. `create(bytes, { contentType? })` keeps bytes the app already holds, at
+most `maxInlineBytes`. `read(handle, { offset, length })` returns at most `maxReadBytes` and
+clamps a range past the end. `stat(handle)` returns the handle with its current expiry, and
+`delete(handle)` removes a file this app stored, for every app in the organization.
+
+Call `ctx.blobs.limits()` first when size matters: `maxFileBytes` is what this host stores (2 GiB
+on self-host and local, 100 MiB on Cloud), and a larger file fails with `BlobTooLarge`. On Cloud
+a `fromUrl` needs the upstream's `Content-Length` or an `expectedSize`.
+
+Files are the organization's: two apps that store the same bytes share one handle, and another
+organization's handle reads as `BlobNotFound`. Files expire after the lifetime an organization
+owner or admin sets under Blob in the organization settings (seven days by default); an
+expired file reads as `BlobNotFound`. Failures are typed errors:
+`BlobTooLarge`, `BlobNotFound`, `BlobExpired`, `BlobIntegrityError`, `BlobUpstreamFailed`,
+`BlobRangeInvalid` and `BlobUnavailable`. `ctx.blobs` is available in queries and mutations, not in
+webhook handlers or workflows.
