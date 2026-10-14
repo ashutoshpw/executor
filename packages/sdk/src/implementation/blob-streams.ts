@@ -1,6 +1,6 @@
 /** Shared pieces of streamed blob reads and folder listings, for every store adapter. */
-import { Stream } from "effect";
-import type { BlobBody, BlobRange } from "../contracts/blobs.ts";
+import { Effect, Stream } from "effect";
+import { BlobStoreError, type BlobBody, type BlobRange } from "../contracts/blobs.ts";
 
 /** The clamped byte window a range selects in an object of `size` bytes. */
 export const rangeWindow = (size: number, range: BlobRange | undefined) => {
@@ -41,3 +41,22 @@ export const pageOf = (
   const sorted = names.filter((name) => after === undefined || name > after).sort();
   return { names: sorted.slice(0, options.limit), truncated: sorted.length > options.limit };
 };
+
+/** Every byte of a stream in one array. A declared `size` that differs fails, as the contract says. */
+export const collectBytes = <E>(
+  body: Stream.Stream<Uint8Array, E>,
+  size: number | undefined,
+): Effect.Effect<Uint8Array, BlobStoreError | E> =>
+  Stream.runCollect(body).pipe(
+    Effect.flatMap((chunks) => {
+      const bytes = new Uint8Array(chunks.reduce((total, chunk) => total + chunk.byteLength, 0));
+      let at = 0;
+      for (const chunk of chunks) {
+        bytes.set(chunk, at);
+        at += chunk.byteLength;
+      }
+      return size !== undefined && bytes.length !== size
+        ? Effect.fail(new BlobStoreError({ operation: "put" }))
+        : Effect.succeed(bytes);
+    }),
+  );
