@@ -4,6 +4,7 @@ import { migrateHostedSchemas } from "@executor-js/hosted-server/migrations";
 import { Effect, Layer, Redacted } from "effect";
 import { AuthDatabase } from "../contracts/database.ts";
 import { makeAuthDatabase } from "./auth-database.ts";
+import { migrateSelfHostInstance } from "./instance-schema.ts";
 /** Acquire one engine and initialize both schemas before exposing services. */
 export const selfHostDatabaseSchema = Layer.effect(
   AuthDatabase,
@@ -11,11 +12,14 @@ export const selfHostDatabaseSchema = Layer.effect(
     const db = yield* makeAuthDatabase;
     const database = AuthDatabase.of({ db, type: "postgres", transaction: true });
     const settings = yield* selfHostAuthSettings;
-    yield* migrateHostedSchemas({
-      ...selfHostAuthOptions(settings, []),
-      database,
-      secret: Redacted.value(settings.secret),
-    });
+    yield* migrateHostedSchemas(
+      {
+        ...selfHostAuthOptions(settings, []),
+        database,
+        secret: Redacted.value(settings.secret),
+      },
+      migrateSelfHostInstance,
+    );
     return database;
   }),
 );

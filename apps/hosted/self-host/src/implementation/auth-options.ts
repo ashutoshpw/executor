@@ -2,6 +2,7 @@
 import { authOptions, authSettings, singleResourceOrigin } from "@executor-js/hosted-server";
 import { genericOAuth } from "better-auth/plugins/generic-oauth";
 import { organization } from "better-auth/plugins/organization";
+import { selfHostInstanceSchema } from "./instance-schema.ts";
 import { Config, Effect, Option, Redacted, Schema } from "effect";
 
 const Sso = Schema.Struct({
@@ -59,7 +60,9 @@ export const selfHostAuthOptions = (
     ...base,
     emailAndPassword: { enabled: true, disableSignUp: true },
     plugins: [
-      organization({ disableOrganizationDeletion: true, allowUserToCreateOrganization: false }),
+      // Creation is gated to the instance owner by the registration plugin's hook.
+      organization({ disableOrganizationDeletion: true, allowUserToCreateOrganization: true }),
+      selfHostInstanceSchema,
       ...base.plugins,
       genericOAuth({
         config:
