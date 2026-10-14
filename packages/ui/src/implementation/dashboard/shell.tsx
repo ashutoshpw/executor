@@ -129,7 +129,7 @@ export function DashboardShell({
             </button>
           ) : (
             <span className="flex items-center justify-center shrink-0 size-8.5">
-              <img src="/favicon.png" alt="" className="size-6" />
+              <img src="/favicon.png" alt="" className="size-6 dark:invert" />
             </span>
           )}
           {brand}

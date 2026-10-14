@@ -92,7 +92,7 @@ export function AgentSetupPage() {
     <SetupPageFrame>
       <section className="@container w-full max-w-[600px]" aria-labelledby="agent-setup-title">
         <div className="mb-8 flex items-center gap-2 font-mono text-[15px]">
-          <img src="/favicon.png" alt="" width={20} height={20} className="size-5" />
+          <img src="/favicon.png" alt="" width={20} height={20} className="size-5 dark:invert" />
           <span>executor</span>
         </div>
         {/* Keyed so a new screen mounts its own elements rather than moving the last screen's. */}
