@@ -26,6 +26,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { appsManifest, withApps } from "../support/apps-release.ts";
 import { containerNpmRegistry } from "../support/npm-registry.ts";
 import { connectionsPath } from "../support/app-accounts.ts";
+import { setupOrganization } from "../support/docker-release-server.ts";
 
 /**
  * `workerd --version` prints the release date of the workerd the checkout pins, which the image
@@ -245,10 +246,12 @@ for (const mode of ["explicit", "local", "railway"] as const)
           .join("; ");
         const organizations = yield* request("/api/auth/organization/list", undefined, cookie);
         expect(organizations.status).toBe(200);
-        const parsed = yield* Schema.decodeUnknownEffect(
-          Schema.NonEmptyArray(Schema.Struct({ id: Schema.String, slug: Schema.String })),
-        )(yield* driver("organization response", () => organizations.json()));
-        const prefix = `/api/organizations/${parsed[0].id}`;
+        const organization = yield* setupOrganization(
+          yield* Schema.decodeUnknownEffect(
+            Schema.Array(Schema.Struct({ id: Schema.String, slug: Schema.String })),
+          )(yield* driver("organization response", () => organizations.json())),
+        );
+        const prefix = `/api/organizations/${organization.id}`;
         const deployed = yield* request(
           `${prefix}/apps/deploy`,
           {
@@ -343,7 +346,7 @@ export default defineApp({ user: { accounts: { service } } }, async ({ user: { a
                 yield* driver("sign-in reaches the intended organization", () =>
                   page.waitForURL(
                     (url) =>
-                      url.origin === origin && url.pathname === `/org/${parsed[0].slug}/apps`,
+                      url.origin === origin && url.pathname === `/org/${organization.slug}/apps`,
                   ),
                 );
                 yield* driver("the image dashboard is authenticated", () =>
@@ -1081,9 +1084,11 @@ it.live("released image keeps its collector out of apps' reach with private fetc
         .join("; ");
       const organizations = yield* request("/api/auth/organization/list", undefined, cookie);
       expect(organizations.status).toBe(200);
-      const [organization] = yield* Schema.decodeUnknownEffect(
-        Schema.NonEmptyArray(Schema.Struct({ id: Schema.String })),
-      )(yield* driver("organization response", () => organizations.json()));
+      const organization = yield* setupOrganization(
+        yield* Schema.decodeUnknownEffect(
+          Schema.Array(Schema.Struct({ id: Schema.String, slug: Schema.String })),
+        )(yield* driver("organization response", () => organizations.json())),
+      );
       const prefix = `/api/organizations/${organization.id}`;
       const deployed = yield* request(
         `${prefix}/apps/deploy`,
@@ -1593,9 +1598,11 @@ it.live("released image serves management tools at a tailnet origin with private
         .join("; ");
       const organizations = yield* request("/api/auth/organization/list", undefined, cookie);
       expect(organizations.status).toBe(200);
-      const [organization] = yield* Schema.decodeUnknownEffect(
-        Schema.NonEmptyArray(Schema.Struct({ id: Schema.String })),
-      )(yield* driver("organization response", () => organizations.json()));
+      const organization = yield* setupOrganization(
+        yield* Schema.decodeUnknownEffect(
+          Schema.Array(Schema.Struct({ id: Schema.String, slug: Schema.String })),
+        )(yield* driver("organization response", () => organizations.json())),
+      );
       const prefix = `/api/organizations/${organization.id}`;
       // workerd rejects some fetch redirect modes before sending. Each name selects one registry
       // response, and the catalog must report it without following a redirect.
@@ -1973,9 +1980,11 @@ it.live(
               .getSetCookie()
               .map((part) => part.split(";")[0])
               .join("; ");
-            const [organization] = yield* json(
-              Schema.NonEmptyArray(Schema.Struct({ id: Schema.String })),
-              yield* request("/api/auth/organization/list", undefined, cookie),
+            const organization = yield* setupOrganization(
+              yield* json(
+                Schema.Array(Schema.Struct({ id: Schema.String, slug: Schema.String })),
+                yield* request("/api/auth/organization/list", undefined, cookie),
+              ),
             );
             const prefix = `/api/organizations/${organization.id}`;
             // Setup installs the built-in Executor app and links the owner's managed key to it in
@@ -2322,9 +2331,11 @@ it.live(
           .getSetCookie()
           .map((part) => part.split(";")[0])
           .join("; ");
-        const [organization] = yield* json(
-          Schema.NonEmptyArray(Schema.Struct({ id: Schema.String, slug: Schema.String })),
-          "/api/auth/organization/list",
+        const organization = yield* setupOrganization(
+          yield* json(
+            Schema.Array(Schema.Struct({ id: Schema.String, slug: Schema.String })),
+            "/api/auth/organization/list",
+          ),
         );
         const prefix = `/api/organizations/${organization.id}`;
 
