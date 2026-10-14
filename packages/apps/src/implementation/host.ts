@@ -76,6 +76,7 @@ import type { AppEvent, EmittedEvent } from "../contracts/events.ts";
 import { authorSql, hasMigrations, migrate, noDatabase, type StepReplay } from "./sql.ts";
 import { isApp, toEffectApp } from "./app.ts";
 import { authorCache, unavailableCache } from "./cache.ts";
+import { authorBlobs, unavailableBlobs } from "./blobs.ts";
 import type { HostCache } from "../contracts/cache.ts";
 import {
   accountSecrets,
@@ -609,6 +610,7 @@ function dispatch(
         signal: invocationSignal,
         fetch: yield* appInvocationFetch(fetching.signal),
         elicit: makeElicit(delivery, invocationSignal, telemetry.context),
+        blobs: authorBlobs(context.blobs ?? unavailableBlobs, invocationSignal, telemetry.context),
       };
       // Every bound account may be named; only the caller's count when an emit names none.
       const attributable = userAccountIds(bound);

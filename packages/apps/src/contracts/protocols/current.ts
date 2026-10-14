@@ -14,6 +14,7 @@
  */
 import { Schema } from "effect";
 import { CacheCommand, CacheReply } from "@executor-js/app-cache/contracts";
+import { BlobCommand, BlobReply } from "../blobs.ts";
 import { frameworkProtocol } from "../protocol-version.ts";
 import {
   DatabaseFieldReserved,
@@ -550,6 +551,7 @@ export const messageDirections = {
   elicitationReply: "host",
   workflowStepReply: "host",
   cacheReply: "host",
+  blobReply: "host",
   response: "bundle",
   requirements: "bundle",
   catalog: "bundle",
@@ -561,6 +563,7 @@ export const messageDirections = {
   workflowStep: "bundle",
   workflowControl: "bundle",
   cacheCommand: "bundle",
+  blobCommand: "bundle",
   accountCheck: "bundle",
   migrate: "bundle",
 } as const satisfies Record<string, "host" | "bundle">;
@@ -585,6 +588,8 @@ export const current = {
     workflowControl: WorkflowControlCommand,
     cacheCommand: CacheCommand,
     cacheReply: CacheReply,
+    blobCommand: BlobCommand,
+    blobReply: BlobReply,
     accountCheck: AccountCheckResult,
     accounts: ResolvedAccounts,
     migrate: MigrateResult,

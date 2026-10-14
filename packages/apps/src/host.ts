@@ -21,6 +21,7 @@ import {
 
 export type { HostContext, ResolvedAccountsInput } from "./contracts/host.ts";
 export { isolatedCacheSession } from "./implementation/cache-session.ts";
+export { isolatedBlobs } from "./implementation/blobs.ts";
 
 /** Parse trusted account bindings and an optional exact-call approval. Throws safe boundary errors on invalid input. */
 export const hostContext = (accounts: ResolvedAccountsInput, approval?: unknown): HostContext => ({

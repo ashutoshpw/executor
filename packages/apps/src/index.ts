@@ -2,6 +2,22 @@ export { ProviderError } from "./contracts/provider-error.ts";
 export { FetchOptionUnsupported, NetworkRefused } from "./contracts/network.ts";
 export type { AppCache, CacheLoadContext, CacheGetOptions } from "./contracts/cache.ts";
 export { CacheError } from "@executor-js/app-cache/contracts";
+export type {
+  AppBlobs,
+  BlobFetchInit,
+  BlobHandle,
+  BlobLimits,
+  BlobReference,
+} from "./contracts/blobs.ts";
+export {
+  BlobExpired,
+  BlobIntegrityError,
+  BlobNotFound,
+  BlobRangeInvalid,
+  BlobTooLarge,
+  BlobUnavailable,
+  BlobUpstreamFailed,
+} from "./contracts/blobs.ts";
 /**
  * Public author API. Native contracts live in contracts/; this boundary
  * exposes ordinary declarations, schema helpers and Promise operations.
