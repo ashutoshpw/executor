@@ -1,4 +1,4 @@
-/** Add app lists official catalog apps only and never reads the public registry. */
+/** Add app lists public registry listings beside official catalog apps. */
 import { expect, layer } from "@effect/vitest";
 import { Effect, Layer, Schema } from "effect";
 import { Api, body, SessionClients } from "../support/api.ts";
@@ -54,11 +54,11 @@ layer(TestLive, { excludeTestServices: true })("Add app and the public registry"
         yield* browser.use("Search for the published app", (page) =>
           page.getByPlaceholder("Search apps…").fill(registryPublication.name),
         );
-        yield* browser.use("No published app matches", (page) =>
-          page.getByRole("heading", { name: "No matching apps", exact: true }).waitFor(),
+        yield* browser.use("The published app is listed", (page) =>
+          page.locator(".catalog-row").filter({ hasText: registryPublication.name }).waitFor(),
         );
-        yield* browser.checkpoint("Add app without published apps");
-        expect(yield* registry.paths, "Add app read nothing from the registry").toEqual([]);
+        yield* browser.checkpoint("Add app lists the published app");
+        expect(yield* registry.paths, "Add app read the public registry").not.toEqual([]);
       }),
     ),
   );
