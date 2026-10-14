@@ -23,7 +23,7 @@ export function ConnectionStatusPage({
     <main className="grid min-h-dvh place-items-center px-4 py-12 sm:px-6">
       <div className="w-full max-w-110">
         <div className="mb-6 flex items-center justify-center gap-2 text-[19px] font-semibold tracking-[-0.04em]">
-          <img src="/favicon.png" alt="" className="size-6" />
+          <img src="/favicon.png" alt="" className="size-6 dark:invert" />
           executor
         </div>
         <section
