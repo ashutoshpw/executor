@@ -38,10 +38,10 @@ layer(HostedLive, { excludeTestServices: true })("Root entry loading", (it) => {
           page.setViewportSize({ width: 864, height: 720 }),
         );
         yield* browser.use("Open the existing organization and populate the session hint", (page) =>
-          page.goto(`/org/${actors.organization.slug}/apps`),
+          page.goto(`/org/${actors.organization.slug}`),
         );
-        yield* browser.use("The signed-in user already has an Apps page", (page) =>
-          page.getByRole("heading", { name: /^Apps(?:\s*\d+)?$/ }).waitFor({ state: "visible" }),
+        yield* browser.use("The signed-in user already has a Home page", (page) =>
+          page.getByRole("heading", { name: "Home", exact: true }).waitFor({ state: "visible" }),
         );
         yield* waitForLastOrganization(actors.organization.id);
 
@@ -50,10 +50,12 @@ layer(HostedLive, { excludeTestServices: true })("Root entry loading", (it) => {
         const preparation = yield* onboarding.delayPreparation;
         const loaded = Effect.gen(function* () {
           yield* browser.use("The existing organization opens", (page) =>
-            page.waitForURL(`**/org/${actors.organization.slug}/apps`),
+            page.waitForURL(new RegExp(`/org/${actors.organization.slug}(?:\\?.*)?$`)),
           );
-          yield* browser.use("The existing apps finish loading", (page) =>
-            page.locator(".app-card").first().waitFor({ state: "visible" }),
+          yield* browser.use("The existing Home page finishes loading", (page) =>
+            page
+              .getByRole("heading", { name: "No tool calls yet", exact: true })
+              .waitFor({ state: "visible" }),
           );
           expect(yield* preparation.wasRequested).toBe(false);
           expect(
@@ -68,7 +70,7 @@ layer(HostedLive, { excludeTestServices: true })("Root entry loading", (it) => {
         yield* loaded;
         yield* browser.checkpoint("Existing organization opens without team preparation");
 
-        const destination = `/org/${actors.organization.slug}/apps`;
+        const destination = `/org/${actors.organization.slug}`;
         const restored = yield* Effect.forEach(
           [
             { name: "Desktop", width: 864, height: 720 },
@@ -105,8 +107,10 @@ layer(HostedLive, { excludeTestServices: true })("Root entry loading", (it) => {
                   "The remembered organization opens at its canonical address",
                   (page) => page.waitForURL(`**${destination}`, { timeout: 10_000 }),
                 );
-                yield* browser.use("Apps load while organization reads are held", (page) =>
-                  page.locator(".app-card").first().waitFor({ state: "visible" }),
+                yield* browser.use("Home loads while organization reads are held", (page) =>
+                  page
+                    .getByRole("heading", { name: "No tool calls yet", exact: true })
+                    .waitFor({ state: "visible" }),
                 );
                 expect(
                   yield* browser.use("No entry card or chooser interrupts restoration", (page) =>
@@ -115,18 +119,20 @@ layer(HostedLive, { excludeTestServices: true })("Root entry loading", (it) => {
                       .count(),
                   ),
                 ).toBe(0);
-                yield* browser.use("Type a search in the restored page", (page) =>
-                  page.getByPlaceholder("Search apps…", { exact: true }).fill("Executor"),
+                yield* browser.use("Choose a range in the restored page", (page) =>
+                  page.getByRole("button", { name: "24 hours", exact: true }).click(),
                 );
                 yield* browser.checkpoint(
-                  `${viewport.name}: Apps usable while organization reads are held`,
+                  `${viewport.name}: Home usable while organization reads are held`,
                 );
                 yield* loaded;
                 expect(
-                  yield* browser.use("The restored page keeps the search draft", (page) =>
-                    page.getByPlaceholder("Search apps…", { exact: true }).inputValue(),
+                  yield* browser.use("The restored page keeps the range", (page) =>
+                    page
+                      .getByRole("button", { name: "24 hours", exact: true })
+                      .getAttribute("aria-pressed"),
                   ),
-                ).toBe("Executor");
+                ).toBe("true");
                 // The page never shows another address and never replaces its own URL, and its
                 // resources arrive with the document instead of being read again.
                 expect(new Set(paths)).toEqual(new Set([destination]));
@@ -181,7 +187,7 @@ layer(HostedLive, { excludeTestServices: true })("Root entry loading", (it) => {
           existingOrganizations: organizations.length,
           preparationRequested: false,
           rememberedDestinationRedirectsBeforeHtml: true,
-          canonicalAddressWithoutReplacementKeepsDraft: true,
+          canonicalAddressWithoutReplacementKeepsRange: true,
           restored,
           fresh,
           heldRequests: ["/api/auth/organization/list", "/api/onboarding/prepare"],

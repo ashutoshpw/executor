@@ -325,7 +325,7 @@ layer(HostedLive, { excludeTestServices: true })("Organization removal", (it) =>
         expect(report.accounts).toBe(held.accounts);
 
         yield* browser.use("The tab leaves the deleted organization", (page) =>
-          page.waitForURL(`**/org/${actors.organization.slug}/apps`),
+          page.waitForURL(`**/org/${actors.organization.slug}`),
         );
         yield* browser.checkpoint("The next remaining organization after removal");
         yield* browser.use("Open the organization switcher", (page) =>

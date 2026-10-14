@@ -149,7 +149,7 @@ export function DeleteOrganization() {
                   next === undefined
                     ? { to: "/", replace: true }
                     : {
-                        to: "/org/$organizationSlug/apps",
+                        to: "/org/$organizationSlug",
                         params: { organizationSlug: next.slug },
                         replace: true,
                       },

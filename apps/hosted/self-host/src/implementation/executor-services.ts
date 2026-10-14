@@ -36,12 +36,15 @@ import {
   hostedOAuthClientName,
   withDeploySetupWake,
   withExecutorAnalytics,
+  automationUsage,
+  UsageStore,
   executorDefaultRedeployed,
   hostedAppCopies,
 } from "@executor-js/hosted-server";
 import { hostedResourceLifecycle } from "@executor-js/hosted-server/resource-lifecycle";
 import { hostedEventAuthority } from "@executor-js/hosted-server/events";
-import { deliverEvents } from "@executor-js/sdk/scheduling";
+import { AutomationToolObservation, deliverEvents } from "@executor-js/sdk/scheduling";
+import { selfHostUsageStore } from "./usage-store.ts";
 import * as BrowserCrypto from "@effect/platform-browser/BrowserCrypto";
 import { HostedAppRuntime } from "@executor-js/hosted-server/app-ui/contracts";
 import { workerdHostHandler } from "@executor-js/sdk/workerd";
@@ -91,8 +94,16 @@ export const selfHostExecutorServices = <E, R>(
       const evaluation = yield* declarationConfig;
       const server = yield* Scope.Scope;
       const ready = yield* Deferred.make<Executor>();
+      // Opened with the other services so schedules and workflow steps, which run outside any
+      // request, record their tool calls beside the requests' own.
+      const usage = yield* selfHostUsageStore;
+      const automationObservation = usage === undefined ? undefined : automationUsage(usage);
       const { runtime, workflows, declarations, blobs, repositories } = yield* acquire(
         Deferred.await(ready),
+      ).pipe(
+        automationObservation === undefined
+          ? (effect) => effect
+          : Effect.provideService(AutomationToolObservation, automationObservation),
       );
       const registry = remoteRegistry(
         yield* Config.String("EXECUTOR_REGISTRY_URL").pipe(
@@ -190,8 +201,18 @@ export const selfHostExecutorServices = <E, R>(
       const workflowRequests = yield* workerdHostHandler({
         executor: Effect.succeed(executor),
         blobs,
-      });
+      }).pipe(
+        automationObservation === undefined
+          ? (effect) => effect
+          : Effect.provideService(AutomationToolObservation, automationObservation),
+      );
       return Layer.mergeAll(
+        usage === undefined || automationObservation === undefined
+          ? Layer.empty
+          : Layer.mergeAll(
+              Layer.succeed(UsageStore, usage),
+              Layer.succeed(AutomationToolObservation, automationObservation),
+            ),
         Layer.succeed(SelfHostWorkflowRequests, workflowRequests),
         Layer.succeed(SelfHostAuth, auth),
         Layer.succeed(ScheduledAuthority, scheduleAuthority),

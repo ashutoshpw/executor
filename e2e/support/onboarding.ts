@@ -897,8 +897,11 @@ const make = Effect.gen(function* () {
             page.getByRole("link", { name: "Skip for now", exact: true }).click(),
           );
         const team = teams[0];
-        yield* browser.use("The new team opens Apps", (page) =>
-          page.waitForURL(`${targetHosts(target).browser}/org/${team.slug}/apps`),
+        yield* browser.use("The new team opens Home", (page) =>
+          page.waitForURL(`${targetHosts(target).browser}/org/${team.slug}`),
+        );
+        yield* browser.use("Open the team's Apps", (page) =>
+          page.getByRole("link", { name: "Apps", exact: true }).first().click(),
         );
         yield* browser.use("The confirmed team stays open", (page) =>
           page
@@ -1005,8 +1008,7 @@ const make = Effect.gen(function* () {
           yield* browser.use("Passkey returns to the existing team", (page) =>
             page.waitForURL(
               (url) =>
-                url.origin === targetHosts(target).browser &&
-                /^\/org\/[^/]+\/apps$/.test(url.pathname),
+                url.origin === targetHosts(target).browser && /^\/org\/[^/]+$/.test(url.pathname),
             ),
           );
           yield* browser.checkpoint("Returning sign-in with the saved passkey");
