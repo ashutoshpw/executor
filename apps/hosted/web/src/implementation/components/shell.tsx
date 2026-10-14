@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { OrganizationSwitcher, useOrganizationRoute } from "./organization.tsx";
 import { DashboardFrame } from "./dashboard-frame.tsx";
+import type { CommandBarItem } from "./command-bar.tsx";
 
 /** Organization and session controls belong to the hosted product, outside the shared shell. */
 export function DashboardShell({
@@ -8,6 +9,7 @@ export function DashboardShell({
   banner,
   support,
   notice,
+  commandItems,
   children,
   allowCreateOrganization = true,
 }: {
@@ -15,6 +17,7 @@ export function DashboardShell({
   readonly banner?: ReactNode;
   readonly support?: ReactNode;
   readonly notice?: ReactNode;
+  readonly commandItems?: ReadonlyArray<CommandBarItem> | undefined;
   readonly children: ReactNode;
   readonly allowCreateOrganization?: boolean;
 }) {
@@ -27,6 +30,7 @@ export function DashboardShell({
       banner={banner}
       support={support}
       notice={notice}
+      commandItems={commandItems}
     >
       {children}
     </DashboardFrame>
