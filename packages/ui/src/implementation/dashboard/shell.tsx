@@ -36,7 +36,7 @@ const navigationClass =
  * collapsed with a zero font size rather than removed; icons keep their own size.
  */
 const collapsedClass =
-  "[&_.sidebar-header]:justify-center [&_.wordmark]:hidden [&_nav_a]:justify-center [&_nav_a]:gap-0! [&_nav_a]:px-0! [&_nav_a]:h-9 [&_nav_a]:text-[0px]! [&_nav_a_>_span]:hidden [&_.sidebar-resource-links]:items-center [&_.sidebar-resource-links]:px-0 [&_.sidebar-resource-links_a]:w-full [&_.sidebar-resource-links_a]:justify-center [&_.sidebar-resource-links_a]:min-h-8 [&_.sidebar-resource-links_a_>_span]:hidden [&_.sidebar-resource-links_button]:w-full [&_.sidebar-resource-links_button]:justify-center [&_.sidebar-resource-links_button]:min-h-8 [&_.sidebar-resource-links_button_>_span]:hidden [&_.hosted-identity]:px-0 [&_.organization-trigger]:justify-center [&_.organization-trigger]:px-0 [&_.organization-name]:hidden [&_.organization-chevron]:hidden [&_.session-menu]:justify-center [&_.session-menu]:px-0 [&_.session-name]:hidden [&_.sidebar-version]:hidden";
+  "[&_.sidebar-header]:justify-center [&_.wordmark]:hidden [&_nav_a]:justify-center [&_nav_a]:gap-0! [&_nav_a]:px-0! [&_nav_a]:h-9 [&_nav_a]:text-[0px]! [&_nav_a_>_span]:hidden [&_.sidebar-resource-links]:items-center [&_.sidebar-resource-links]:px-0 [&_.sidebar-resource-links_a]:w-full [&_.sidebar-resource-links_a]:justify-center [&_.sidebar-resource-links_a]:min-h-8 [&_.sidebar-resource-links_a_>_span]:hidden [&_.sidebar-resource-links_button]:w-full [&_.sidebar-resource-links_button]:justify-center [&_.sidebar-resource-links_button]:min-h-8 [&_.sidebar-resource-links_button_>_span]:hidden [&_.hosted-identity]:px-0 [&_.organization-trigger]:justify-center [&_.organization-trigger]:px-0 [&_.organization-name]:hidden [&_.organization-chevron]:hidden [&_.session-menu]:justify-center [&_.session-menu]:px-0 [&_.session-name]:hidden [&_.sidebar-version]:hidden [&_.command-bar-trigger]:justify-center [&_.command-bar-trigger]:px-0 [&_.command-bar-trigger_span]:hidden";
 
 /** Links and the optional support trigger share one compact style. */
 function ResourceLinks({
@@ -69,6 +69,7 @@ export function DashboardShell({
   docsUrl,
   brand,
   navigation,
+  search,
   banner,
   support,
   notice,
@@ -79,6 +80,8 @@ export function DashboardShell({
   readonly docsUrl: string;
   readonly brand: ReactNode;
   readonly navigation: ReactNode;
+  /** A search trigger above the navigation; in the phone sheet, activating it closes the sheet. */
+  readonly search?: ReactNode;
   /** A full-width notice above the navigation and page content. */
   readonly banner?: ReactNode;
   /** A product-owned way to reach the team, shown with the resource links. */
@@ -131,6 +134,7 @@ export function DashboardShell({
           )}
           {brand}
         </div>
+        {search && <div className="sidebar-search pb-2">{search}</div>}
         <nav aria-label="Main navigation">{navigation}</nav>
         {notice && !collapsed && <div className="sidebar-notice mt-auto pt-4 pb-3">{notice}</div>}
         <div
@@ -152,6 +156,7 @@ export function DashboardShell({
         <DialogTrigger asChild>
           <button
             type="button"
+            data-shell-menu-trigger
             className="shell-menu-trigger hidden max-[740px]:inline-flex fixed left-1/2 -translate-x-1/2 bottom-[max(16px,_env(safe-area-inset-bottom))] z-40 items-center gap-2 h-11 pl-4 pr-5 rounded-full border border-border bg-background/95 backdrop-blur text-[13px] font-medium text-foreground shadow-[0_2px_5px_#00000010,0_8px_24px_#00000018]"
           >
             <HugeiconsIcon icon={Menu01Icon} strokeWidth={2} size={16} aria-hidden />
@@ -163,11 +168,12 @@ export function DashboardShell({
           className={`shell-menu sidebar top-auto bottom-0 left-0 translate-x-0 translate-y-0 w-full max-w-none sm:max-w-none gap-0 rounded-b-none rounded-t-[14px] border-b-0 p-[8px_8px_max(12px,_env(safe-area-inset-bottom))] max-h-[85dvh] overflow-y-auto data-[state=open]:slide-in-from-bottom-4 data-[state=closed]:slide-out-to-bottom-4 data-[state=open]:zoom-in-100 data-[state=closed]:zoom-out-100 [&_nav_a]:min-h-11 [&_nav_a]:text-[14px] [&_nav_a]:px-[10px] ${navigationClass}`}
           onClickCapture={(event) => {
             // Following a link closes the sheet; the route change happens as usual.
-            if ((event.target as Element).closest("a")) setMenuOpen(false);
+            if ((event.target as Element).closest("a, [data-close-menu]")) setMenuOpen(false);
           }}
         >
           <DialogTitle className="sr-only">Menu</DialogTitle>
           <div className="mx-auto mb-2 h-1 w-9 rounded-full bg-border" aria-hidden />
+          {search && <div className="sidebar-search pb-2">{search}</div>}
           <nav aria-label="Main navigation">{navigation}</nav>
           {notice && <div className="sidebar-notice mt-3">{notice}</div>}
           <div className="sidebar-utilities mt-3 [padding:12px_0_0] border-t border-t-border text-muted-foreground [&_a:hover]:text-foreground">
