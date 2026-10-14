@@ -4,6 +4,7 @@ import { Config, Effect, Schema } from "effect";
 import { AuthDatabase } from "../self-host/src/contracts/database.ts";
 import { TestAccountFailed, TestOrigin, testAccountAuth } from "./accounts.ts";
 import { hostedDevtools } from "./hosted-tools.ts";
+import { selfHostInstanceSchema } from "../self-host/src/implementation/instance-schema.ts";
 
 /** Validate the local HTTP listener before acquiring storage. */
 export const developmentSettings = Effect.gen(function* () {
@@ -36,6 +37,7 @@ export const developmentSignIn = (
         secret: settings.secret,
         database,
         cookiePrefix: "executor-hosted",
+        productPlugins: [selfHostInstanceSchema],
       }),
     });
   });
