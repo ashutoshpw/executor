@@ -1,20 +1,26 @@
 import { CopyButton } from "./code.tsx";
+import type { PromptOrganization } from "./connect.tsx";
 
 /**
  * Services Executor cannot add without guessing are set up by the user's agent, which can read the
  * service's documentation and ask the user how they sign in.
  */
-export const agentSetupPrompt = (endpoint?: string) =>
+export const agentSetupPrompt = (endpoint?: string, organization?: PromptOrganization) =>
   [
     "Help me add a service to Executor as an app. Ask me which service I want to connect.",
     "",
     "Start with the Executor app's executor skill, then follow its app-authoring skill. Read the service's API and authentication documentation, ask me how I sign in and anything else you need, then write and deploy the app and help me connect my account.",
     ...(endpoint === undefined
       ? []
-      : [
-          "",
-          `If you are not connected to Executor yet, connect to its MCP server at ${endpoint} first.`,
-        ]),
+      : organization === undefined
+        ? [
+            "",
+            `If you are not connected to Executor yet, connect to its MCP server at ${endpoint} first.`,
+          ]
+        : [
+            "",
+            `Use your Executor connection for the ${organization.name} organization (${organization.slug}) at ${endpoint}. If you are not connected to Executor, or your Executor connection is for a different organization, connect to ${endpoint} first.`,
+          ]),
   ].join("\n");
 
 /** A copyable handoff to the user's agent. */

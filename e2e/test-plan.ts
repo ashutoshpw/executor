@@ -7280,6 +7280,17 @@ export const scenarios = plan({
       cloud: na("Cloud lets every user create organizations."),
     },
   },
+  organizationMcpUrls: {
+    fixtures: "actors",
+    file: "organization-mcp-urls.spec.ts",
+    title:
+      "self-host agent prompts and install instructions name the organization and its own MCP URL",
+    targets: {
+      local: na("Local has no organizations."),
+      "self-host": scheduled,
+      cloud: na("Self-host organization pages; Cloud shares the pages but is not run here."),
+    },
+  },
   legacyInstanceOwner: {
     fixtures: "actors",
     legacyStorage: true,

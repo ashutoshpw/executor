@@ -2,6 +2,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { ResourceOrigins } from "@executor-js/mcp-auth/grants";
 import { resourceOriginsAtom } from "../contracts/mcp.ts";
+import { useOrganizationRoute } from "./components/organization.tsx";
 
 /** Every hosted document carries its resource origins, so a missing value is a host bug. */
 export function useResourceOrigins(): ResourceOrigins {
@@ -12,3 +13,17 @@ export function useResourceOrigins(): ResourceOrigins {
 
 /** The canonical MCP origin, where pages show MCP URLs. */
 export const useMcpOrigin = (): string => useResourceOrigins().mcp[0];
+
+/** An organization's own MCP URL; a connection made through it is bound to that organization. */
+export const organizationMcpUrl = (mcpOrigin: string, slug: string): string =>
+  `${mcpOrigin}/org/${encodeURIComponent(slug)}/mcp`;
+
+/** The current organization's MCP URL and the name and slug that prompts show beside it. */
+export function useOrganizationMcp() {
+  const mcpOrigin = useMcpOrigin();
+  const { slug, name } = useOrganizationRoute();
+  return {
+    endpoint: organizationMcpUrl(mcpOrigin, slug),
+    organization: { name: name ?? slug, slug },
+  };
+}

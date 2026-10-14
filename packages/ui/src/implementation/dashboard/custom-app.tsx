@@ -8,6 +8,7 @@ import { Add01Icon } from "@hugeicons/core-free-icons";
 import { useState } from "react";
 import type { MutationProps } from "../../contracts/dashboard.ts";
 import { AgentSetupPrompt, agentSetupPrompt } from "./agent-setup.tsx";
+import type { PromptOrganization } from "./connect.tsx";
 import { Button } from "../components/button.tsx";
 import { Input } from "../components/input.tsx";
 
@@ -20,10 +21,13 @@ export function CustomAppForm<E>({
   Failure,
   onInstalled,
   endpoint,
+  organization,
 }: MutationProps<CustomAppInput, DeployedApp, E> & {
   readonly onInstalled: (app: DeployedApp) => void | Promise<void>;
   /** This installation's MCP URL, included so an unconnected agent can connect first. */
   readonly endpoint?: string;
+  /** The organization `endpoint` is bound to, named in the prompt so the agent uses it. */
+  readonly organization?: PromptOrganization;
 }) {
   const result = useAtomValue(mutation);
   const add = useAtomSet(mutation, { mode: "promiseExit" });
@@ -106,7 +110,7 @@ export function CustomAppForm<E>({
       <AgentSetupPrompt
         title="Any other service"
         description="For OpenAPI, GraphQL, API keys, local tools, or anything else, send this prompt to your agent. It reads the service’s documentation and asks how you sign in."
-        prompt={agentSetupPrompt(endpoint)}
+        prompt={agentSetupPrompt(endpoint, organization)}
       />
     </div>
   );
