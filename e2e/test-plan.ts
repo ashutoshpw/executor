@@ -1015,6 +1015,31 @@ export const scenarios = plan({
       local: na("Hosted app API fixture; Node adapter exercised by self-host"),
     },
   },
+  appBlobHandles: {
+    fixtures: "actors",
+    file: "blob-handles.spec.ts",
+    title:
+      "An app turns a URL into a file handle host-side, reads exact ranges, dedupes per organization, hides the file from other organizations and deletes it, and the organization's Blob setting sets the lifetime",
+    targets: {
+      "self-host": scheduled,
+      cloud: na(
+        "Cloud's runner writes a UserContent bucket that managed local Cloud does not provide; run `bun run e2e:deployed` against a stage to cover it.",
+      ),
+      local: na("Hosted app API fixture; the Node adapter is exercised by self-host."),
+    },
+  },
+  appBlobHandleExpiry: {
+    fixtures: "actors",
+    file: "blob-handles.spec.ts",
+    title:
+      "Expired file handles are denied at once and removed from the store by the sweep, while live ones stay readable",
+    serverEnvironment: { EXECUTOR_FILE_HANDLE_SWEEP_SECONDS: "1" },
+    targets: {
+      "self-host": scheduled,
+      cloud: na("Advances the wall clock of a runner-owned product process."),
+      local: na("Hosted app API fixture; the Node adapter is exercised by self-host."),
+    },
+  },
   toolsIndexCache: {
     fixtures: "actors",
     file: "tools-index-cache.spec.ts",
