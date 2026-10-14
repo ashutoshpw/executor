@@ -63,6 +63,7 @@ interface AppRpcEntrypoint {
     workflow?: import("apps/contracts").WorkflowRpc | null,
     controls?: ((input: unknown) => Promise<unknown>) | null,
     cache?: ((input: unknown) => Promise<unknown>) | null,
+    blobs?: ((input: unknown) => Promise<unknown>) | null,
   ): Promise<unknown>;
 }
 /** Generated entrypoint; each start returns a separate invocation capability. */

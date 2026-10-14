@@ -144,6 +144,8 @@ const credentialHandleSecret = (encryptionKey: Redacted.Redacted<string>) =>
 export const workerdApps = (options: {
   readonly directory: string;
   readonly blobs: BlobStorage;
+  /** Where the apps Worker's file transfers land, reached through this host. Without it, no files. */
+  readonly userContent?: BlobStorage;
   readonly executor: Effect.Effect<Executor>;
   readonly legacyDataDirectories?: readonly string[];
   /**

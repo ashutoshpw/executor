@@ -245,6 +245,11 @@ export interface ExecutorInputs {
   /** The Git backend behind app source. The executor derives revision storage from it. */
   readonly git: RepositoryBackend;
   readonly blobs: BlobStorage;
+  /**
+   * Where apps keep files by handle, how they are tracked and what this host accepts. Without it
+   * `ctx.blobs` is unavailable to apps.
+   */
+  readonly userContent?: import("./file-handles.ts").UserContentOptions;
   readonly runtime: AppRuntime;
   readonly oauth?: OAuthOptions;
   /** Defaults to reading the hosted Executor registry. */
