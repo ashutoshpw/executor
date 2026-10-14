@@ -8,7 +8,16 @@ import { Link, Navigate, useLocation } from "@tanstack/react-router";
 import { Cause, Exit, Option, Schema } from "effect";
 import { OrganizationResume } from "../../contracts/navigation.ts";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { Logout01Icon, Settings05Icon, UnfoldMoreIcon, UserIcon } from "@hugeicons/core-free-icons";
+import {
+  ComputerIcon,
+  Logout01Icon,
+  Moon02Icon,
+  Settings05Icon,
+  Sun01Icon,
+  UnfoldMoreIcon,
+  UserIcon,
+} from "@hugeicons/core-free-icons";
+import { useTheme, type ThemePreference } from "@executor-js/ui/hooks/theme";
 import { useEffect, useState, type ReactNode } from "react";
 import { AuthFailed, sessionAtom, signOutAtom } from "../../contracts/auth.ts";
 import { Button } from "@executor-js/ui/components/button";
@@ -18,6 +27,8 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@executor-js/ui/components/dropdown-menu";
@@ -102,6 +113,15 @@ export function signOutFailure(result: Exit.Exit<unknown, unknown>): string | un
   return failure instanceof AuthFailed ? failure.message : "Unable to sign out. Try again.";
 }
 
+const themeChoices = [
+  { value: "light", label: "Light", icon: Sun01Icon },
+  { value: "dark", label: "Dark", icon: Moon02Icon },
+  { value: "system", label: "System", icon: ComputerIcon },
+] as const;
+
+const isThemePreference = (value: string): value is ThemePreference =>
+  themeChoices.some((choice) => choice.value === value);
+
 /**
  * The signed-in identity. In the dashboard sidebar it opens a menu with the personal settings
  * and sign-out; entry pages pass a label and get a plain sign-out control instead.
@@ -118,6 +138,7 @@ export function SessionMenu({
   const signOut = useAtomSet(signOutAtom, { mode: "promiseExit" });
   const state = useAtomValue(signOutAtom);
   const [error, setError] = useState<string | null>(null);
+  const [theme, setTheme] = useTheme();
   if (Option.isNone(session) || session.value === null) return null;
   // Email-code accounts can have no personal display name. Their email still
   // identifies the signed-in account independently of the selected team.
@@ -202,6 +223,30 @@ export function SessionMenu({
               Account settings
             </Link>
           </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuLabel className="px-2 pt-1 pb-0.5 text-xs font-normal text-muted-foreground">
+            Theme
+          </DropdownMenuLabel>
+          <DropdownMenuRadioGroup
+            aria-label="Theme"
+            value={theme}
+            onValueChange={(value) => {
+              if (isThemePreference(value)) setTheme(value);
+            }}
+          >
+            {themeChoices.map((choice) => (
+              <DropdownMenuRadioItem
+                key={choice.value}
+                value={choice.value}
+                className="min-h-9 cursor-pointer py-2 pr-2 pl-8 text-[13px]"
+                onSelect={(event) => event.preventDefault()}
+              >
+                <HugeiconsIcon icon={choice.icon} strokeWidth={2} size={16} aria-hidden />
+                {choice.label}
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+          <DropdownMenuSeparator />
           <DropdownMenuItem className="min-h-9 cursor-pointer p-2 text-[13px]" onSelect={leave}>
             <HugeiconsIcon icon={Logout01Icon} strokeWidth={2} size={16} aria-hidden />
             Sign out

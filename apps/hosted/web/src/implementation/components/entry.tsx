@@ -33,7 +33,7 @@ export function HostedEntry({
         aria-labelledby={heading}
       >
         <div className="mb-8 flex items-center gap-2 font-mono text-[15px]">
-          <img src="/favicon.png" alt="" className="size-5" />
+          <img src="/favicon.png" alt="" className="size-5 dark:invert" />
           <span>executor</span>
         </div>
         <h1 id={heading} className="text-2xl font-medium tracking-[-0.04em]">
