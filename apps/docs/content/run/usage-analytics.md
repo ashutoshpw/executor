@@ -46,6 +46,14 @@ include the root domain of the instance's public URL: `executor.platform.acme.co
 is reported as `acme.com`. Local addresses, IP addresses and tunnel or dynamic-DNS
 hosts are reported as `private`.
 
+## Tool calls on self-host
+
+Self-host also keeps a local record of each finished tool call so its usage
+insights can show which tools run most. Each record holds the app and tool
+names, the calling agent or key label, the outcome, the error type and the
+duration. It is written to `usage.duckdb` in the data directory and is not sent
+to PostHog or anywhere else. Tool inputs and outputs are never recorded.
+
 ## What is never sent
 
 Tool inputs or outputs, app source code, app data, credentials, the names of
