@@ -175,6 +175,7 @@ const prepare = (state: DurableObjectState, env: Environment) =>
               ...host,
               blobs,
               userContent,
+              userContentRequiresSize: true,
               repositories: bindingRepositories(env.NATIVE, directory),
             };
           }),

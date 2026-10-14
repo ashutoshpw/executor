@@ -12,6 +12,7 @@
 import { Clock, Effect, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 import {
+  BlobExpired,
   BlobHandle,
   BlobNotFound,
   BlobTooLarge,
@@ -20,7 +21,6 @@ import {
 } from "apps/contracts";
 import { BlobKey } from "../contracts/blobs.ts";
 import {
-  pendingBlobSeconds,
   userContentFolder,
   type FileHandleStore,
   type StoredFileHandle,
@@ -130,10 +130,21 @@ export const makeFileHandleStore = (options: {
           "begin",
           sql`insert into ${table} (id, owner, state, content_type, expires_at, creator_app_id)
             values (${id}, ${input.owner}, 'pending', ${input.contentType},
-              ${at}::timestamptz + (${pendingBlobSeconds} * interval '1 second'), ${input.appId ?? null})`,
+              ${at}::timestamptz + (${input.pendingSeconds} * interval '1 second'), ${input.appId ?? null})`,
         );
         return { id, key: keyOf(input.owner, id) };
       }),
+    touch: (input) =>
+      now.pipe(
+        Effect.flatMap((at) =>
+          exec(
+            "touch",
+            sql`update ${table}
+              set expires_at = ${at}::timestamptz + (${input.pendingSeconds} * interval '1 second')
+              where id = ${input.id} and owner = ${input.owner} and state = 'pending'`,
+          ),
+        ),
+      ),
     commit: (input) =>
       commitOnce(input).pipe(
         // A concurrent commit of the same bytes can win the unique index between the check and
@@ -155,24 +166,19 @@ export const makeFileHandleStore = (options: {
         sql`delete from ${table} where id = ${input.id} and owner = ${input.owner} and state = 'pending'`,
       ),
     stat: (input) =>
-      now
-        .pipe(
-          Effect.flatMap((at) =>
-            rows(
-              "stat",
-              sql`select ${columns(sql)} from ${table}
-              where id = ${input.id} and owner = ${input.owner} and state = 'complete'
-                and expires_at > ${at}::timestamptz`,
-            ),
-          ),
-        )
-        .pipe(
-          Effect.flatMap((found) =>
-            found[0] === undefined
-              ? Effect.fail(new BlobNotFound({ id: input.id }))
-              : Effect.succeed(stored(found[0])),
-          ),
-        ),
+      Effect.gen(function* () {
+        const at = yield* now;
+        const found = yield* rows(
+          "stat",
+          sql`select ${columns(sql)} from ${table}
+            where id = ${input.id} and owner = ${input.owner} and state = 'complete'`,
+        );
+        const row = found[0];
+        if (row === undefined) return yield* new BlobNotFound({ id: input.id });
+        if (Date.parse(row.expires_at) <= Date.parse(at))
+          return yield* new BlobExpired({ id: input.id });
+        return stored(row);
+      }),
     retire: (input) =>
       now
         .pipe(

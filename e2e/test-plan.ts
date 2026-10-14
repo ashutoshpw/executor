@@ -1033,10 +1033,25 @@ export const scenarios = plan({
     file: "blob-handles.spec.ts",
     title:
       "Expired file handles are denied at once and removed from the store by the sweep, while live ones stay readable",
-    serverEnvironment: { EXECUTOR_FILE_HANDLE_SWEEP_SECONDS: "1" },
+    serverEnvironment: { EXECUTOR_FILE_HANDLE_SWEEP_SECONDS: "3600" },
     targets: {
       "self-host": scheduled,
       cloud: na("Advances the wall clock of a runner-owned product process."),
+      local: na("Hosted app API fixture; the Node adapter is exercised by self-host."),
+    },
+  },
+  appBlobHandleTransfers: {
+    fixtures: "actors",
+    file: "blob-handles.spec.ts",
+    title:
+      "Empty files, concurrent identical transfers and a stalled upstream all end in one whole file handle",
+    serverEnvironment: {
+      EXECUTOR_FILE_HANDLE_SWEEP_SECONDS: "1",
+      EXECUTOR_FILE_HANDLE_PENDING_SECONDS: "6",
+    },
+    targets: {
+      "self-host": scheduled,
+      cloud: na("Needs a Cloud UserContent bucket and the runner's filesystem store."),
       local: na("Hosted app API fixture; the Node adapter is exercised by self-host."),
     },
   },
