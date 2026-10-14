@@ -7,6 +7,7 @@ import {
   observeProductOperation,
   traceProductRead,
 } from "../contracts/product-analytics.ts";
+import { CurrentApiKey } from "../contracts/usage.ts";
 import { RequiredAction, CurrentAuthorization } from "../contracts/authorization.ts";
 import {
   fullAuthority,
@@ -147,6 +148,7 @@ export const withOrganizationRequest = <E, R>(
         Effect.provideService(CurrentOrganizationNamespace, scope),
         Effect.provideService(CurrentUserId, grant.userId),
         Effect.provideService(CurrentUsage, { source: "api" }),
+        Effect.provideService(CurrentApiKey, grant.key?.id),
       )).pipe(HttpServerResponse.setHeader("cache-control", "no-store"));
     }
     if (

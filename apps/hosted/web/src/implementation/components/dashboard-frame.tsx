@@ -3,6 +3,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import {
   BoxesIcon,
   FingerPrintIcon,
+  Home01Icon,
   Key01Icon,
   Plug01Icon,
   Settings05Icon,
@@ -20,6 +21,7 @@ import { SessionMenu } from "./auth.tsx";
 import { useDocumentationUrl } from "../documentation.ts";
 
 const items = [
+  { to: "/org/$organizationSlug", label: "Home", icon: Home01Icon, exact: true },
   { to: "/org/$organizationSlug/apps", label: "Apps", icon: BoxesIcon },
   { to: "/org/$organizationSlug/connect", label: "Connections", icon: Plug01Icon },
   { to: "/org/$organizationSlug/accounts", label: "Accounts", icon: UserCircleIcon },
@@ -47,16 +49,15 @@ function NavigationItem({
       {item.label}
     </>
   );
+  const pending = "exact" in item ? pendingPage === "home" : item.to.endsWith(`/${pendingPage}`);
   if (organizationSlug === undefined)
     return (
       <a
         role="link"
         aria-disabled="true"
         tabIndex={-1}
-        aria-current={item.to.endsWith(`/${pendingPage}`) ? "page" : undefined}
-        className={
-          item.to.endsWith(`/${pendingPage}`) ? "active pointer-events-none" : "pointer-events-none"
-        }
+        aria-current={pending ? "page" : undefined}
+        className={pending ? "active pointer-events-none" : "pointer-events-none"}
       >
         {content}
       </a>
@@ -65,6 +66,7 @@ function NavigationItem({
     <Link
       to={item.to}
       params={{ organizationSlug }}
+      activeOptions={{ exact: "exact" in item }}
       activeProps={{ className: "active", "aria-current": "page" }}
     >
       {content}
@@ -182,7 +184,7 @@ export function DashboardFrame({
         ) : organizationSlug === undefined ? (
           <div {...brand} />
         ) : (
-          <Link to="/org/$organizationSlug/apps" params={{ organizationSlug }} {...brand} />
+          <Link to="/org/$organizationSlug" params={{ organizationSlug }} {...brand} />
         )
       }
       banner={banner}

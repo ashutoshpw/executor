@@ -162,6 +162,7 @@
         "@executor-js/sdk": "workspace:*",
         "@executor-js/telemetry": "workspace:*",
         "@executor-js/utils": "workspace:*",
+        "@w3devx/duckdb-node-api": "link:@w3devx/duckdb-node-api",
         "apps": "workspace:*",
         "better-auth": "1.7.5",
         "effect": "4.0.1",
@@ -2839,6 +2840,8 @@
     "@vue/server-renderer": ["@vue/server-renderer@3.5.43", "", { "dependencies": { "@vue/compiler-ssr": "3.5.43", "@vue/runtime-dom": "3.5.43", "@vue/shared": "3.5.43" } }, "sha512-l2Ygjv9NehV94PSBxNWsAHC0j/eIIKbn92mBuWXAPGLnn6HfJ6MH5ubsd+Nk0YoZ5FRuxWI1P2VSoh+dbPQhCQ=="],
 
     "@vue/shared": ["@vue/shared@3.5.43", "", {}, "sha512-uksS7YGMR5NZyr4JNq0Rp+QyLns0ueaz20KwzIPW9R0LH1Vnt4E+XUM29PNseEbf1www2gOuhuDi5AKOIXag9Q=="],
+
+    "@w3devx/duckdb-node-api": ["@w3devx/duckdb-node-api@link:@w3devx/duckdb-node-api", {}],
 
     "@workflow/serde": ["@workflow/serde@4.1.0", "", {}, "sha512-pav4F2BoirECWR7Nf1TKt+2eETcBj7jj4cBefQ8VXQCA6NPkaKeLfj/zMgi+3zYV5ZIBT4GuUiphsj0/b9hPQQ=="],
 

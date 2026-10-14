@@ -39,6 +39,7 @@ layer(TestLive, { excludeTestServices: true })("Cloud dashboard routing", (it) =
         // The dashboard renderer owns every deep link. Signed out, each one goes to sign-in and
         // keeps its exact address to return to.
         for (const path of [
+          "/org/routing-fixture",
           "/org/routing-fixture/apps",
           "/org/routing-fixture/apps/app_fixture/source/src/nested/example.ts",
           "/org/routing-fixture/apps/app_fixture/history",
@@ -50,8 +51,8 @@ layer(TestLive, { excludeTestServices: true })("Cloud dashboard routing", (it) =
           expect(response.status, path).toBe(307);
           expect(response.location, path).toBe(`/login?redirect=${encodeURIComponent(path)}`);
         }
-        // An organization root and a trailing slash open the canonical Apps address.
-        for (const path of ["/org/routing-fixture", "/org/routing-fixture/apps/"]) {
+        // A trailing slash opens the canonical Apps address.
+        for (const path of ["/org/routing-fixture/apps/"]) {
           const response = yield* read(path);
           expect(response.status, path).toBe(307);
           expect(response.location, path).toBe("/org/routing-fixture/apps");

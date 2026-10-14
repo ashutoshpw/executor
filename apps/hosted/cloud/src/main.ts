@@ -93,11 +93,7 @@ import { homepage, staticDocument } from "./implementation/homepage.ts";
 import { sitePageRoutes } from "./contracts/site-paths.ts";
 import { withNotFoundDocument, notFoundDocument } from "./implementation/not-found.ts";
 import { openAiAppsChallenge } from "./implementation/openai-apps-challenge.ts";
-import {
-  cloudDashboard,
-  dashboardPageRoutes,
-  organizationRoot,
-} from "./implementation/dashboard.ts";
+import { cloudDashboard, dashboardPageRoutes } from "./implementation/dashboard.ts";
 import { withHostPipeline } from "@executor-js/dashboard-start/in-process";
 import { dashboardBatchPath } from "@executor-js/dashboard-start/batch";
 import { workerFirstRoutes } from "./contracts/worker-first-routes.ts";
@@ -554,7 +550,6 @@ export default Api.make(
       siteTelemetryRoutes,
       browserTelemetry.pipe(HttpRouter.provideRequest(auth.identity)),
       HttpRouter.add("GET", "/", homepage(auth.cookiePrefix, dashboard(null))),
-      HttpRouter.add("GET", "/org/:organizationSlug", organizationRoot),
       ...dashboardPageRoutes.map((route) =>
         route === "/app-auth"
           ? // Resolved on the server so opening an app never renders an intermediate page.

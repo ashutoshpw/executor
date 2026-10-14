@@ -34,6 +34,7 @@ import {
   apiProtectedResource,
   lazyHostedApiDocument,
   ProductAnalytics,
+  UsageStore,
 } from "@executor-js/hosted-server";
 import { recordRequestRejections, requestTiming } from "@executor-js/telemetry/http";
 import { appAddresses, hostedAppUi } from "@executor-js/hosted-server/app-ui";
@@ -49,6 +50,7 @@ import { selfHostApi } from "./api.ts";
 import { selfHostMcp } from "../mcp.ts";
 import { SelfHostAuth } from "../auth.ts";
 import { selfHostAnalytics } from "./product-analytics.ts";
+import { selfHostUsageStore } from "./usage-store.ts";
 
 import type { SourceTextFile as SourceFile } from "@executor-js/sdk/core";
 import type { selfHostExecutorServices } from "./executor-services.ts";
@@ -66,10 +68,15 @@ export const selfHostRouteMap = <DashboardE, DashboardR>(options: {
     const auth = yield* SelfHostAuth.pipe(Effect.provide(executorServices));
     const analytics = yield* selfHostAnalytics;
     /** Requests and background schedules record through this instance's sink unless it opted out. */
-    const observed = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
-      analytics === undefined
-        ? effect
-        : effect.pipe(Effect.provideService(ProductAnalytics, analytics.product));
+    const usage = yield* selfHostUsageStore;
+    /** Usage records are a local feature, kept whether or not analytics is enabled. */
+    const observed = <A, E, R>(effect: Effect.Effect<A, E, R>) => {
+      const recorded =
+        usage === undefined ? effect : effect.pipe(Effect.provideService(UsageStore, usage));
+      return analytics === undefined
+        ? recorded
+        : recorded.pipe(Effect.provideService(ProductAnalytics, analytics.product));
+    };
     const scheduler = yield* Effect.gen(function* () {
       const executor = yield* Effect.flatten(HostedExecutor);
       const authorize = yield* ScheduledAuthority;
