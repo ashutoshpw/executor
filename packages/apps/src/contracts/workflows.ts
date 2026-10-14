@@ -170,7 +170,7 @@ export interface WorkflowControls extends WorkflowReads {
 export type WorkflowStepContext<
   Requirements extends AppRequirements = AppRequirements,
   Scope extends AccountScope = "user",
-> = Omit<AppContext<Requirements, Scope>, "elicit" | "workflows"> & {
+> = Omit<AppContext<Requirements, Scope>, "elicit" | "workflows" | "blobs"> & {
   readonly runId: WorkflowRunId;
   readonly stepId: string;
   readonly idempotencyKey: string;
