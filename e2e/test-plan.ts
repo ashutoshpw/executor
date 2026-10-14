@@ -7360,7 +7360,7 @@ export const scenarios = plan({
   },
   addAppRegistry: {
     file: "add-app-registry.spec.ts",
-    title: "Add app lists catalog apps and never reads the public registry",
+    title: "Add app lists public registry apps beside catalog apps",
     targets: {
       "self-host": scheduled,
       cloud: na("Cloud serves the registry from its own database instead of a remote origin."),
