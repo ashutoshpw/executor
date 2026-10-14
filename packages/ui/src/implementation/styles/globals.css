@@ -1,5 +1,17 @@
 @import "tailwindcss";
 @import "tw-animate-css";
+/* Dark follows the `dark` class on <html>, set before first paint from the saved choice. */
+@custom-variant dark {
+  &:where(.dark, .dark *) {
+    @slot;
+  }
+  /* Without script, `dark:` utilities follow the OS like the tokens below. */
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not(.light, .dark), :root:not(.light, .dark) *) {
+      @slot;
+    }
+  }
+}
 @source "../components";
 @source "../../../../devtools/src";
 @source "../../../../dashboard-start/src/implementation/build-change-notice.tsx";
@@ -61,8 +73,24 @@
   --ring: #888;
   --sign-in-warning: #99651a;
 }
+:root.dark {
+  color-scheme: dark;
+  --background: #0a0a0a;
+  --foreground: #ededed;
+  --primary: #fff;
+  --primary-foreground: #0a0a0a;
+  --muted: #111;
+  --muted-foreground: #9a9a9a;
+  --accent: #1a1a1a;
+  --destructive: #e0726a;
+  --border: #242424;
+  --input: #333;
+  --ring: #777;
+  --sign-in-warning: #d6aa65;
+}
+/* Without script, follow the OS. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not(.light):not(.dark) {
     color-scheme: dark;
     --background: #0a0a0a;
     --foreground: #ededed;

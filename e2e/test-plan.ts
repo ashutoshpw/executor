@@ -2256,6 +2256,17 @@ export const scenarios = plan({
       local: na("The local dashboard is covered by its own support scenario."),
     },
   },
+  themeToggle: {
+    fixtures: "actors",
+    file: "theme-toggle.spec.ts",
+    title:
+      "the account menu switches the dashboard between light, dark and system themes and remembers the choice",
+    targets: {
+      "self-host": scheduled,
+      cloud: managedCloud,
+      local: na("The local dashboard has no account menu."),
+    },
+  },
   localSupportDialog: {
     file: "local-support-dialog.spec.ts",
     title: "local dashboard keeps its resource links without the Cloud support dialog",
