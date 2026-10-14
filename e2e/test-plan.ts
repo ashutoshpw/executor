@@ -1615,6 +1615,17 @@ export const scenarios = plan({
       local: na("Local has no group or access filters."),
     },
   },
+  commandBar: {
+    fixtures: "actors",
+    file: "command-bar.spec.ts",
+    title:
+      "The command bar opens with Ctrl+K or its trigger, filters, navigates and closes with Escape",
+    targets: {
+      "self-host": scheduled,
+      cloud: scheduled,
+      local: na("Local has no hosted dashboard frame."),
+    },
+  },
   sdkQueryBudgets: {
     fixtures: "actors",
     // Statement budgets compare reads against the provisioned personal account, so setup waits for it.

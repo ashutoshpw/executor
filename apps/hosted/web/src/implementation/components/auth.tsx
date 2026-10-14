@@ -12,6 +12,7 @@ import { Logout01Icon, Settings05Icon, UnfoldMoreIcon, UserIcon } from "@hugeico
 import { useEffect, useState, type ReactNode } from "react";
 import { AuthFailed, sessionAtom, signOutAtom } from "../../contracts/auth.ts";
 import { Button } from "@executor-js/ui/components/button";
+import { CommandBarProvider } from "./command-bar-context.tsx";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -77,7 +78,7 @@ export function AuthBoundary({ children }: { readonly children: ReactNode }) {
       />
     );
   return (
-    <>
+    <CommandBarProvider>
       {children}
       {AsyncResult.isFailure(session) && (
         <div
@@ -90,8 +91,15 @@ export function AuthBoundary({ children }: { readonly children: ReactNode }) {
           </Button>
         </div>
       )}
-    </>
+    </CommandBarProvider>
   );
+}
+
+/** What to tell the visitor when signing out failed; `undefined` when it worked. */
+export function signOutFailure(result: Exit.Exit<unknown, unknown>): string | undefined {
+  if (!Exit.isFailure(result)) return undefined;
+  const failure = Cause.squash(result.cause);
+  return failure instanceof AuthFailed ? failure.message : "Unable to sign out. Try again.";
 }
 
 /**
@@ -127,11 +135,7 @@ export function SessionMenu({
   );
   const leave = async () => {
     setError(null);
-    const result = await signOut();
-    if (Exit.isFailure(result)) {
-      const failure = Cause.squash(result.cause);
-      setError(failure instanceof AuthFailed ? failure.message : "Unable to sign out. Try again.");
-    }
+    setError(signOutFailure(await signOut()) ?? null);
   };
   if (signOutLabel !== undefined)
     return (
