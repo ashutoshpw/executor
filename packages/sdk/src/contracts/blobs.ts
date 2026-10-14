@@ -42,12 +42,24 @@ export interface BlobListing {
   readonly truncated: boolean;
 }
 
-/** Each successful put publishes the complete object. Remove is idempotent. No public URLs or authorization live here. */
+/** Each successful put or putStream publishes the complete object. Remove is idempotent. No public URLs or authorization live here. */
 export interface BlobStorage {
   readonly get: (key: BlobKey) => Effect.Effect<Option.Option<Uint8Array>, BlobStoreError>;
   /** Whether a complete object is stored, without reading its bytes. */
   readonly exists: (key: BlobKey) => Effect.Effect<boolean, BlobStoreError>;
   readonly put: (key: BlobKey, body: Uint8Array) => Effect.Effect<void, BlobStoreError>;
+  /**
+   * Store an object from a stream. Nothing is visible at `key` until every byte is written; a
+   * failed or interrupted write leaves any earlier object untouched. `size`, when given, is the
+   * exact length: a different byte count fails and publishes nothing. A failure of `body` passes
+   * through as `E`. The write never retries, because a stream can be read once; callers that
+   * retry build the stream again with `Stream.suspend`.
+   */
+  readonly putStream: <E>(
+    key: BlobKey,
+    body: Stream.Stream<Uint8Array, E>,
+    options?: { readonly size?: number },
+  ) => Effect.Effect<void, BlobStoreError | E>;
   readonly remove: (key: BlobKey) => Effect.Effect<void, BlobStoreError>;
   /**
    * Names of the objects directly inside `folder` (`<folder>/<name>`) that sort after

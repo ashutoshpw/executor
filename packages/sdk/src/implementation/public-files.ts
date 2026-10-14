@@ -68,6 +68,11 @@ const listed = (blobs: BlobStorage, folder: BlobKey) =>
 /** Copies above this size go one at a time, so a deploy holds at most one large file. */
 const smallFile = 1024 * 1024;
 
+/** Views over `bytes` in `smallFile` pieces: groundwork for streamed writes, not a memory saving. */
+function* chunksOf(bytes: Uint8Array) {
+  for (let at = 0; at < bytes.length; at += smallFile) yield bytes.subarray(at, at + smallFile);
+}
+
 /**
  * Copy a source's public files into the lineage's store, skipping files it already holds, and
  * return the build's listing and the files as the deployment retains them: text stays inline,
@@ -105,9 +110,12 @@ export const retainPublicFiles = (
             return yield* new SourceError({ reason: "storage" });
           if (bytes.length > publicFileLimits.fileBytes)
             return yield* new SourceError({ reason: "limit" });
-          yield* blobs
-            .put(publicFileKey(code, object), bytes)
-            .pipe(Effect.mapError(() => new SourceError({ reason: "storage" })));
+          const key = publicFileKey(code, object);
+          yield* (
+            bytes.length > smallFile
+              ? blobs.putStream(key, Stream.fromIterable(chunksOf(bytes)), { size: bytes.length })
+              : blobs.put(key, bytes)
+          ).pipe(Effect.mapError(() => new SourceError({ reason: "storage" })));
           present.add(object);
         }
         const size = "object" in file ? file.size : (inline?.length ?? 0);
