@@ -273,7 +273,7 @@ const config :Workerd.Config = (
   (name="product",worker=(
    compatibilityDate="2026-09-01",compatibilityFlags=["nodejs_compat"],
    modules=[(name="product.mjs",esModule=embed "@@RUNTIME@@/product.mjs"),(name="executor:pglite.wasm",wasm=embed "@@RUNTIME@@/pglite.wasm"),(name="executor:initdb.wasm",wasm=embed "@@RUNTIME@@/initdb.wasm"),(name="executor:pglite.data",data=embed "@@RUNTIME@@/pglite.data")],
-   bindings=[(name="PRODUCT",durableObjectNamespace="ExecutorProduct"),(name="NATIVE",service="native"),(name="LEGACY_DATABASE",service="legacy-data"),(name="BLOBS",service="builds"),(name="DASHBOARD",service="dashboard"),(name="PUBLIC_FETCH",service="public"),(name="PRIVATE_FETCH",service="internet"),(name="MOTEL",service="motel"),(name="SELF",service=(name="product",entrypoint="SelfOrigin")),(name="APPS",service="apps"),(name="UNSAFE_EVAL",unsafeEval=void)],
+   bindings=[(name="PRODUCT",durableObjectNamespace="ExecutorProduct"),(name="NATIVE",service="native"),(name="LEGACY_DATABASE",service="legacy-data"),(name="BLOBS",service="builds"),(name="USER_CONTENT",service="user-content"),(name="DASHBOARD",service="dashboard"),(name="PUBLIC_FETCH",service="public"),(name="PRIVATE_FETCH",service="internet"),(name="MOTEL",service="motel"),(name="SELF",service=(name="product",entrypoint="SelfOrigin")),(name="APPS",service="apps"),(name="UNSAFE_EVAL",unsafeEval=void)],
    durableObjectNamespaces=[(className="ExecutorProduct",uniqueKey="executor-product",enableSql=true,preventEviction=true)],durableObjectStorage=(localDisk="product-data")
   )),
   (name="apps",worker=(
@@ -295,7 +295,8 @@ const config :Workerd.Config = (
   (name="legacy-data",disk=(path="/app/data/hosted.pglite",allowDotfiles=true)),
   (name="app-data",disk=(path="/app/data/workerd",writable=true,allowDotfiles=true)),
   (name="workflow-data",disk=(path="/app/data/workerd/workflows",writable=true,allowDotfiles=true)),
-  (name="builds",disk=(path="/app/data/builds",writable=true))
+  (name="builds",disk=(path="/app/data/builds",writable=true)),
+  (name="user-content",disk=(path="/app/data/user-content",writable=true))
  ],
  sockets=[(name="http",address="0.0.0.0:4400",http=(),service=@@PRODUCT_SERVICE@@)]
 );

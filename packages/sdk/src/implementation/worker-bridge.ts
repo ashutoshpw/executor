@@ -183,7 +183,7 @@ export class ExecutorAppData extends DurableObject {
   #calls = new Map();
   #caches = new Map();
   fetch(request) { return bridge.fetch(request, { STORAGE: this.#storage }); }
-  async invoke(id, body, headers, elicitation, workflows, cache) {
+  async invoke(id, body, headers, elicitation, workflows, cache, blobs) {
     const session = cache == null ? undefined : bridge.cacheSession?.(cache);
     if (session) this.#caches.set(id, session);
     const controller = new AbortController();
@@ -193,7 +193,7 @@ export class ExecutorAppData extends DurableObject {
       const started = clock?.();
       const response = await bridge.fetch(new Request("https://app.internal/dispatch", {
         method: "POST", headers: { ...headers, "content-type": "application/json" }, body, signal: controller.signal
-      }), { STORAGE: this.#storage, ELICITATION: elicitation, WORKFLOW_CONTROLS: workflows, CACHE: session?.cache });
+      }), { STORAGE: this.#storage, ELICITATION: elicitation, WORKFLOW_CONTROLS: workflows, CACHE: session?.cache, USER_BLOBS: blobs });
       return dispatched(clock, started, await response.json());
     } finally { this.#calls.delete(id); }
   }

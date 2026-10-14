@@ -65,6 +65,8 @@ interface Environment {
   readonly LEGACY_DATABASE: HttpBinding;
   readonly NATIVE: HttpBinding;
   readonly BLOBS: HttpBinding;
+  /** Files apps keep by handle, on their own private disk service. */
+  readonly USER_CONTENT: HttpBinding;
   readonly DASHBOARD: HttpBinding;
   readonly PUBLIC_FETCH: HttpBinding;
   readonly PRIVATE_FETCH: HttpBinding;
@@ -159,6 +161,7 @@ const prepare = (state: DurableObjectState, env: Environment) =>
         }),
       };
       const blobs = bindingBlobStore(env.BLOBS);
+      const userContent = bindingBlobStore(env.USER_CONTENT);
       const directory = yield* Config.NonEmptyString("EXECUTOR_REPOSITORIES_DIR");
       const services = yield* Layer.build(
         selfHostExecutorServices(egress, () =>
@@ -168,7 +171,12 @@ const prepare = (state: DurableObjectState, env: Environment) =>
               authorization: "service-binding",
               blobs,
             });
-            return { ...host, blobs, repositories: bindingRepositories(env.NATIVE, directory) };
+            return {
+              ...host,
+              blobs,
+              userContent,
+              repositories: bindingRepositories(env.NATIVE, directory),
+            };
           }),
         ),
       );

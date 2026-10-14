@@ -25,6 +25,20 @@ export const AppBuilds = Cloudflare.R2.Bucket(
   ),
 ).pipe(retain(testStage.pipe(Effect.map(Option.isNone), Effect.orDie)));
 
+/**
+ * What apps store as files by handle, apart from builds so each store has its own retention and
+ * access: the AppData Worker's runner writes it, and only the product reads it back to apps. A
+ * destroyed test stage leaves nothing behind; configured stages keep it, because the rows that
+ * name its objects live in Postgres.
+ */
+export const UserContent = Cloudflare.R2.Bucket(
+  "UserContent",
+  testStage.pipe(
+    Effect.map((stage) => ({ forceDestroy: Option.isSome(stage) })),
+    Effect.orDie,
+  ),
+).pipe(retain(testStage.pipe(Effect.map(Option.isNone), Effect.orDie)));
+
 /** R2 accepts at most 5 GiB in one put; larger objects need multipart uploads. */
 const singlePutLimit = 5 * 1024 ** 3;
 
@@ -81,10 +95,11 @@ const streamObject = (bucket: ReadClient, key: BlobKey, range: BlobRange | undef
     Effect.mapError(() => new BlobStoreError({ operation: "get" })),
   );
 
-/** Resolve a binding at composition; storage I/O executes in the current Worker invocation. */
-export const cloudBlobs = Effect.gen(function* () {
-  const bucket = yield* Cloudflare.R2.ReadWriteBucket(AppBuilds);
-  return BlobStore.of({
+type ReadWriteClient = Effect.Success<ReturnType<typeof Cloudflare.R2.ReadWriteBucket>>;
+
+/** The blob contract over one read-write bucket; storage I/O executes in the current invocation. */
+const readWriteStore = (bucket: ReadWriteClient) =>
+  BlobStore.of({
     get: (key) =>
       Effect.gen(function* () {
         const object = yield* bucket.get(key);
@@ -168,7 +183,21 @@ export const cloudBlobs = Effect.gen(function* () {
     list: (folder, options) => listFolder(bucket, folder, options),
     stream: (key, range) => streamObject(bucket, key, range),
   });
-}).pipe(Effect.provide(Cloudflare.R2.ReadWriteBucketBinding));
+
+/** Resolve a binding at composition; storage I/O executes in the current Worker invocation. */
+export const cloudBlobs = Effect.map(Cloudflare.R2.ReadWriteBucket(AppBuilds), readWriteStore).pipe(
+  Effect.provide(Cloudflare.R2.ReadWriteBucketBinding),
+);
+
+/**
+ * User content, for the product Worker (which deletes and sweeps it) and the AppData Worker's
+ * runner (which streams file bytes into it). Both hold the binding; the runner's code only writes
+ * the keys the product reserved.
+ */
+export const cloudUserContent = Effect.map(
+  Cloudflare.R2.ReadWriteBucket(UserContent),
+  readWriteStore,
+).pipe(Effect.provide(Cloudflare.R2.ReadWriteBucketBinding));
 
 /**
  * Retained builds for the AppData Worker, which only reads them. Its binding client has no write
