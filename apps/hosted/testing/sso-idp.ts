@@ -1,12 +1,13 @@
 /** Disposable external identity provider for the real Cloud SSO journeys. */
 import { createServer } from "node:http";
+import { createServer as createSecureServer } from "node:https";
 import { generateKeyPairSync, createHash, randomUUID, sign } from "node:crypto";
 import { inflateRawSync } from "node:zlib";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import samlify from "samlify";
-import { Config, Deferred, Effect, FileSystem, Layer, Redacted, Schema } from "effect";
+import { Config, Deferred, Effect, FileSystem, Layer, Option, Redacted, Schema } from "effect";
 import { Command, Flag } from "effect/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http";
@@ -21,17 +22,36 @@ const decode = <A>(schema: Schema.Decoder<A>, value: unknown) =>
 const escape = (text: string) =>
   text.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;");
 
+/**
+ * Without `--application`, a sign-in may return to any loopback address, for an instance whose
+ * port is not known yet. With `--tls-key` and `--tls-certificate` the provider serves HTTPS, as
+ * a self-host instance requires of its identity provider.
+ */
 const command = Command.make("sso-idp", {
   directory: Flag.String("directory"),
-  application: Flag.String("application"),
+  application: Flag.String("application").pipe(Flag.optional),
+  tlsKey: Flag.String("tls-key").pipe(Flag.optional),
+  tlsCertificate: Flag.String("tls-certificate").pipe(Flag.optional),
 }).pipe(
-  Command.withHandler(({ directory, application }) =>
+  Command.withHandler(({ directory, application: applicationOption, tlsKey, tlsCertificate }) =>
     Effect.scoped(
       Effect.gen(function* () {
         yield* Config.String("NODE_ENV").pipe(
           Effect.flatMap(Schema.decodeUnknownEffect(Schema.Literal("test"))),
         );
         const fs = yield* FileSystem.FileSystem;
+        const application = Option.getOrUndefined(applicationOption);
+        // Cloud (with `--application`) keeps the strict contract: PKCE and Basic client auth.
+        const strict = application !== undefined;
+        const returnsTo = (url: URL) =>
+          application === undefined ? url.hostname === "127.0.0.1" : url.origin === application;
+        const tls =
+          Option.isSome(tlsKey) && Option.isSome(tlsCertificate)
+            ? {
+                key: yield* fs.readFileString(tlsKey.value),
+                cert: yield* fs.readFileString(tlsCertificate.value),
+              }
+            : undefined;
         const processes = yield* ChildProcessSpawner.ChildProcessSpawner;
         const address = yield* Deferred.make<string>();
         const keys = generateKeyPairSync("rsa", { modulusLength: 2048 });
@@ -70,7 +90,7 @@ const command = Command.make("sso-idp", {
           {
             redirect: string;
             nonce: string | undefined;
-            challenge: string;
+            challenge: string | undefined;
             identity: typeof Control.Type;
           }
         >();
@@ -140,14 +160,16 @@ const command = Command.make("sso-idp", {
                   redirect_uri: Schema.String,
                   state: Schema.String,
                   nonce: Schema.optionalKey(Schema.String),
-                  code_challenge: Schema.String,
-                  code_challenge_method: Schema.Literal("S256"),
+                  code_challenge: strict ? Schema.String : Schema.optionalKey(Schema.String),
+                  code_challenge_method: strict
+                    ? Schema.Literal("S256")
+                    : Schema.optionalKey(Schema.Literal("S256")),
                   client_id: Schema.Literal("synthetic-sso-client"),
                 }),
                 Object.fromEntries(url.searchParams),
               );
               const redirect = new URL(query.redirect_uri);
-              if (redirect.origin !== application) return HttpServerResponse.empty({ status: 400 });
+              if (!returnsTo(redirect)) return HttpServerResponse.empty({ status: 400 });
               const code = randomUUID();
               codes.set(code, {
                 redirect: query.redirect_uri,
@@ -169,7 +191,7 @@ const command = Command.make("sso-idp", {
               const input = yield* decode(
                 Schema.Struct({
                   code: Schema.String,
-                  code_verifier: Schema.String,
+                  code_verifier: Schema.optionalKey(Schema.String),
                   redirect_uri: Schema.String,
                 }),
                 Object.fromEntries(form),
@@ -179,10 +201,19 @@ const command = Command.make("sso-idp", {
               if (
                 !code ||
                 code.redirect !== input.redirect_uri ||
-                code.challenge !==
-                  createHash("sha256").update(input.code_verifier).digest("base64url") ||
-                request.headers.authorization !==
-                  `Basic ${Buffer.from("synthetic-sso-client:synthetic-sso-secret").toString("base64")}`
+                ((strict || code.challenge !== undefined) &&
+                  code.challenge !==
+                    createHash("sha256")
+                      .update(input.code_verifier ?? "")
+                      .digest("base64url")) ||
+                !(
+                  request.headers.authorization ===
+                    `Basic ${Buffer.from("synthetic-sso-client:synthetic-sso-secret").toString("base64")}` ||
+                  // Self-host sends the client's credentials in the form body.
+                  (!strict &&
+                    form.get("client_id") === "synthetic-sso-client" &&
+                    form.get("client_secret") === "synthetic-sso-secret")
+                )
               )
                 return HttpServerResponse.empty({ status: 401 });
               const origin = yield* Deferred.await(address);
@@ -247,8 +278,7 @@ const command = Command.make("sso-idp", {
                 Schema.NonEmptyString,
                 /<(?:\w+:)?Issuer[^>]*>([^<]+)</.exec(xml)?.[1]?.replaceAll("&amp;", "&"),
               );
-              if (new URL(acs).origin !== application)
-                return HttpServerResponse.empty({ status: 400 });
+              if (!returnsTo(new URL(acs))) return HttpServerResponse.empty({ status: 400 });
               const sp = ServiceProvider({
                 entityID: control.mode === "wrong-audience" ? "https://another.example/sp" : entity,
                 wantAssertionsSigned: true,
@@ -327,17 +357,46 @@ const command = Command.make("sso-idp", {
         );
         const services = yield* Layer.build(
           HttpRouter.serve(routes, { disableLogger: true, disableListenLog: true }).pipe(
-            Layer.provideMerge(NodeHttpServer.layer(createServer, { host: "127.0.0.1", port: 0 })),
+            Layer.provideMerge(
+              NodeHttpServer.layer(
+                tls === undefined ? createServer : () => createSecureServer(tls),
+                {
+                  host: "127.0.0.1",
+                  port: 0,
+                },
+              ),
+            ),
           ),
         );
         const server = yield* HttpServer.HttpServer.pipe(Effect.provideContext(services));
         if (!("port" in server.address))
           return yield* Effect.die("Expected a loopback TCP listener");
-        const origin = `http://127.0.0.1:${server.address.port}`;
+        const origin = `${tls === undefined ? "http" : "https"}://127.0.0.1:${server.address.port}`;
         yield* Deferred.succeed(address, origin);
-        yield* fs.writeFileString(`${directory}/sso-idp.json`, JSON.stringify({ origin }), {
-          mode: 0o600,
-        });
+        // A runner that does not trust the certificate drives the provider through this plain
+        // listener, which serves the same routes; instances still reach it only over HTTPS.
+        const plainOrigin =
+          tls === undefined
+            ? origin
+            : yield* Layer.build(
+                HttpRouter.serve(routes, { disableLogger: true, disableListenLog: true }).pipe(
+                  Layer.provideMerge(
+                    NodeHttpServer.layer(createServer, { host: "127.0.0.1", port: 0 }),
+                  ),
+                ),
+              ).pipe(
+                Effect.flatMap((plain) => HttpServer.HttpServer.pipe(Effect.provideContext(plain))),
+                Effect.flatMap((plain) =>
+                  "port" in plain.address
+                    ? Effect.succeed(`http://127.0.0.1:${plain.address.port}`)
+                    : Effect.die("Expected a loopback TCP listener"),
+                ),
+              );
+        yield* fs.writeFileString(
+          `${directory}/sso-idp.json`,
+          JSON.stringify({ origin, plainOrigin }),
+          { mode: 0o600 },
+        );
         return yield* Effect.never;
       }),
     ),

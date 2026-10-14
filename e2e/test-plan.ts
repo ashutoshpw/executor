@@ -4662,6 +4662,16 @@ export const scenarios = plan({
       local: na("Local has no hosted sign-in."),
     },
   },
+  selfHostSsoAutoJoin: {
+    file: "self-host-sso.spec.ts",
+    title:
+      "On a self-host instance with SSO, a new allowlisted person joins the setup organization as a member, and an existing person who belongs only to another organization is not added to it, while a disallowed domain is refused",
+    targets: {
+      "self-host": scheduled,
+      cloud: na("Cloud customers configure SSO per organization."),
+      local: na("Local has no hosted sign-in."),
+    },
+  },
   frameworkDiscovery: {
     fixtures: "actors",
     file: "framework-discovery.spec.ts",
@@ -7309,6 +7319,16 @@ export const scenarios = plan({
       local: na("Self-host organization administration."),
       "self-host": scheduled,
       cloud: na("Cloud lets every user create organizations."),
+    },
+  },
+  instanceOwnershipTransfer: {
+    file: "multi-organization.spec.ts",
+    title:
+      "self-host instance ownership moves to an organization administrator, who alone creates organizations afterwards",
+    targets: {
+      local: na("Self-host organization administration."),
+      "self-host": scheduled,
+      cloud: na("Cloud has no instance owner."),
     },
   },
   organizationMcpUrls: {
