@@ -10,6 +10,8 @@
  * request and reply passes through the adapter of the protocol the build's framework speaks.
  */
 import type { Fetcher, WorkerLoader } from "@cloudflare/workers-types";
+import type { BlobStorage } from "../contracts/blobs.ts";
+import { blobTransfer } from "./blob-transfer.ts";
 import { Clock, Context, Effect, Exit, Option, Redacted, Result, Schema, Semaphore } from "effect";
 import {
   ElicitationReply,
@@ -93,6 +95,11 @@ export interface AppRunnerHost {
    * credential handles the runner seals with `credentialKey`; see credential-handles.ts.
    */
   readonly outbound: (app: string) => Fetcher;
+  /**
+   * The store of user content, where `ctx.blobs` files live. The runner streams a file's bytes
+   * into it; a host without one gives apps no files.
+   */
+  readonly userContent?: BlobStorage;
   /** Seals the secret fields of providers that declare hosts. App code never holds it. */
   readonly credentialKey: Effect.Effect<CryptoKey>;
   /**
@@ -146,6 +153,11 @@ export interface AppCapabilities {
   readonly load: () => Promise<LoadedWorkerBuild>;
   readonly elicit: Callback | null;
   readonly controls: Callback | null;
+  /**
+   * The product's file operations for this invocation, bound to its owner and app. The runner
+   * turns them into the app's `ctx.blobs`, and moves the bytes itself. Absent: no files.
+   */
+  readonly blobs?: Callback | null;
   readonly workflow?: WorkflowExecution;
 }
 
@@ -525,6 +537,8 @@ export const makeAppRunner = (host: AppRunnerHost) => {
       readonly globalOutbound: Fetcher | null;
       readonly elicit: Callback | null;
       readonly controls: Callback | null;
+      /** The product's file operations and the store the bytes go to; null gives the app no files. */
+      readonly blobs: { readonly control: Callback; readonly store: BlobStorage } | null;
       readonly workflow?: WorkflowExecution;
       readonly cache: Effect.Effect<CacheSession> | null;
       /** Keep a failure's text for the deployer; see `failed`. */
@@ -597,6 +611,16 @@ export const makeAppRunner = (host: AppRunnerHost) => {
                 Schema.encodeSync(ElicitationReply)(
                   Schema.decodeUnknownSync(ElicitationReply)(await elicit(input)),
                 );
+        const outbound = options.globalOutbound;
+        const blobs =
+          options.blobs === null || outbound === null
+            ? null
+            : blobTransfer({
+                control: options.blobs.control,
+                store: options.blobs.store,
+                outbound,
+                signal: lifetime.signal,
+              });
         const cache = options.cache === null ? undefined : yield* options.cache;
         const closeCache = cache?.close ?? Effect.void;
         const call = yield* Effect.acquireRelease(
@@ -609,6 +633,7 @@ export const makeAppRunner = (host: AppRunnerHost) => {
                 workflow,
                 options.controls,
                 cache?.callback ?? null,
+                blobs,
               ),
             catch: (cause) => cause,
           }).pipe(
@@ -923,6 +948,10 @@ export const makeAppRunner = (host: AppRunnerHost) => {
           globalOutbound: host.outbound(invocation.app),
           elicit: capabilities.elicit,
           controls: capabilities.controls,
+          blobs:
+            capabilities.blobs == null || host.userContent === undefined
+              ? null
+              : { control: capabilities.blobs, store: host.userContent },
           ...(capabilities.workflow === undefined
             ? {}
             : {
@@ -962,6 +991,7 @@ export const makeAppRunner = (host: AppRunnerHost) => {
           globalOutbound: null,
           elicit: null,
           controls: null,
+          blobs: null,
           cache: null,
           // The deployer sees why the app's declarations failed, in the app's own terms.
           explain: true,

@@ -186,6 +186,15 @@ export const InvocationRun = Context.Reference<string | undefined>("executor/Inv
   defaultValue: () => undefined,
 });
 
+/**
+ * The product's file operations for an invocation of an app, when its host stores files. The
+ * executor provides it around each runtime call that runs tool code. The owner and the app are
+ * bound by the host, never taken from the command: a command in, the encoded reply out.
+ */
+export const InvocationBlobs = Context.Reference<
+  ((app: string) => (input: unknown) => Effect.Effect<unknown>) | undefined
+>("executor/InvocationBlobs", { defaultValue: () => undefined });
+
 /** Retained compiled output and declarations obtained without running the app factory. */
 export const UiAsset = Schema.Struct({
   path: Schema.NonEmptyString,

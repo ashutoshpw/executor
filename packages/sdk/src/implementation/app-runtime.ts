@@ -33,6 +33,7 @@ import {
   AppCodeEntered,
   DispatchTiming,
   AppEventSink,
+  InvocationBlobs,
   InvocationRun,
   IsolateTiming,
   RuntimeCallTimings,
@@ -161,6 +162,7 @@ export const appRuntime = (host: AppRuntimeHost) =>
           );
           const build = input.build;
           const run = yield* InvocationRun;
+          const blobControl = (yield* InvocationBlobs)?.(input.app);
           const invocation: AppInvocation = {
             app: input.app,
             build,
@@ -187,6 +189,10 @@ export const appRuntime = (host: AppRuntimeHost) =>
               input.workflowControls === undefined
                 ? null
                 : yield* invocationWorkflowControls(input.workflowControls, lifetime.signal),
+            blobs:
+              blobControl === undefined
+                ? null
+                : (command) => Effect.runPromise(blobControl(command), { signal: lifetime.signal }),
             ...(input.workflow === undefined ? {} : { workflow: input.workflow }),
           };
           const from = yield* Clock.currentTimeNanos;
