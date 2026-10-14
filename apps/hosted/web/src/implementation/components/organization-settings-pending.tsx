@@ -95,10 +95,47 @@ export function OrganizationSettingsPending({ children }: { readonly children?: 
             </div>
           </CardFooter>
         </Card>
+        <OrganizationBlobSettingsPending />
         {children}
         <span className="sr-only">Loading organization settings…</span>
       </div>
       <OrganizationMembersPending />
     </PageFrame>
+  );
+}
+
+/** The Blob card's heading, shared by the loaded card and its placeholder so neither moves. */
+export function OrganizationBlobHeading() {
+  return (
+    <CardHeader>
+      <CardTitle>
+        <h2>Blob</h2>
+      </CardTitle>
+      <CardDescription>
+        How long files that apps store for this organization are kept. Expired files are deleted.
+      </CardDescription>
+    </CardHeader>
+  );
+}
+
+/** The Blob card's known copy and controls, with a placeholder only for the stored value. */
+export function OrganizationBlobSettingsPending() {
+  return (
+    <Card className={organizationSettingClass}>
+      <OrganizationBlobHeading />
+      <CardContent>
+        <div className="flex h-9 w-[min(100%,_520px)] items-center rounded-[6px] border border-input px-3 max-[740px]:min-h-11 max-[640px]:h-10">
+          <Skeleton className="h-3.5 w-16" aria-label="Loading file lifetime" />
+        </div>
+      </CardContent>
+      <CardFooter>
+        <p>Between 1 hour and 365 days · default 7 days</p>
+        <div className="flex items-center [&_>_button]:h-7.5 [&_>_button]:px-3 [&_>_button]:text-xs max-[640px]:[&_>_button]:min-h-10">
+          <Button variant="outline" disabled>
+            Save
+          </Button>
+        </div>
+      </CardFooter>
+    </Card>
   );
 }

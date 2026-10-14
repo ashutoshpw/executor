@@ -34,6 +34,7 @@ import {
   OrganizationDetailsBoundary,
 } from "../components/organization.tsx";
 import { OrganizationMembers, type MemberLimit } from "../components/organization-members.tsx";
+import { OrganizationBlobSettings } from "../components/organization-blob-settings.tsx";
 import { productTitle, useDocumentTitle } from "@executor-js/ui/hooks/document-title";
 import { organizationSlugMaxLength } from "@executor-js/hosted-server/organization";
 
@@ -90,6 +91,7 @@ function OrganizationSettings({
         <OrganizationName disabled={pending} />
         <OrganizationIcon disabled={pending} />
         <OrganizationUrl disabled={pending} />
+        <OrganizationBlobSettings disabled={pending} />
         {children}
       </div>
       <OrganizationMembers emailInvitations={emailInvitations} memberLimit={memberLimit} />
