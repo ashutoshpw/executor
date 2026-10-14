@@ -22,7 +22,8 @@ export const serverFilesSource = (files: readonly SourceFile[]) =>
  * The retained server entry for every protocol so far. It imports the framework's host module as a
  * namespace and uses only what protocol 1 guarantees, so it links against every protocol-1 framework. Optional
  * later additions are feature-detected: `isolatedCacheSession` first shipped after apps
- * 0.0.1-beta.0, and the invocation bridges skip caching when a build has no `cacheSession`.
+ * 0.0.1-beta.0, and the invocation bridges skip caching when a build has no `cacheSession`;
+ * `isolatedBlobs` first shipped with file handles, and a build without it gets no `ctx.blobs`.
  * `isolatedClock` first shipped in apps 0.0.1-beta.46; without it they report no dispatch time.
  */
 export const appBridge = `
@@ -42,7 +43,7 @@ export default {
     try {
       return await handler(new Request("https://app.internal/dispatch", {
         method: "POST", headers: { "content-type": "application/json", traceparent: request.headers.get("traceparent") ?? "" }, body: JSON.stringify(command), signal: AbortSignal.any([request.signal, lifetime.signal])
-      }), { ...host.hostContext(accounts, approval), files, ...(env?.CACHE === undefined ? {} : { cache: env.CACHE }), ...(replay === undefined ? {} : { replay }), ...(deadline === undefined ? {} : { deadline }), ...(env?.WORKFLOW && workflowRun ? { workflow: host.isolatedWorkflowExecution(workflowRun, env.WORKFLOW, lifetime.signal) } : {}), ...(env?.WORKFLOW_CONTROLS ? { workflowControls: host.isolatedWorkflowControls(env.WORKFLOW_CONTROLS) } : {}), ...(elicitation === undefined ? {} : { elicitation }), ...(env?.STORAGE === undefined ? {} : { storage: env.STORAGE }) });
+      }), { ...host.hostContext(accounts, approval), files, ...(env?.CACHE === undefined ? {} : { cache: env.CACHE }), ...(env?.USER_BLOBS == null || host.isolatedBlobs === undefined ? {} : { blobs: host.isolatedBlobs((request) => env.USER_BLOBS(request)) }), ...(replay === undefined ? {} : { replay }), ...(deadline === undefined ? {} : { deadline }), ...(env?.WORKFLOW && workflowRun ? { workflow: host.isolatedWorkflowExecution(workflowRun, env.WORKFLOW, lifetime.signal) } : {}), ...(env?.WORKFLOW_CONTROLS ? { workflowControls: host.isolatedWorkflowControls(env.WORKFLOW_CONTROLS) } : {}), ...(elicitation === undefined ? {} : { elicitation }), ...(env?.STORAGE === undefined ? {} : { storage: env.STORAGE }) });
     } finally { lifetime.abort(); }
   }
 };`;
@@ -129,14 +130,16 @@ class Invocation extends RpcTarget {
   #cache;
   #cacheCallback;
   #stubs;
-  constructor(bridge, body, headers, elicitation, workflow, controls, cache) {
+  #blobs;
+  constructor(bridge, body, headers, elicitation, workflow, controls, cache, blobs) {
     super();
     this.#cacheCallback = cache == null ? null : cache.dup();
     this.#cache = this.#cacheCallback == null ? undefined : bridge.cacheSession?.(this.#cacheCallback);
     const delivery = elicitation == null ? null : elicitation.dup();
     const execution = workflow == null ? null : workflow.dup();
     const management = controls == null ? null : controls.dup();
-    this.#stubs = [delivery, execution, management];
+    this.#blobs = blobs == null ? null : blobs.dup();
+    this.#stubs = [delivery, execution, management, this.#blobs];
     // The app runs once the runner asks for its result, after this start has returned: starting is
     // the runner's own time and never overlaps the app's.
     this.#dispatch = () => {
@@ -144,7 +147,7 @@ class Invocation extends RpcTarget {
       const started = clock?.();
       return bridge.fetch(new Request("https://app.internal/dispatch", {
         method: "POST", headers: { ...headers, "content-type": "application/json" }, body, signal: this.#controller.signal
-      }), { ELICITATION: delivery, WORKFLOW: execution, WORKFLOW_CONTROLS: management, CACHE: this.#cache?.cache }).then(response => response.json()).then(value => ({ ok: true, value: dispatched(clock, started, value) }), error => ({ ok: false, error })).finally(() => this.#release());
+      }), { ELICITATION: delivery, WORKFLOW: execution, WORKFLOW_CONTROLS: management, CACHE: this.#cache?.cache, USER_BLOBS: this.#blobs }).then(response => response.json()).then(value => ({ ok: true, value: dispatched(clock, started, value) }), error => ({ ok: false, error })).finally(() => this.#release());
     };
   }
   #release() { for (const stub of this.#stubs) stub?.[Symbol.dispose](); this.#stubs = []; }
@@ -156,8 +159,8 @@ class Invocation extends RpcTarget {
 export default class extends WorkerEntrypoint {
   ${
     load === "module"
-      ? "start(body, headers, elicitation, workflow = null, controls = null, cache = null) { return new Invocation(app, body, headers, elicitation, workflow, controls, cache); }"
-      : "async start(body, headers, elicitation, workflow = null, controls = null, cache = null) { return new Invocation(await loadApp(), body, headers, elicitation, workflow, controls, cache); }"
+      ? "start(body, headers, elicitation, workflow = null, controls = null, cache = null, blobs = null) { return new Invocation(app, body, headers, elicitation, workflow, controls, cache, blobs); }"
+      : "async start(body, headers, elicitation, workflow = null, controls = null, cache = null, blobs = null) { return new Invocation(await loadApp(), body, headers, elicitation, workflow, controls, cache, blobs); }"
   }
   ${retireMethod}
 }`;

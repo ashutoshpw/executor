@@ -12,15 +12,26 @@ class SourceFailure<E> {
   }
 }
 
-/** Keep objects under a caller-owned directory. Symlinks may not escape that root. Construction performs no I/O. */
-export const filesystemBlobStore = (options: { readonly directory: string }): BlobStorage => {
+/**
+ * Keep objects under a caller-owned directory. Symlinks may not escape that root. Construction
+ * performs no I/O. `mode` is the permission of every directory the store creates, such as `0o700`
+ * for private content; without it directories follow the process's umask.
+ */
+export const filesystemBlobStore = (options: {
+  readonly directory: string;
+  readonly mode?: number;
+}): BlobStorage => {
+  const directoryOptions = {
+    recursive: true,
+    ...(options.mode === undefined ? {} : { mode: options.mode }),
+  } as const;
   const location = (key: BlobKey, write: boolean) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       yield* Schema.decodeUnknownEffect(BlobKey)(key);
       const root = path.resolve(options.directory);
-      if (write) yield* fs.makeDirectory(root, { recursive: true });
+      if (write) yield* fs.makeDirectory(root, directoryOptions);
       if (!(yield* fs.exists(root))) return undefined;
       const realRoot = yield* fs.realPath(root);
       const target = path.resolve(root, key);
@@ -71,7 +82,7 @@ export const filesystemBlobStore = (options: { readonly directory: string }): Bl
           if (found === undefined) return yield* new BlobStoreError({ operation: "put" });
           const { fs, path, target } = found;
           const parent = path.dirname(target);
-          yield* fs.makeDirectory(parent, { recursive: true });
+          yield* fs.makeDirectory(parent, directoryOptions);
           const staging = yield* fs.makeTempDirectoryScoped({
             directory: parent,
             prefix: ".blob-",
@@ -95,7 +106,7 @@ export const filesystemBlobStore = (options: { readonly directory: string }): Bl
           if (found === undefined) return yield* new BlobStoreError({ operation: "put" });
           const { fs, path, target } = found;
           const parent = path.dirname(target);
-          yield* fs.makeDirectory(parent, { recursive: true });
+          yield* fs.makeDirectory(parent, directoryOptions);
           const staging = yield* fs.makeTempDirectoryScoped({
             directory: parent,
             prefix: ".blob-",
