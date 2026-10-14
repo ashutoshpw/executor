@@ -71,7 +71,7 @@ export function BrowserApprovalPage({ atoms }: { readonly atoms: BrowserApproval
   return (
     <main className="mx-auto flex min-h-svh w-full max-w-2xl flex-col px-5 py-12 sm:py-20">
       <div className="mb-8 flex items-center gap-2 text-lg font-semibold">
-        <img src="/favicon.png" alt="" className="size-7" />
+        <img src="/favicon.png" alt="" className="size-7 dark:invert" />
         executor
       </div>
       <BrowserApprovalCard atoms={atoms} />
