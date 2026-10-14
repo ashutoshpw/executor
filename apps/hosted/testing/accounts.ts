@@ -33,6 +33,8 @@ export const testAccountAuth = (settings: {
   readonly secret: Redacted.Redacted<string>;
   readonly cookiePrefix: string;
   readonly database: BetterAuthOptions["database"];
+  /** Product plugins whose tables fixtures write, such as self-host's instance record. */
+  readonly productPlugins?: BetterAuthOptions["plugins"];
 }) => {
   // Fixtures create sessions only; they never issue tokens for an OAuth resource.
   const base = authOptions(
@@ -53,6 +55,7 @@ export const testAccountAuth = (settings: {
     session: { ...base.session, expiresIn: 3600 },
     plugins: [
       ...base.plugins,
+      ...(settings.productPlugins ?? []),
       // Fixture helpers create organizations and members through this plugin.
       organization({ disableOrganizationDeletion: true }),
       {
@@ -68,7 +71,7 @@ export const testAccountAuth = (settings: {
 };
 
 /** Reuse a named synthetic fixture without changing its role; issue a fresh one-hour session.
- * A partial failure can be retried with the same names. Self-host never adds a second organization.
+ * A partial failure can be retried with the same names. Self-host reuses its one fixture organization by slug and never adds another.
  */
 export const provisionTestAccount = (
   auth: ReturnType<typeof testAccountAuth>,
@@ -89,13 +92,18 @@ export const provisionTestAccount = (
         throw new Error("Organization helpers unavailable");
       const organizations = await ctx.adapter.findMany({
         model: "organization",
-        ...(input.host === "cloud"
-          ? { where: [{ field: "slug", value: input.organization }] }
-          : {}),
+        where: [{ field: "slug", value: input.organization }],
         limit: 2,
       });
       if (organizations.length > 1) throw new Error("Ambiguous organization");
       const existing = organizations[0];
+      // A self-host instance with other organizations has set up elsewhere; do not add a fixture.
+      if (
+        existing === undefined &&
+        input.host === "self-host" &&
+        (await ctx.adapter.count({ model: "organization" })) > 0
+      )
+        throw new Error("Self-host organization mismatch");
       const organization = Schema.decodeUnknownSync(Organization)(
         existing === undefined
           ? await test.saveOrganization(
@@ -137,6 +145,21 @@ export const provisionTestAccount = (
       } else if (Schema.decodeUnknownSync(Member)(member).role !== input.role) {
         throw new Error("Existing fixture role differs");
       }
+      // A fresh fixture instance has no completed setup; its first owner stands in for it.
+      if (
+        input.host === "self-host" &&
+        input.role === "owner" &&
+        (await ctx.adapter.count({ model: "selfHostInstance" })) === 0
+      )
+        await ctx.adapter.create({
+          model: "selfHostInstance",
+          data: {
+            key: "instance",
+            ownerUserId: user.id,
+            primaryOrganizationId: organization.id,
+            createdAt: new Date(),
+          },
+        });
       const login = await test.login({ userId: user.id });
       const cookie = login.headers.get("cookie");
       if (cookie === null) throw new Error("Session cookie missing");

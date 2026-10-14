@@ -21,6 +21,7 @@ import {
 import { CliError, Command, Flag } from "effect/cli";
 import { AuthDatabase } from "../self-host/src/contracts/database.ts";
 import { selfHostDatabase } from "../self-host/src/database.ts";
+import { selfHostInstanceSchema } from "../self-host/src/implementation/instance-schema.ts";
 import { cloudSessionCookiePrefix } from "../cloud/src/contracts/browser.ts";
 import { LocalDatabaseUrl, cloudDevelopmentDatabaseUrl } from "../cloud/src/contracts/database.ts";
 import {
@@ -153,6 +154,7 @@ const command = Command.make("test-account", {
               database,
               cookiePrefix:
                 args.host === "cloud" ? cloudSessionCookiePrefix(origin) : "executor-hosted",
+              ...(args.host === "self-host" ? { productPlugins: [selfHostInstanceSchema] } : {}),
             }),
             input,
           );

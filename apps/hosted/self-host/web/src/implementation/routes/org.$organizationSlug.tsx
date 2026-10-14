@@ -4,6 +4,10 @@ import { PagePending } from "@executor-js/hosted-web/page-pending";
 import { DashboardShell } from "@executor-js/hosted-web/shell";
 import { OrganizationBoundary, OrganizationContent } from "@executor-js/hosted-web/organization";
 import { NameAccountDialog } from "@executor-js/hosted-web/pages/name-account-dialog";
+import { useAtomValue } from "@effect/atom-react";
+import { Option } from "effect";
+import { AsyncResult } from "effect/reactivity";
+import { instanceOwnerAtom } from "../../contracts/auth.ts";
 import { Navigation } from "../navigation.tsx";
 
 /** The URL owns this tab's organization; all product pages inherit this boundary. */
@@ -14,9 +18,14 @@ export const Route = createFileRoute("/org/$organizationSlug")({
 });
 function OrganizationLayout() {
   const { organizationSlug } = Route.useParams();
+  // Only the instance owner is offered creation; the server enforces it regardless.
+  const instanceOwner = Option.getOrElse(
+    AsyncResult.value(useAtomValue(instanceOwnerAtom)),
+    () => false,
+  );
   return (
     <OrganizationBoundary slug={organizationSlug}>
-      <DashboardShell allowCreateOrganization={false} navigation={<Navigation />}>
+      <DashboardShell allowCreateOrganization={instanceOwner} navigation={<Navigation />}>
         <OrganizationContent pending={<PagePending />}>
           <Outlet />
           <NameAccountDialog />

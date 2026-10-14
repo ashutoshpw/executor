@@ -9,9 +9,16 @@ import type {
   BetterAuthPlugin,
   GenericEndpointContext,
 } from "@better-auth/core";
-import { APIError, createAuthEndpoint, isAPIError } from "better-auth/api";
+import {
+  APIError,
+  createAuthEndpoint,
+  createAuthMiddleware,
+  getSessionFromCtx,
+  isAPIError,
+} from "better-auth/api";
 import { setSessionCookie } from "better-auth/cookies";
 import { Cause, Effect, Exit, Schema } from "effect";
+import { OrganizationSlug } from "@executor-js/hosted-server/organization";
 import { z } from "zod";
 import type { selfHostAuthSettings } from "./auth-options.ts";
 
@@ -23,6 +30,12 @@ const User = Schema.Struct({
   emailVerified: Schema.Boolean,
 });
 const Organization = Schema.Struct({ id: Schema.String });
+const Membership = Schema.Struct({ organizationId: Schema.String });
+const Instance = Schema.Struct({
+  ownerUserId: Schema.String,
+  primaryOrganizationId: Schema.String,
+});
+const instanceKey = "instance";
 const Invitation = Schema.Struct({
   id: Schema.String,
   email: Schema.String,
@@ -67,15 +80,37 @@ const adapterFor = (ctx: GenericEndpointContext) =>
 const isSsoCallback = (ctx: GenericEndpointContext) =>
   ctx.path === "/callback/:id" && ctx.params?.id === "sso";
 
-const instanceOrganization = (ctx: GenericEndpointContext) =>
+/** The persisted instance record; absent until first-run setup completes. */
+const instanceRecord = (ctx: GenericEndpointContext) =>
   Effect.gen(function* () {
     const adapter = yield* adapterFor(ctx);
-    const organizations = yield* call(() => adapter.findMany({ model: "organization", limit: 2 }));
-    if (organizations.length !== 1)
+    const row = yield* call(() =>
+      adapter.findOne({
+        model: "selfHostInstance",
+        where: [{ field: "key", value: instanceKey }],
+      }),
+    );
+    return row === null ? null : yield* decode(Instance, row);
+  });
+
+/** SSO users join the setup organization, so it must exist before an account is created. */
+const primaryOrganization = (ctx: GenericEndpointContext) =>
+  Effect.gen(function* () {
+    const instance = yield* instanceRecord(ctx);
+    if (instance === null)
+      return yield* deny("This instance has not been set up. Contact its administrator.");
+    const adapter = yield* adapterFor(ctx);
+    const organization = yield* call(() =>
+      adapter.findOne({
+        model: "organization",
+        where: [{ field: "id", value: instance.primaryOrganizationId }],
+      }),
+    );
+    if (organization === null)
       return yield* deny(
-        "The instance must have exactly one organization. Contact its administrator.",
+        "The instance's primary organization is missing. Contact its administrator.",
       );
-    return yield* decode(Organization, organizations[0]);
+    return yield* decode(Organization, organization);
   });
 
 /** Reject non-SSO user creation; only verified, allowlisted OIDC users can join automatically. */
@@ -92,7 +127,7 @@ export const selfHostUserHooks = (settings: Effect.Success<typeof selfHostAuthSe
               const domain = user.email.toLowerCase().split("@")[1];
               if (!domain || !settings.sso.allowedDomains.includes(domain))
                 return yield* deny("Use a verified account from an approved SSO domain.");
-              yield* instanceOrganization(ctx);
+              yield* primaryOrganization(ctx);
               yield* call(() => admittedSsoUser.set(true));
             }),
           ),
@@ -105,17 +140,17 @@ export const selfHostUserHooks = (settings: Effect.Success<typeof selfHostAuthSe
             Effect.gen(function* () {
               if (!ctx) return yield* deny("A sign-in request is required.");
               const adapter = yield* adapterFor(ctx);
-              const org = yield* instanceOrganization(ctx);
-              const member = yield* call(() =>
-                adapter.findOne({
+              const memberships = yield* call(() =>
+                adapter.findMany({
                   model: "member",
-                  where: [
-                    { field: "userId", value: session.userId },
-                    { field: "organizationId", value: org.id },
-                  ],
+                  where: [{ field: "userId", value: session.userId }],
+                  sortBy: { field: "createdAt", direction: "asc" },
                 }),
+              ).pipe(
+                Effect.flatMap((rows) => decode(Schema.Array(Membership), rows)),
+                Effect.map((rows) => rows.map((row) => row.organizationId)),
               );
-              if (member === null) {
+              if (memberships.length === 0) {
                 // Re-check the policy on every SSO login; no email/password login can auto-join.
                 if (
                   !isSsoCallback(ctx) ||
@@ -132,6 +167,8 @@ export const selfHostUserHooks = (settings: Effect.Success<typeof selfHostAuthSe
                 const domain = user.email.toLowerCase().split("@")[1];
                 if (!user.emailVerified || !domain || !settings.sso.allowedDomains.includes(domain))
                   return yield* deny("Use a verified account from an approved SSO domain.");
+                // New SSO users join the instance's primary (setup) organization as members.
+                const org = yield* primaryOrganization(ctx);
                 yield* call(() =>
                   adapter.create({
                     model: "member",
@@ -143,8 +180,31 @@ export const selfHostUserHooks = (settings: Effect.Success<typeof selfHostAuthSe
                     },
                   }),
                 );
+                return { data: { ...session, activeOrganizationId: org.id } };
               }
-              return { data: { ...session, activeOrganizationId: org.id } };
+              // Carry forward the active organization of their newest surviving session while
+              // they still belong to it; otherwise their earliest membership. Nothing in the
+              // product changes a session's active organization after sign-in, and signing out
+              // deletes the row, so this is usually the earliest membership. It is only a
+              // default: the product scopes every request by the organization in the URL.
+              const previous = yield* call(() =>
+                adapter.findMany({
+                  model: "session",
+                  where: [{ field: "userId", value: session.userId }],
+                  sortBy: { field: "createdAt", direction: "desc" },
+                  limit: 1,
+                }),
+              );
+              const lastUsed = Schema.decodeUnknownOption(
+                Schema.Array(Schema.Struct({ activeOrganizationId: Schema.NonEmptyString })),
+              )(previous);
+              const lastUsedId =
+                lastUsed._tag === "Some" ? lastUsed.value[0]?.activeOrganizationId : undefined;
+              const active =
+                lastUsedId !== undefined && memberships.includes(lastUsedId)
+                  ? lastUsedId
+                  : memberships[0];
+              return { data: { ...session, activeOrganizationId: active } };
             }),
           ),
       },
@@ -188,7 +248,6 @@ const register = (
                 organizationId = org.id;
                 role = "owner";
               } else {
-                const org = yield* instanceOrganization(ctx);
                 const invitation = yield* call(() =>
                   adapter.findOne({
                     model: "invitation",
@@ -198,12 +257,18 @@ const register = (
                 if (
                   invitation.status !== "pending" ||
                   invitation.expiresAt.getTime() <= Date.now() ||
-                  invitation.email.toLowerCase() !== email ||
-                  invitation.organizationId !== org.id
+                  invitation.email.toLowerCase() !== email
                 )
                   return yield* deny(
                     "This invitation is invalid, expired, or for a different email.",
                   );
+                // The invitation names its organization; it must still exist.
+                const org = yield* call(() =>
+                  adapter.findOne({
+                    model: "organization",
+                    where: [{ field: "id", value: invitation.organizationId }],
+                  }),
+                ).pipe(Effect.flatMap((value) => decode(Organization, value)));
                 organizationId = org.id;
                 role = invitation.role;
                 yield* call(() =>
@@ -250,12 +315,36 @@ const register = (
                 );
                 return created;
               });
-              yield* call(() =>
-                adapter.create({
-                  model: "member",
-                  data: { organizationId, userId: user.id, role, createdAt: new Date() },
-                }),
-              );
+              const alreadyMember =
+                (yield* call(() =>
+                  adapter.findOne({
+                    model: "member",
+                    where: [
+                      { field: "userId", value: user.id },
+                      { field: "organizationId", value: organizationId },
+                    ],
+                  }),
+                )) !== null;
+              if (!alreadyMember)
+                yield* call(() =>
+                  adapter.create({
+                    model: "member",
+                    data: { organizationId, userId: user.id, role, createdAt: new Date() },
+                  }),
+                );
+              // Persist who completed setup; later role changes never move instance ownership.
+              if ("organizationName" in admission)
+                yield* call(() =>
+                  adapter.create({
+                    model: "selfHostInstance",
+                    data: {
+                      key: instanceKey,
+                      ownerUserId: user.id,
+                      primaryOrganizationId: organizationId,
+                      createdAt: new Date(),
+                    },
+                  }),
+                );
               const session = yield* call(() => ctx.context.internalAdapter.createSession(user.id));
               if (!session) return yield* Effect.fail(new APIError("INTERNAL_SERVER_ERROR"));
               return { user, session };
@@ -276,7 +365,45 @@ const register = (
 export const selfHostRegistration = (settings: Effect.Success<typeof selfHostAuthSettings>) =>
   ({
     id: "executor-self-host-registration",
+    hooks: {
+      before: [
+        {
+          // Only the instance owner creates organizations, whatever their role in any of them.
+          matcher: (context) => context.path === "/organization/create",
+          handler: createAuthMiddleware(async (context) => {
+            const session = await getSessionFromCtx(context);
+            // Without a session the native endpoint rejects HTTP callers itself.
+            if (session === null) return;
+            const instance = await context.context.adapter.findOne<Record<string, unknown>>({
+              model: "selfHostInstance",
+              where: [{ field: "key", value: instanceKey }],
+            });
+            if (instance?.ownerUserId !== session.user.id)
+              throw new APIError("FORBIDDEN", {
+                code: "YOU_ARE_NOT_ALLOWED_TO_CREATE_A_NEW_ORGANIZATION",
+                message: "Only the instance owner can create organizations.",
+              });
+            // Handles are URL segments; Better Auth itself only checks that one is unique.
+            if (!Schema.is(OrganizationSlug)(context.body?.slug))
+              throw new APIError("BAD_REQUEST", {
+                code: "INVALID_ORGANIZATION_SLUG",
+                message: "The handle must be lowercase letters, digits and single hyphens.",
+              });
+          }),
+        },
+      ],
+    },
     endpoints: {
+      selfHostMe: createAuthEndpoint("/self-host/me", { method: "GET" }, (ctx) =>
+        run(
+          Effect.gen(function* () {
+            const session = yield* call(() => getSessionFromCtx(ctx));
+            if (session === null) return yield* Effect.fail(new APIError("UNAUTHORIZED"));
+            const instance = yield* instanceRecord(ctx);
+            return ctx.json({ instanceOwner: instance?.ownerUserId === session.user.id });
+          }),
+        ),
+      ),
       selfHostConfiguration: createAuthEndpoint("/self-host/config", { method: "GET" }, (ctx) =>
         run(
           Effect.gen(function* () {
