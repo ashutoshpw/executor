@@ -7289,6 +7289,29 @@ export const scenarios = plan({
       cloud: na("Cloud requires a verified recipient instead of password registration."),
     },
   },
+  multiOrganization: {
+    fixtures: "actors",
+    file: "multi-organization.spec.ts",
+    title:
+      "self-host lets only the instance owner create organizations, each isolated, joined by invitation",
+    targets: {
+      local: na("Self-host organization administration."),
+      "self-host": scheduled,
+      cloud: na("Cloud lets every user create organizations."),
+    },
+  },
+  legacyInstanceOwner: {
+    fixtures: "actors",
+    legacyStorage: true,
+    file: "legacy-instance-owner.spec.ts",
+    title:
+      "upgrading a self-host instance records the setup organization's owner as the only one who can create organizations",
+    targets: {
+      "self-host": scheduled,
+      cloud: na("Cloud has no instance owner."),
+      local: na("Local has no organizations."),
+    },
+  },
   appUiWithoutAppDomain: {
     file: "app-ui-without-app-domain.spec.ts",
     title: "a self-host with no app domain says an app UI has no address because of the domain",
