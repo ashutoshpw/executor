@@ -86,4 +86,4 @@ export type AnyScopeMutationContext<Requirements extends AppRequirements = AppRe
 export type WebhookContext<
   Requirements extends AppRequirements = AppRequirements,
   Scope extends AccountScope = "user",
-> = Omit<MutationContext<Requirements, Scope>, "elicit">;
+> = Omit<MutationContext<Requirements, Scope>, "elicit" | "blobs">;

@@ -80,6 +80,11 @@ export interface InvocationServices {
   /** Ask for user input during this tool call. Unavailable during discovery and after the invocation closes. */
   readonly elicit: Elicit;
   /**
+   * Files kept by handle: a tool returns a small handle, never the file's bytes. Unavailable where
+   * the host stores no files.
+   */
+  readonly blobs: import("./blobs.ts").AppBlobs;
+  /**
    * Invocation-owned HTTP requests with trace propagation and host cancellation. It lasts until the
    * invocation and every app cache refresh it started in the background have ended, so a catalog
    * loader given this fetch can refresh after the reply.

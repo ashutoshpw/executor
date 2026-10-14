@@ -53,6 +53,7 @@ export {
   approvalElicitation,
   exactApprovalElicitation,
 } from "./elicitation.ts";
+export * from "./blobs.ts";
 export { McpClientLimits, defaultMcpClientLimits } from "./mcp.ts";
 export * from "./webhook-protocol.ts";
 export * from "./events.ts";
@@ -215,6 +216,8 @@ export interface HostContext {
   readonly workflow?: WorkflowExecution;
   readonly replay?: WorkflowReplay;
   readonly elicitation?: ElicitationHandler;
+  /** Host-owned file store for `ctx.blobs`; the app sees only handles. */
+  readonly blobs?: import("./blobs.ts").HostBlobs;
   /** Trusted in-process tracing capability; never decoded from a public request. */
   readonly telemetry?: InvocationTelemetry;
   readonly approval?: TrustedToolApproval;
