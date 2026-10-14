@@ -114,9 +114,9 @@ export function signOutFailure(result: Exit.Exit<unknown, unknown>): string | un
 }
 
 const themeChoices = [
+  { value: "system", label: "System", icon: ComputerIcon },
   { value: "light", label: "Light", icon: Sun01Icon },
   { value: "dark", label: "Dark", icon: Moon02Icon },
-  { value: "system", label: "System", icon: ComputerIcon },
 ] as const;
 
 const isThemePreference = (value: string): value is ThemePreference =>
@@ -223,29 +223,31 @@ export function SessionMenu({
               Account settings
             </Link>
           </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuLabel className="px-2 pt-1 pb-0.5 text-xs font-normal text-muted-foreground">
-            Theme
-          </DropdownMenuLabel>
-          <DropdownMenuRadioGroup
-            aria-label="Theme"
-            value={theme}
-            onValueChange={(value) => {
-              if (isThemePreference(value)) setTheme(value);
-            }}
-          >
-            {themeChoices.map((choice) => (
-              <DropdownMenuRadioItem
-                key={choice.value}
-                value={choice.value}
-                className="min-h-9 cursor-pointer py-2 pr-2 pl-8 text-[13px]"
-                onSelect={(event) => event.preventDefault()}
-              >
-                <HugeiconsIcon icon={choice.icon} strokeWidth={2} size={16} aria-hidden />
-                {choice.label}
-              </DropdownMenuRadioItem>
-            ))}
-          </DropdownMenuRadioGroup>
+          <div className="flex min-h-9 items-center justify-between gap-2 py-1 pr-1 pl-2 text-[13px]">
+            <span aria-hidden>Theme</span>
+            {/* One compact segment; the highlighted icon is the current choice. */}
+            <DropdownMenuRadioGroup
+              aria-label="Theme"
+              className="flex items-center gap-0.5 rounded-full border p-0.5"
+              value={theme}
+              onValueChange={(value) => {
+                if (isThemePreference(value)) setTheme(value);
+              }}
+            >
+              {themeChoices.map((choice) => (
+                <DropdownMenuRadioItem
+                  key={choice.value}
+                  value={choice.value}
+                  aria-label={choice.label}
+                  title={choice.label}
+                  className="size-6 cursor-pointer justify-center rounded-full p-0 text-muted-foreground hover:text-foreground focus:bg-accent data-[state=checked]:bg-accent data-[state=checked]:text-foreground data-[state=checked]:ring-1 data-[state=checked]:ring-border [&>[data-slot=dropdown-menu-item-indicator]]:hidden"
+                  onSelect={(event) => event.preventDefault()}
+                >
+                  <HugeiconsIcon icon={choice.icon} strokeWidth={2} size={14} aria-hidden />
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </div>
           <DropdownMenuSeparator />
           <DropdownMenuItem className="min-h-9 cursor-pointer p-2 text-[13px]" onSelect={leave}>
             <HugeiconsIcon icon={Logout01Icon} strokeWidth={2} size={16} aria-hidden />
