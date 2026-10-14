@@ -165,7 +165,7 @@ These are the defaults. The source limit is fixed; a host can change the others.
 
 - Program source: 65,536 characters, including app source passed as data. With
   a shell, deploy large apps with the `executor apps` CLI instead.
-- Output: 65,536 bytes for the returned value, warnings and logs together. A
+- Output: 100,000 bytes for the returned value, warnings and logs together. A
   larger value comes back as a truncated string that says so. Return fewer
   fields, a count, or one page.
 - Tool calls: 100 per execution.
