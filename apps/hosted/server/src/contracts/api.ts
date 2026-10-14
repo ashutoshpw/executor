@@ -33,6 +33,7 @@ import { HostedWebhooks } from "./webhooks.ts";
 import { HostedTools } from "./tools.ts";
 import { HostedSkills } from "./skills.ts";
 import { HostedFeedback } from "./feedback.ts";
+import { HostedUsage } from "./usage.ts";
 
 /** Process liveness only; this does not probe the app catalog or future storage. */
 export const Health = Schema.Struct({ status: Schema.Literal("ok") });
@@ -180,6 +181,7 @@ export const HostedApi = HttpApi.make("executor-hosted")
     HostedAppData,
     HostedMcpConnections,
     HostedFeedback,
+    HostedUsage,
   )
   .add(
     HttpApiGroup.make("context").add(

@@ -786,6 +786,17 @@ export const scenarios = plan({
       local: na("Hosted deployment API scenario"),
     },
   },
+  usageInsights: {
+    fixtures: "actors",
+    file: "usage-insights.spec.ts",
+    title:
+      "Usage insights count each agent's tool calls and failures for admins and only a member's own calls for members",
+    targets: {
+      "self-host": scheduled,
+      cloud: na("Usage is recorded by the self-host store; Cloud reports it unavailable"),
+      local: na("Hosted deployment API scenario"),
+    },
+  },
   mcpCatalogRefresh: {
     fixtures: "actors",
     file: "mcp-catalog.spec.ts",
