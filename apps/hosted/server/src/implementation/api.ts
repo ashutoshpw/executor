@@ -26,6 +26,7 @@ import { hostedToolHandlers } from "./tools.ts";
 import { hostedAppHandlers } from "./apps.ts";
 import { hostedSkillHandlers } from "./skills.ts";
 import { hostedGroupHandlers } from "./groups.ts";
+import { hostedBlobSettingsHandlers } from "./blob-settings.ts";
 import { hostedMcpConnectionHandlers } from "./mcp-connections.ts";
 import { hostedFeedbackHandlers } from "./feedback.ts";
 import { hostedUsageHandlers } from "./usage-report.ts";
@@ -75,6 +76,7 @@ export const hostedHandlers = Layer.mergeAll(
   apiContext,
   hostedOrganizationHandlers,
   hostedGroupHandlers,
+  hostedBlobSettingsHandlers,
   hostedResourceAccessHandlers,
   hostedOAuthClientHandlers,
   hostedWebhookSetupHandlers,

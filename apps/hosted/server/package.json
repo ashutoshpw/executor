@@ -12,6 +12,7 @@
     "./mcp/browser": "./src/contracts/mcp-browser.ts",
     "./organization": "./src/contracts/organization.ts",
     "./groups": "./src/contracts/groups.ts",
+    "./blob-settings": "./src/contracts/blob-settings.ts",
     "./resource-access": "./src/contracts/resource-access.ts",
     "./oauth-clients": "./src/contracts/oauth-clients.ts",
     "./database": "./src/implementation/database.ts",
