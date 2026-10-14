@@ -51,7 +51,7 @@ layer(TestLive, { excludeTestServices: true })("Provider photos", (it) => {
 
         yield* onboarding.googleSignInAs({ email, name: "Provider Photo Example", picture });
         yield* browser.use("Returning user opens the existing team", (page) =>
-          page.waitForURL(`**/org/${team.slug}/apps`),
+          page.waitForURL(`**/org/${team.slug}`),
         );
         const after = yield* session;
         // Linking Google adds its photo; the account's own name and email stay unchanged.

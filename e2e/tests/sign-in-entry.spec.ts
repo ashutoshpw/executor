@@ -16,7 +16,7 @@ layer(HostedLive, { excludeTestServices: true })("Sign-in entry", (it) => {
         const browser = yield* Browser;
         const evidence = yield* Evidence;
         const paths = yield* trackEntryNavigations;
-        const destination = `/org/${actors.organization.slug}/apps`;
+        const destination = `/org/${actors.organization.slug}`;
         for (const viewport of [
           { width: 864, height: 720 },
           { width: 390, height: 844 },

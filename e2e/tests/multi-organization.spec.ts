@@ -123,7 +123,7 @@ layer(HostedLive, { excludeTestServices: true })("Self-host organizations", (it)
             .click(),
         );
         yield* browser.use("The new organization opens", (page) =>
-          page.waitForURL(`**/org/${slug}/apps`),
+          page.waitForURL(`**/org/${slug}`),
         );
         const second = (yield* organizations(actors.owner)).find((item) => item.slug === slug);
         if (second === undefined) throw new Error("The second organization was not created");
@@ -208,7 +208,7 @@ layer(HostedLive, { excludeTestServices: true })("Self-host organizations", (it)
         );
         yield* browser.login(returning);
         yield* browser.use("The root opens the only organization", (page) =>
-          page.goto("/").then(() => page.waitForURL(`**/org/${slug}/apps`)),
+          page.goto("/").then(() => page.waitForURL(`**/org/${slug}`)),
         );
 
         // An existing member of the setup organization accepts an invitation to the second one.
@@ -221,7 +221,7 @@ layer(HostedLive, { excludeTestServices: true })("Self-host organizations", (it)
           page.getByRole("button", { name: "Accept invitation", exact: true }).click(),
         );
         yield* browser.use("The invited organization opens", (page) =>
-          page.waitForURL(`**/org/${slug}/apps`),
+          page.waitForURL(`**/org/${slug}`),
         );
         expect((yield* organizations(actors.admin)).map((item) => item.slug).sort()).toEqual(
           ["executor", slug].sort(),
@@ -235,7 +235,7 @@ layer(HostedLive, { excludeTestServices: true })("Self-host organizations", (it)
             .then(() =>
               page.getByRole("menuitemradio", { name: "Evidence lab", exact: true }).click(),
             )
-            .then(() => page.waitForURL(`**/org/${actors.organization.slug}/apps`)),
+            .then(() => page.waitForURL(`**/org/${actors.organization.slug}`)),
         );
         // Still not an owner: joining organizations grants no creation right.
         expect((yield* create(actors.admin, `refused2-${suffix}`)).status).toBe(403);

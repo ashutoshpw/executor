@@ -51,5 +51,5 @@ export const restoreLastOrganization = async (document: HostedDocument, pathname
     Option.fromNullishOr(list.find((item) => item.id === saved.organization)),
   );
   if (Option.isSome(organization))
-    throw redirect({ href: `/org/${encodeURIComponent(organization.value.slug)}/apps` });
+    throw redirect({ href: `/org/${encodeURIComponent(organization.value.slug)}` });
 };

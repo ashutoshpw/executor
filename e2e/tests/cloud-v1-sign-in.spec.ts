@@ -217,7 +217,7 @@ layer(TestLive, { excludeTestServices: true })("Cloud v1 sign-in", (it) => {
         yield* created(identity.email, DateTime.formatIso(yield* DateTime.now));
         yield* browser.use("Return to entry as a v2 team member", (page) => page.goto("/"));
         yield* browser.use("The team opens instead of the v1 page", (page) =>
-          page.waitForURL(`**/org/${teams[0]?.slug}/apps`),
+          page.waitForURL(`**/org/${teams[0]?.slug}`),
         );
       }).pipe(Effect.provide(services)),
     ),

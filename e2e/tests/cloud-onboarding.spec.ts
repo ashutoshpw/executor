@@ -34,8 +34,8 @@ layer(TestLive, { excludeTestServices: true })("Cloud onboarding", (it) => {
           page.getByRole("button").filter({ hasText: identity.email }).click(),
         );
         yield* list.release;
-        yield* browser.use("Google returns directly to the existing team's Apps", (page) =>
-          page.waitForURL(`**/org/${team.slug}/apps`),
+        yield* browser.use("Google returns directly to the existing team's Home", (page) =>
+          page.waitForURL(`**/org/${team.slug}`),
         );
       }).pipe(Effect.provide(Onboarding.layer)),
     ),
@@ -86,8 +86,8 @@ layer(TestLive, { excludeTestServices: true })("Cloud onboarding", (it) => {
           page.goto("/create"),
         );
         yield* browser.use(
-          "Existing membership returns to Apps without another team form",
-          (page) => page.waitForURL(`**/org/${team.slug}/apps`),
+          "Existing membership returns to Home without another team form",
+          (page) => page.waitForURL(`**/org/${team.slug}`),
         );
       }).pipe(Effect.provide(Onboarding.layer)),
     ),
@@ -164,7 +164,7 @@ layer(TestLive, { excludeTestServices: true })("Cloud onboarding", (it) => {
         yield* onboarding.signOut;
         yield* onboarding.emailSignIn(email);
         yield* browser.use("Returning email user opens the existing team", (page) =>
-          page.waitForURL(`**/org/${team.slug}/apps`),
+          page.waitForURL(`**/org/${team.slug}`),
         );
         expect(yield* onboarding.organizations).toEqual([team]);
         expect(

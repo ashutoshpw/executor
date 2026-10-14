@@ -59,17 +59,22 @@ layer(HostedLive, { excludeTestServices: true })("Self-host", (it) => {
               page.locator(".shell").count(),
             ),
           ).toBe(1);
-          yield* browser.use("Password sign-in loads apps in place", (page) =>
+          yield* browser.use("Password sign-in loads Home in place", (page) =>
             page
-              .getByRole("status", { name: "Loading apps", exact: true })
+              .getByRole("status", { name: "Loading home", exact: true })
               .waitFor({ state: "visible" }),
           );
           yield* list.release;
           yield* browser.use("Return to the organization", (page) =>
-            page.waitForURL(`**/org/${actors.organization.slug}/apps`),
+            page.waitForURL(`**/org/${actors.organization.slug}`),
           );
           yield* browser.use(`${role} has the correct Add permission`, (page) =>
-            page.getByRole("link", { name: "Add app", exact: true }).waitFor({ state: "visible" }),
+            page
+              .getByRole("link", { name: "Apps", exact: true })
+              .first()
+              .click()
+              .then(() => page.getByRole("link", { name: "Add app", exact: true }))
+              .then((add) => add.waitFor({ state: "visible" })),
           );
           yield* browser.checkpoint(`${role} signed in through self-host password login`);
         }
