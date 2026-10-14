@@ -5,13 +5,16 @@ import { Button } from "@executor-js/ui/components/button";
 import { CatalogPage as Catalog } from "@executor-js/ui/dashboard/catalog";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { ArrowLeft02Icon } from "@hugeicons/core-free-icons";
+import { appManagement } from "../../contracts/app-management.ts";
+import { acknowledgeApp } from "../../contracts/apps.ts";
 import { useOrganizationRoute } from "../components/organization.tsx";
 
-/** Catalog apps install into the same organization-owned app records. */
+/** Catalog apps and public listings install into the same organization-owned app records. */
 export function AddAppPage() {
   const atoms = useDashboardAtoms();
   useAtomMount(atoms.catalog);
-  const { slug: organizationSlug } = useOrganizationRoute();
+  const { organization, slug: organizationSlug } = useOrganizationRoute();
+  const management = appManagement(organization);
   return (
     <Catalog
       query={atoms.catalog}
@@ -19,6 +22,12 @@ export function AddAppPage() {
       mutation={atoms.install}
       InstallFailure={HostedFailure}
       inventory={atoms.inventory}
+      publications={management.catalog}
+      PublicationFailure={HostedFailure}
+      copy={(publication) =>
+        management.copy({ package: publication.name, commit: publication.commit })
+      }
+      onApp={(get, saved) => acknowledgeApp(get, organization, saved)}
       open={(app) => (
         <Link
           to="/org/$organizationSlug/apps/$appId"
