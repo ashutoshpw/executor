@@ -39,7 +39,7 @@ layer(TestLive, { excludeTestServices: true })("Last active organization", (it) 
           page.getByRole("button", { name: "Create organization", exact: true }).click(),
         );
         yield* browser.use("The second organization opens", (page) =>
-          page.waitForURL(`**/org/${secondSlug}/apps`),
+          page.waitForURL(`**/org/${secondSlug}`),
         );
         const organizations = yield* onboarding.organizations;
         expect(organizations.length).toBe(2);
@@ -57,10 +57,10 @@ layer(TestLive, { excludeTestServices: true })("Last active organization", (it) 
             );
             expect(
               new URL(entry.headers()["location"] ?? "", "http://entry.invalid").pathname,
-            ).toBe(`/org/${organization.slug}/apps`);
+            ).toBe(`/org/${organization.slug}`);
             yield* browser.use("Return to the bare root", (page) => page.goto("/"));
             yield* browser.use("Entry restores the last active organization", (page) =>
-              page.waitForURL(`**/org/${organization.slug}/apps`),
+              page.waitForURL(`**/org/${organization.slug}`),
             );
             yield* waitForLastOrganization(organization.id);
             expect(

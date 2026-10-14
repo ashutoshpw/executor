@@ -2,7 +2,7 @@ import { PageFrame, PageHeader } from "@executor-js/ui/dashboard/page";
 import type { ReactNode } from "react";
 import { useId } from "react";
 import { Button } from "@executor-js/ui/components/button";
-import { InventoryPageSkeleton } from "@executor-js/ui/dashboard/loading";
+import { PageSkeleton } from "@executor-js/ui/dashboard/loading";
 import {
   DashboardFrame,
   DashboardNavigation,
@@ -98,12 +98,7 @@ export function DashboardEntryPending({
       navigation={<DashboardNavigation pendingPage={pendingPage}>{navigation}</DashboardNavigation>}
       pendingPage={pendingPage}
     >
-      {children ?? (
-        <InventoryPageSkeleton
-          kind="apps"
-          action={<Skeleton className="h-9 w-22 rounded-md" aria-label="Loading app actions" />}
-        />
-      )}
+      {children ?? <PageSkeleton title="Home" />}
     </DashboardFrame>
   );
 }

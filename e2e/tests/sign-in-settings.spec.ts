@@ -216,7 +216,7 @@ layer(TestLive, { excludeTestServices: true })("Sign-in settings", (it) => {
             page
               .setViewportSize(viewport)
               .then(() => page.goto(`${origin}/`))
-              .then(() => page.waitForURL(/\/org\/[^/]+\/apps/))
+              .then(() => page.waitForURL(/\/org\/[^/]+$/))
               .then(() => hydrated(page))
               .then(() => page.evaluate(() => document.fonts.ready)),
           );

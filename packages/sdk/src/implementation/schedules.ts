@@ -24,7 +24,7 @@ import {
   ScheduleInvalid,
 } from "../contracts/schedules.ts";
 import { InvocationRun } from "../contracts/runtime.ts";
-import { ScheduleObservation } from "../contracts/scheduler.ts";
+import { observeAutomationTool, ScheduleObservation } from "../contracts/scheduler.ts";
 import type { ScheduleDispatcher } from "../contracts/scheduler.ts";
 import type { Credentials } from "../contracts/storage.ts";
 import type { ExecutorDatabase } from "./storage.ts";
@@ -72,6 +72,23 @@ export const makeSchedules = (
   const approvals = makeToolApprovals(db, credentials, crypto, storage.reactivity.inTransaction);
   const now = Effect.map(Clock.currentTimeMillis, (value) => new Date(value));
   const uuid = crypto.randomUUIDv4.pipe(Effect.mapError(() => new StorageError()));
+  /** Report the tool call a run makes; the run's own result is untouched. */
+  const observed = <A, E, R>(
+    setting: ScheduleSettings,
+    tool: string,
+    work: Effect.Effect<A, E, R>,
+  ) =>
+    observeAutomationTool(
+      {
+        source: "schedule",
+        app: setting.app,
+        owner: setting.owner,
+        actor: setting.actor,
+        automation: { id: setting.id, name: setting.name },
+        tool,
+      },
+      work,
+    );
   const parse = <A>(schema: Schema.Decoder<A>, value: unknown) =>
     Schema.decodeUnknownEffect(schema)(value).pipe(Effect.mapError(() => new StorageError()));
   const readSettings = (id: ScheduleId, owner?: OwnerId) =>
@@ -729,13 +746,20 @@ export const makeSchedules = (
                 yield* Effect.gen(function* () {
                   const settings = yield* readSettings(claim.scheduleId);
                   yield* authorize({ ...settings, phase: "resume" });
-                  const response = yield* tools
+                  // The saved approval names the tool; without it the call is not reported.
+                  const tool = (yield* approvals
+                    .get(requestId, pending.owner)
+                    .pipe(Effect.option)).pipe(Option.map((saved) => saved.invocation.tool));
+                  const resumed = tools
                     .resume({
                       requestId,
                       owner: pending.owner,
                       response: { action: answer },
                     })
                     .pipe(Effect.provideService(CurrentActor, settings.actor ?? undefined));
+                  const response = yield* Option.isSome(tool)
+                    ? observed(settings, tool.value, resumed)
+                    : resumed;
                   yield* complete(claim, response);
                 }).pipe(
                   Effect.withErrorReporting,
@@ -888,14 +912,18 @@ export const makeSchedules = (
                       set: { nextAt, timing: declared.timing },
                     }),
                   );
-                  const response = yield* tools.call({
-                    app: setting.app,
-                    accounts,
-                    tool: declared.tool,
-                    // Schedules only target mutations; defineApp checks this.
-                    kind: "mutation",
-                    input: declared.input,
-                  });
+                  const response = yield* observed(
+                    setting,
+                    declared.tool,
+                    tools.call({
+                      app: setting.app,
+                      accounts,
+                      tool: declared.tool,
+                      // Schedules only target mutations; defineApp checks this.
+                      kind: "mutation",
+                      input: declared.input,
+                    }),
+                  );
                   if (response.status === "completed") {
                     yield* response.toolError === true
                       ? finish(claim, "failed", "McpToolError")
@@ -906,11 +934,15 @@ export const makeSchedules = (
                     yield* authorize({ ...setting, phase: "resume" });
                     yield* complete(
                       claim,
-                      yield* tools.resume({
-                        requestId: response.requestId,
-                        owner: setting.owner,
-                        response: { action: "accept" },
-                      }),
+                      yield* observed(
+                        setting,
+                        declared.tool,
+                        tools.resume({
+                          requestId: response.requestId,
+                          owner: setting.owner,
+                          response: { action: "accept" },
+                        }),
+                      ),
                     );
                   } else {
                     // Serialized with reconcile by the app lock: a schedule removed while this

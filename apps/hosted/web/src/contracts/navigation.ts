@@ -3,6 +3,7 @@ import { GrantId } from "@executor-js/mcp-auth/grants";
 import { AppView, AppViewFromUrl, AssistantId } from "@executor-js/ui/contracts/dashboard";
 import { Option, Schema } from "effect";
 import { OrganizationId } from "@executor-js/hosted-server/organization";
+import { UsageRange } from "@executor-js/hosted-server/usage";
 import type { AgentBaseline } from "./mcp-connections.ts";
 
 /** A failed OAuth attempt can reopen its client fields without placing credentials in the URL. */
@@ -77,6 +78,13 @@ declare module "@tanstack/history" {
     agentSetup?: AgentBaseline;
   }
 }
+/** The Home page keeps its selected range in the address; an absent or unknown range is the default. */
+export function parseHomeSearch(search: Record<string, unknown>): {
+  readonly range?: UsageRange | undefined;
+} {
+  return { range: Option.getOrUndefined(Schema.decodeUnknownOption(UsageRange)(search.range)) };
+}
+
 /** App tabs keep their view on refresh in both hosted products. */
 export function parseAppSearch(search: Record<string, unknown>): ReturnType<
   typeof parseConnectionSearch

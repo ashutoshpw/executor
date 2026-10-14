@@ -263,19 +263,19 @@ layer(HostedLive, { excludeTestServices: true })("Route loading", (it) => {
           path: `/org/${slug}/approvals`,
           allowed: ["Approvals"],
         });
-        // The entry opens the organization's apps once its memberships are known, so self-host's
-        // entry already draws the apps page's frame and heading. Cloud's entry checks for a first
-        // team in its own card, which then gives way to the apps page.
+        // The entry opens the organization's Home page once its memberships are known, so self-host's
+        // entry already draws the page's frame and heading. Cloud's entry checks for a first
+        // team in its own card, which then gives way to the Home page.
         yield* checkPaint({
           label: "Entry",
           path: "/",
-          allowed: [cloud ? "Opening Executor" : "Apps"],
-          // The organization and its apps replace their placeholders once the apps page opens.
+          allowed: [cloud ? "Opening Executor" : "Home"],
+          // The organization and its apps replace their placeholders once the Home page opens.
           ready: cloud
             ? undefined
             : (page) =>
                 page
-                  .waitForURL(`**/org/${slug}/apps`)
+                  .waitForURL(`**/org/${slug}`)
                   .then(() =>
                     Promise.all(
                       ["Loading organization", "Loading app search"].map((label) =>

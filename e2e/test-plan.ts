@@ -797,6 +797,27 @@ export const scenarios = plan({
       local: na("Hosted deployment API scenario"),
     },
   },
+  usageInsightsAutomation: {
+    fixtures: "actors",
+    file: "usage-insights.spec.ts",
+    title:
+      "Usage insights count the tool calls schedules and workflows make as their own agents, with members seeing only what runs for them",
+    targets: {
+      "self-host": scheduled,
+      cloud: na("Usage is recorded by the self-host store; Cloud reports it unavailable"),
+      local: na("Hosted deployment API scenario"),
+    },
+  },
+  usageInsightsRange: {
+    fixtures: "actors",
+    file: "usage-insights.spec.ts",
+    title: "The Home page keeps its selected range in the address and signing in opens Home",
+    targets: {
+      "self-host": scheduled,
+      cloud: na("Shared Home page and search validation; covered on self-host"),
+      local: na("Hosted organization Home page"),
+    },
+  },
   mcpCatalogRefresh: {
     fixtures: "actors",
     file: "mcp-catalog.spec.ts",
@@ -3644,7 +3665,7 @@ export const scenarios = plan({
     fixtures: "actors",
     file: "root-entry-loading.spec.ts",
     title:
-      "Signed-in root restores Apps at its canonical address without a browser organization lookup or reload",
+      "Signed-in root restores Home at its canonical address without a browser organization lookup or reload",
     targets: cloudOnboarding,
   },
   localQueryState: {

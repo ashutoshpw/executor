@@ -1,4 +1,5 @@
-export { ScheduleObservation } from "./contracts/scheduler.ts";
+export { AutomationToolObservation, ScheduleObservation } from "./contracts/scheduler.ts";
+export type { AutomationToolCall } from "./contracts/scheduler.ts";
 /** Scoped host scheduler. It never opens a database, starts an HTTP server or owns product permissions. */
 export { startScheduleWorker } from "./implementation/schedule-worker.ts";
 export {
