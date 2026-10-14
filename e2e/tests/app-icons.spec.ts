@@ -114,7 +114,7 @@ layer(HostedLive, { excludeTestServices: true })("App icons", (it) => {
         /** The loaded source once it is the expected one, or whatever loaded instead. */
         const shown = (step: string, find: (page: Page) => Locator, expected: string) =>
           browser.use(step, (page) => {
-            const image = find(page).locator('img[data-icon="app"]');
+            const image = find(page).locator('img[data-icon="app"]:visible');
             const current = () =>
               image.evaluate((element) =>
                 element instanceof HTMLImageElement && element.complete ? element.currentSrc : "",

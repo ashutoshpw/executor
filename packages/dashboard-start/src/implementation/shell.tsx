@@ -3,6 +3,7 @@
 import { HeadContent, Scripts } from "@tanstack/react-router";
 import type { ReactNode } from "react";
 import { DisplayFormatSync } from "@executor-js/ui/hooks/display-format";
+import { themeScript } from "@executor-js/ui/hooks/theme";
 import type {} from "../contracts/build.ts";
 import { documentBuild } from "./document-build.ts";
 import { BuildChangeNotice } from "./build-change-notice.tsx";
@@ -44,7 +45,7 @@ const holdEarlySubmissions = `(() => {
 export function DashboardDocument({ children }: { readonly children: ReactNode }) {
   return (
     // `data-dashboard` lets automation tell dashboard documents from authored app pages.
-    <html lang="en" data-dashboard="">
+    <html lang="en" data-dashboard="" suppressHydrationWarning>
       <head>
         <meta charSet="UTF-8" />
         <meta name="color-scheme" content="light dark" />
@@ -56,6 +57,7 @@ export function DashboardDocument({ children }: { readonly children: ReactNode }
         />
         <link rel="icon" href="/favicon.png" />
         <script dangerouslySetInnerHTML={{ __html: holdEarlySubmissions }} />
+        <script dangerouslySetInnerHTML={{ __html: themeScript }} />
         <HeadContent />
       </head>
       <body>

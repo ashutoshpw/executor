@@ -77,7 +77,11 @@ export function ProviderIcon({
   const source = normalized === "executor" ? "/favicon.png" : faviconUrl(domain, size);
   const sources = declared ?? catalogIconSources(catalog);
   const waiting = sources === null && (pending || (icons === undefined && !catalogIcons.settled));
-  const own = sources !== null && !failed.includes(sources.light) ? sources : null;
+  // Either variant failing drops the own icon, so a broken image never stays visible.
+  const own =
+    sources !== null && !failed.includes(sources.light) && !failed.includes(sources.dark)
+      ? sources
+      : null;
   const icon =
     own === null && !waiting && source !== null && !failed.includes(source) ? source : null;
   const fail = (key: string) => () =>
@@ -92,15 +96,8 @@ export function ProviderIcon({
       aria-hidden
     >
       {own ? (
-        // The browser picks the variant for the color scheme, so the server renders the same
-        // markup. A srcset ends a URL at whitespace, which a data URI may hold escaped.
-        <picture className="contents">
-          {own.dark !== own.light && (
-            <source
-              media="(prefers-color-scheme: dark)"
-              srcSet={own.dark.replace(/\s/gu, encodeURIComponent)}
-            />
-          )}
+        // Both variants render, so the server and browser agree; the `dark` class shows one.
+        own.dark === own.light ? (
           <img
             src={own.light}
             alt=""
@@ -110,7 +107,32 @@ export function ProviderIcon({
             data-icon="app"
             onError={fail(own.light)}
           />
-        </picture>
+        ) : (
+          <>
+            <img
+              className="dark:hidden"
+              loading="lazy"
+              src={own.light}
+              alt=""
+              width={size}
+              height={size}
+              referrerPolicy="no-referrer"
+              data-icon="app"
+              onError={fail(own.light)}
+            />
+            <img
+              className="hidden dark:block"
+              loading="lazy"
+              src={own.dark}
+              alt=""
+              width={size}
+              height={size}
+              referrerPolicy="no-referrer"
+              data-icon="app"
+              onError={fail(own.dark)}
+            />
+          </>
+        )
       ) : icon ? (
         <img
           src={icon}
