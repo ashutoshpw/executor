@@ -26,6 +26,7 @@
     "@executor-js/sdk": "workspace:*",
     "@executor-js/telemetry": "workspace:*",
     "@executor-js/utils": "workspace:*",
+    "@w3devx/duckdb-node-api": "link:@w3devx/duckdb-node-api",
     "apps": "workspace:*",
     "better-auth": "1.7.5",
     "effect": "4.0.1",

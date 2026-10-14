@@ -28,6 +28,7 @@ import { Effect, Schema } from "effect";
 import { HttpApiBuilder } from "effect/http-api";
 import { HostedApi } from "../contracts/api.ts";
 import { HostedExecutor } from "../contracts/executor.ts";
+import { CurrentUsage } from "../contracts/product-analytics.ts";
 import { CurrentUserId, Forbidden } from "../contracts/auth.ts";
 import { CurrentAuthorization } from "../contracts/authorization.ts";
 import {
@@ -248,16 +249,23 @@ export const hostedToolHandlers = HttpApiBuilder.group(HostedApi, "tools", (hand
     )
     .handle("answer", ({ params, payload }) =>
       Effect.gen(function* () {
-        const { issuer } = yield* reviewedTool(params.app, params.requestId);
+        const { issuer, invocation } = yield* reviewedTool(params.app, params.requestId);
         const response = yield* Schema.decodeUnknownEffect(ApprovalResponse)(payload.response).pipe(
           Effect.mapError(() => new RequestInvalid()),
         );
         const executor = yield* Effect.flatten(HostedExecutor);
         // The SDK checks the issuer again before it consumes the request.
-        const result = yield* executor.tools.resume(
-          { requestId: params.requestId, owner: yield* currentOwner, response },
-          { issuer },
-        );
+        const usage = yield* CurrentUsage;
+        const result = yield* executor.tools
+          .resume({ requestId: params.requestId, owner: yield* currentOwner, response }, { issuer })
+          .pipe(
+            // The usage record names the tool the saved call ran, as the MCP flow does.
+            Effect.provideService(CurrentUsage, {
+              ...usage,
+              app_id: invocation.app,
+              tool_name: invocation.tool,
+            }),
+          );
         return result.status === "already-consumed" ||
           (result.status === "failed" && result.reason === "expired")
           ? { status: "unavailable" as const }

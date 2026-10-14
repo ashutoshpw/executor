@@ -59,6 +59,7 @@ export const hostedMcpBackend = Effect.gen(function* () {
     Context.add(CurrentAuthorization, policy),
     Context.add(GroupDatabase, database),
     Context.add(CurrentUserId, user),
+    Context.add(CurrentMcpGrant, grant),
   );
   // Discovery reads are traced only; clients repeat them on every session and poll.
   const observe = <A, E, R>(

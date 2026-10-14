@@ -51,17 +51,14 @@ layer(HostedLive, { excludeTestServices: true })("Server-rendered dashboard", (i
           return Promise.resolve();
         });
 
-        // An organization root opens its apps.
+        // An organization root is the home page itself, not a redirect.
         const root = yield* browser.use("Request an organization root", (page) =>
           page.context().request.get(`/org/${actors.organization.slug}`, {
             maxRedirects: 0,
             headers: navigation,
           }),
         );
-        expect(root.status()).toBe(307);
-        expect(new URL(root.headers()["location"] ?? "", "http://dashboard.invalid").pathname).toBe(
-          `/org/${actors.organization.slug}/apps`,
-        );
+        expect(root.status()).toBe(200);
 
         const response = yield* browser.use("Open the apps page", (page) => page.goto(destination));
         if (response === null) throw new Error("The dashboard did not return a document");
