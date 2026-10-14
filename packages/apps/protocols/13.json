@@ -1000,6 +1000,371 @@
         }
       ]
     },
+    "blobCommand": {
+      "_tag": "Union",
+      "types": [
+        {
+          "_tag": "Objects",
+          "propertySignatures": [
+            {
+              "name": "op",
+              "type": {
+                "_tag": "Literal",
+                "literal": "limits"
+              },
+              "isOptional": false
+            }
+          ]
+        },
+        {
+          "_tag": "Objects",
+          "propertySignatures": [
+            {
+              "name": "op",
+              "type": {
+                "_tag": "Literal",
+                "literal": "fromUrl"
+              },
+              "isOptional": false
+            },
+            {
+              "name": "url",
+              "type": {
+                "_tag": "String"
+              },
+              "isOptional": false
+            },
+            {
+              "name": "method",
+              "type": {
+                "_tag": "String"
+              },
+              "isOptional": true
+            },
+            {
+              "name": "headers",
+              "type": {
+                "_tag": "Objects",
+                "propertySignatures": [],
+                "indexSignatures": [
+                  {
+                    "parameter": {
+                      "_tag": "String"
+                    },
+                    "type": {
+                      "_tag": "String"
+                    }
+                  }
+                ]
+              },
+              "isOptional": true
+            },
+            {
+              "name": "body",
+              "type": {
+                "_tag": "String"
+              },
+              "isOptional": true
+            },
+            {
+              "name": "contentType",
+              "type": {
+                "_tag": "String"
+              },
+              "isOptional": true
+            },
+            {
+              "name": "expectedSize",
+              "type": {
+                "_tag": "Number",
+                "checks": [
+                  {
+                    "_tag": "Filter",
+                    "representation": {
+                      "id": "effect/schema/isInt",
+                      "payload": null
+                    }
+                  }
+                ]
+              },
+              "isOptional": true
+            },
+            {
+              "name": "expectedSha256",
+              "type": {
+                "_tag": "String"
+              },
+              "isOptional": true
+            }
+          ]
+        },
+        {
+          "_tag": "Objects",
+          "propertySignatures": [
+            {
+              "name": "op",
+              "type": {
+                "_tag": "Literal",
+                "literal": "create"
+              },
+              "isOptional": false
+            },
+            {
+              "name": "bytes",
+              "type": {
+                "_tag": "String"
+              },
+              "isOptional": false
+            },
+            {
+              "name": "contentType",
+              "type": {
+                "_tag": "String"
+              },
+              "isOptional": true
+            }
+          ]
+        },
+        {
+          "_tag": "Objects",
+          "propertySignatures": [
+            {
+              "name": "op",
+              "type": {
+                "_tag": "Literal",
+                "literal": "stat"
+              },
+              "isOptional": false
+            },
+            {
+              "name": "id",
+              "type": {
+                "_tag": "String"
+              },
+              "isOptional": false
+            }
+          ]
+        },
+        {
+          "_tag": "Objects",
+          "propertySignatures": [
+            {
+              "name": "op",
+              "type": {
+                "_tag": "Literal",
+                "literal": "read"
+              },
+              "isOptional": false
+            },
+            {
+              "name": "handle",
+              "type": {
+                "_tag": "Objects",
+                "propertySignatures": [
+                  {
+                    "name": "id",
+                    "type": {
+                      "_tag": "String"
+                    },
+                    "isOptional": false
+                  },
+                  {
+                    "name": "sha256",
+                    "type": {
+                      "_tag": "String",
+                      "checks": [
+                        {
+                          "_tag": "Filter",
+                          "representation": {
+                            "id": "effect/schema/isPattern",
+                            "payload": {
+                              "source": "^[0-9a-f]{64}$",
+                              "flags": "u"
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    "isOptional": false
+                  },
+                  {
+                    "name": "size",
+                    "type": {
+                      "_tag": "Number",
+                      "checks": [
+                        {
+                          "_tag": "Filter",
+                          "representation": {
+                            "id": "effect/schema/isInt",
+                            "payload": null
+                          }
+                        },
+                        {
+                          "_tag": "Filter",
+                          "representation": {
+                            "id": "effect/schema/isGreaterThanOrEqualTo",
+                            "payload": {
+                              "minimum": 0
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    "isOptional": false
+                  },
+                  {
+                    "name": "contentType",
+                    "type": {
+                      "_tag": "String"
+                    },
+                    "isOptional": false
+                  },
+                  {
+                    "name": "expiresAt",
+                    "type": {
+                      "_tag": "String"
+                    },
+                    "isOptional": false
+                  }
+                ]
+              },
+              "isOptional": false
+            },
+            {
+              "name": "offset",
+              "type": {
+                "_tag": "Number",
+                "checks": [
+                  {
+                    "_tag": "Filter",
+                    "representation": {
+                      "id": "effect/schema/isInt",
+                      "payload": null
+                    }
+                  }
+                ]
+              },
+              "isOptional": false
+            },
+            {
+              "name": "length",
+              "type": {
+                "_tag": "Number",
+                "checks": [
+                  {
+                    "_tag": "Filter",
+                    "representation": {
+                      "id": "effect/schema/isInt",
+                      "payload": null
+                    }
+                  }
+                ]
+              },
+              "isOptional": false
+            }
+          ]
+        },
+        {
+          "_tag": "Objects",
+          "propertySignatures": [
+            {
+              "name": "op",
+              "type": {
+                "_tag": "Literal",
+                "literal": "delete"
+              },
+              "isOptional": false
+            },
+            {
+              "name": "id",
+              "type": {
+                "_tag": "String"
+              },
+              "isOptional": false
+            }
+          ]
+        }
+      ]
+    },
+    "blobReply": {
+      "_tag": "Union",
+      "types": [
+        {
+          "_tag": "Objects",
+          "propertySignatures": [
+            {
+              "name": "ok",
+              "type": {
+                "_tag": "Literal",
+                "literal": true
+              },
+              "isOptional": false
+            },
+            {
+              "name": "value",
+              "type": {
+                "_tag": "Declaration",
+                "representation": {
+                  "id": "effect/schema/Json",
+                  "payload": null
+                }
+              },
+              "isOptional": false
+            }
+          ]
+        },
+        {
+          "_tag": "Objects",
+          "propertySignatures": [
+            {
+              "name": "ok",
+              "type": {
+                "_tag": "Literal",
+                "literal": false
+              },
+              "isOptional": false
+            },
+            {
+              "name": "error",
+              "type": {
+                "_tag": "Union",
+                "types": [
+                  {
+                    "_tag": "Reference",
+                    "$ref": "BlobTooLargeEncoded"
+                  },
+                  {
+                    "_tag": "Reference",
+                    "$ref": "BlobNotFoundEncoded"
+                  },
+                  {
+                    "_tag": "Reference",
+                    "$ref": "BlobExpiredEncoded"
+                  },
+                  {
+                    "_tag": "Reference",
+                    "$ref": "BlobIntegrityErrorEncoded"
+                  },
+                  {
+                    "_tag": "Reference",
+                    "$ref": "BlobUpstreamFailedEncoded"
+                  },
+                  {
+                    "_tag": "Reference",
+                    "$ref": "BlobRangeInvalidEncoded"
+                  },
+                  {
+                    "_tag": "Reference",
+                    "$ref": "BlobUnavailableEncoded"
+                  }
+                ]
+              },
+              "isOptional": false
+            }
+          ]
+        }
+      ]
+    },
     "accounts": {
       "_tag": "Objects",
       "propertySignatures": [
@@ -1934,6 +2299,242 @@
       ],
       "annotations": {
         "~identifier": "HostEvaluationFailed"
+      }
+    },
+    "BlobTooLargeEncoded": {
+      "_tag": "Objects",
+      "propertySignatures": [
+        {
+          "name": "_tag",
+          "type": {
+            "_tag": "Literal",
+            "literal": "BlobTooLarge"
+          },
+          "isOptional": false
+        },
+        {
+          "name": "maximum",
+          "type": {
+            "_tag": "Number",
+            "checks": [
+              {
+                "_tag": "Filter",
+                "representation": {
+                  "id": "effect/schema/isInt",
+                  "payload": null
+                }
+              }
+            ]
+          },
+          "isOptional": false
+        },
+        {
+          "name": "requested",
+          "type": {
+            "_tag": "Number",
+            "checks": [
+              {
+                "_tag": "Filter",
+                "representation": {
+                  "id": "effect/schema/isInt",
+                  "payload": null
+                }
+              }
+            ]
+          },
+          "isOptional": true
+        }
+      ],
+      "annotations": {
+        "~identifier": "BlobTooLarge"
+      }
+    },
+    "BlobNotFoundEncoded": {
+      "_tag": "Objects",
+      "propertySignatures": [
+        {
+          "name": "_tag",
+          "type": {
+            "_tag": "Literal",
+            "literal": "BlobNotFound"
+          },
+          "isOptional": false
+        },
+        {
+          "name": "id",
+          "type": {
+            "_tag": "String"
+          },
+          "isOptional": false
+        }
+      ],
+      "annotations": {
+        "~identifier": "BlobNotFound"
+      }
+    },
+    "BlobExpiredEncoded": {
+      "_tag": "Objects",
+      "propertySignatures": [
+        {
+          "name": "_tag",
+          "type": {
+            "_tag": "Literal",
+            "literal": "BlobExpired"
+          },
+          "isOptional": false
+        },
+        {
+          "name": "id",
+          "type": {
+            "_tag": "String"
+          },
+          "isOptional": false
+        }
+      ],
+      "annotations": {
+        "~identifier": "BlobExpired"
+      }
+    },
+    "BlobIntegrityErrorEncoded": {
+      "_tag": "Objects",
+      "propertySignatures": [
+        {
+          "name": "_tag",
+          "type": {
+            "_tag": "Literal",
+            "literal": "BlobIntegrityError"
+          },
+          "isOptional": false
+        },
+        {
+          "name": "reason",
+          "type": {
+            "_tag": "Union",
+            "types": [
+              {
+                "_tag": "Literal",
+                "literal": "size"
+              },
+              {
+                "_tag": "Literal",
+                "literal": "sha256"
+              },
+              {
+                "_tag": "Literal",
+                "literal": "handle"
+              }
+            ]
+          },
+          "isOptional": false
+        }
+      ],
+      "annotations": {
+        "~identifier": "BlobIntegrityError"
+      }
+    },
+    "BlobUpstreamFailedEncoded": {
+      "_tag": "Objects",
+      "propertySignatures": [
+        {
+          "name": "_tag",
+          "type": {
+            "_tag": "Literal",
+            "literal": "BlobUpstreamFailed"
+          },
+          "isOptional": false
+        },
+        {
+          "name": "reason",
+          "type": {
+            "_tag": "Union",
+            "types": [
+              {
+                "_tag": "Literal",
+                "literal": "status"
+              },
+              {
+                "_tag": "Literal",
+                "literal": "length-required"
+              },
+              {
+                "_tag": "Literal",
+                "literal": "transport"
+              },
+              {
+                "_tag": "Literal",
+                "literal": "request"
+              }
+            ]
+          },
+          "isOptional": false
+        },
+        {
+          "name": "status",
+          "type": {
+            "_tag": "Number",
+            "checks": [
+              {
+                "_tag": "Filter",
+                "representation": {
+                  "id": "effect/schema/isInt",
+                  "payload": null
+                }
+              }
+            ]
+          },
+          "isOptional": true
+        }
+      ],
+      "annotations": {
+        "~identifier": "BlobUpstreamFailed"
+      }
+    },
+    "BlobRangeInvalidEncoded": {
+      "_tag": "Objects",
+      "propertySignatures": [
+        {
+          "name": "_tag",
+          "type": {
+            "_tag": "Literal",
+            "literal": "BlobRangeInvalid"
+          },
+          "isOptional": false
+        },
+        {
+          "name": "maximum",
+          "type": {
+            "_tag": "Number",
+            "checks": [
+              {
+                "_tag": "Filter",
+                "representation": {
+                  "id": "effect/schema/isInt",
+                  "payload": null
+                }
+              }
+            ]
+          },
+          "isOptional": false
+        }
+      ],
+      "annotations": {
+        "~identifier": "BlobRangeInvalid"
+      }
+    },
+    "BlobUnavailableEncoded": {
+      "_tag": "Objects",
+      "propertySignatures": [
+        {
+          "name": "_tag",
+          "type": {
+            "_tag": "Literal",
+            "literal": "BlobUnavailable"
+          },
+          "isOptional": false
+        }
+      ],
+      "annotations": {
+        "~identifier": "BlobUnavailable"
       }
     }
   },
