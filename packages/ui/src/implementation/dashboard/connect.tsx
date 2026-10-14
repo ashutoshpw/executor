@@ -24,9 +24,28 @@ import grokScreenshot from "./assistant-screenshots/grok.webp";
 import museScreenshot from "./assistant-screenshots/muse.webp";
 import cursorScreenshot from "./assistant-screenshots/cursor.webp";
 
+/** The organization an MCP URL is bound to, named in prompts so agents do not reuse another one. */
+export interface PromptOrganization {
+  readonly name: string;
+  readonly slug: string;
+}
+
+/** One server entry per organization, so adding a second organization does not replace the first. */
+export const mcpServerName = (organization?: { readonly slug: string }) =>
+  organization === undefined ? "executor" : `executor-${organization.slug}`;
+
 /** The agent installs Executor itself; the prompt carries everything it needs to start. */
-export const mcpSetupPrompt = (endpoint: string, docs: string, next: string) =>
-  `Help me connect to Executor over MCP at ${endpoint}.\n\nRead the docs to understand the product at ${docs}, then ${next}.`;
+export const mcpSetupPrompt = (
+  endpoint: string,
+  docs: string,
+  next: string,
+  organization?: PromptOrganization,
+) =>
+  `${
+    organization === undefined
+      ? `Help me connect to Executor over MCP at ${endpoint}.`
+      : `Help me connect to Executor for the ${organization.name} organization (${organization.slug}) over MCP at ${endpoint}. If you are not connected to Executor, or your Executor connection is for a different organization, connect to ${endpoint} first.`
+  }\n\nRead the docs to understand the product at ${docs}, then ${next}.`;
 
 const shellQuote = (value: string): string => `'${value.replace(/'/g, `'"'"'`)}'`;
 
@@ -650,9 +669,12 @@ export function McpInstallInstructions({
   docs = publicDocsBaseUrl,
   next = "help me get my first app set up",
   token,
+  organization,
   children,
 }: {
   readonly endpoint: string;
+  /** The organization the endpoint is bound to, when the product has organizations. */
+  readonly organization?: PromptOrganization;
   readonly docs?: string;
   /** What the agent should do once connected. */
   readonly next?: string;
@@ -660,8 +682,8 @@ export function McpInstallInstructions({
   readonly token?: ReactNode;
   readonly children?: ReactNode;
 }) {
-  const prompt = mcpSetupPrompt(endpoint, docs, next);
-  const command = `npx add-mcp ${shellQuote(endpoint)} --name executor -g`;
+  const prompt = mcpSetupPrompt(endpoint, docs, next, organization);
+  const command = `npx add-mcp ${shellQuote(endpoint)} --name ${mcpServerName(organization)} -g`;
   return (
     <div className="mcp-install-content min-w-0">
       <Tabs defaultValue="assistant">
