@@ -6,8 +6,11 @@
  * Questions of ownership, size limits and lifetime go to the product through `control`.
  *
  * A transfer is `begin` (the product reserves a handle and an object key), the stream, `commit`
- * (the product verifies, dedupes and publishes). Any failure removes the object and drops the
- * reservation; the product's sweep removes what a crash leaves.
+ * (the product verifies, dedupes and publishes). A failure before the commit is sent removes the
+ * object and drops the reservation. Once the commit is sent its outcome can be unknown, so a
+ * failure that does not say the product refused it leaves both alone: a published file keeps its
+ * object, and an unpublished reservation expires into the product's sweep, which removes both.
+ * A running transfer renews its reservation, so the sweep only ever finds abandoned ones.
  */
 import type { Fetcher } from "@cloudflare/workers-types";
 import { Cause, Effect, Exit, Result, Schema, Stream } from "effect";
@@ -36,6 +39,8 @@ import {
 
 const redirectLimit = 5;
 const defaultContentType = "application/octet-stream";
+/** Headers that carry the caller's credentials; a redirect to another origin drops them. */
+const crossOriginStripped = new Set(["authorization", "cookie", "proxy-authorization"]);
 
 interface Sha256 {
   readonly write: (chunk: Uint8Array) => Promise<void>;
@@ -124,12 +129,13 @@ export const blobTransfer = (options: {
       let url = yield* parseUrl(command.url);
       let method = (command.method ?? "GET").toUpperCase();
       let body = command.body;
+      let headers: Record<string, string> = { ...command.headers };
       for (let hop = 0; hop <= redirectLimit; hop += 1) {
         const response = yield* Effect.tryPromise({
           try: () =>
             outbound.fetch(url.href, {
               method,
-              headers: { ...command.headers },
+              headers,
               redirect: "manual",
               ...(body === undefined || method === "GET" || method === "HEAD" ? {} : { body }),
               signal: options.signal as never,
@@ -139,11 +145,22 @@ export const blobTransfer = (options: {
         const location = response.headers.get("location");
         if (response.status >= 300 && response.status < 400 && location !== null) {
           yield* discardBody(response);
-          url = yield* parseUrl(new URL(location, url).href);
+          const next = yield* parseUrl(new URL(location, url).href);
           if (response.status !== 307 && response.status !== 308) {
             method = "GET";
             body = undefined;
           }
+          // As `fetch` does, a redirect to another origin leaves the caller's credentials and body
+          // behind.
+          if (next.origin !== url.origin) {
+            headers = Object.fromEntries(
+              Object.entries(headers).filter(
+                ([name]) => !crossOriginStripped.has(name.toLowerCase()),
+              ),
+            );
+            body = undefined;
+          }
+          url = next;
           continue;
         }
         return response;
@@ -181,6 +198,8 @@ export const blobTransfer = (options: {
         Effect.onError(() => cancel),
       );
       const key = begun.key as BlobKey;
+      // `sent` once the commit may have reached the product; `refused` once it said no.
+      let commit: "none" | "sent" | "refused" = "none";
       const transfer = Effect.gen(function* () {
         const length = hasKnownLength(response);
         if (length !== undefined && length > begun.maxFileBytes)
@@ -245,19 +264,39 @@ export const blobTransfer = (options: {
         });
         if (command.expectedSha256 !== undefined && command.expectedSha256.toLowerCase() !== hash)
           return yield* new BlobIntegrityError({ reason: "sha256" });
+        commit = "sent";
         const committed = yield* ask(BlobCommitted, {
           op: "commit",
           id: begun.id,
           size: written,
           sha256: hash,
-        });
+        }).pipe(
+          Effect.tapError((error) =>
+            Effect.sync(() => {
+              if (Schema.is(BlobNotFound)(error) || Schema.is(BlobTooLarge)(error))
+                commit = "refused";
+            }),
+          ),
+        );
         // The owner already held these bytes: the surviving handle's object is not this one.
         if (committed.deduped) yield* removeObject(key);
         return committed.handle;
       });
-      return yield* transfer.pipe(
+      // The reservation stays alive for as long as the transfer runs, however slow the upstream.
+      const renewal = ask(Schema.Null, { op: "touch", id: begun.id }).pipe(
+        Effect.ignore,
+        Effect.delay(`${begun.renewSeconds} seconds`),
+        Effect.forever,
+      );
+      return yield* Effect.raceFirst(transfer, renewal).pipe(
         Effect.onExit((exit) =>
-          Exit.isSuccess(exit) ? Effect.void : Effect.andThen(cancel, discard(begun.id, key)),
+          Exit.isSuccess(exit)
+            ? Effect.void
+            : Effect.andThen(
+                cancel,
+                // An unconfirmed commit may have published the file; its object is not ours to remove.
+                commit === "sent" ? Effect.void : discard(begun.id, key),
+              ),
         ),
       );
     });
@@ -273,6 +312,7 @@ export const blobTransfer = (options: {
         contentType: command.contentType ?? defaultContentType,
       });
       const key = begun.key as BlobKey;
+      let commit: "none" | "sent" | "refused" = "none";
       return yield* Effect.gen(function* () {
         if (bytes.byteLength > begun.maxInlineBytes)
           return yield* new BlobTooLarge({
@@ -287,16 +327,27 @@ export const blobTransfer = (options: {
         yield* store
           .putStream(key, Stream.make(bytes), { size: bytes.byteLength })
           .pipe(Effect.mapError(() => new BlobUnavailable()));
+        commit = "sent";
         const committed = yield* ask(BlobCommitted, {
           op: "commit",
           id: begun.id,
           size: bytes.byteLength,
           sha256: hash,
-        });
+        }).pipe(
+          Effect.tapError((error) =>
+            Effect.sync(() => {
+              if (Schema.is(BlobNotFound)(error) || Schema.is(BlobTooLarge)(error))
+                commit = "refused";
+            }),
+          ),
+        );
         if (committed.deduped) yield* removeObject(key);
         return committed.handle;
       }).pipe(
-        Effect.onExit((exit) => (Exit.isSuccess(exit) ? Effect.void : discard(begun.id, key))),
+        // An unconfirmed commit may have published the file; its object is not ours to remove.
+        Effect.onExit((exit) =>
+          Exit.isSuccess(exit) || commit === "sent" ? Effect.void : discard(begun.id, key),
+        ),
       );
     });
 

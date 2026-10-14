@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { Actors } from "../support/actors.ts";
 import { Api, body } from "../support/api.ts";
 import { blobApp, type Handle } from "../support/blob-app.ts";
-import { blobUpstream, files, hex, sha256Hex } from "../support/blob-upstream.ts";
+import { blobUpstream, files, hex, sha256Hex, stallMillis } from "../support/blob-upstream.ts";
 import { HostedLive, withHostedCase } from "../support/case.ts";
 import { Organization } from "../support/contracts.ts";
 import { Target } from "../support/platform.ts";
@@ -326,15 +326,22 @@ layer(HostedLive, { excludeTestServices: true })("File handles", (it) => {
         expect(lifetime(long.handle)).toBeGreaterThan(day * 1000);
         expect(yield* objectsIn(folder)).toEqual([long.handle.id, short.handle.id].sort());
 
-        // Two hours later the short file is gone to every reader, whether or not it was swept yet,
-        // and the sweep then removes its object. The long file is untouched throughout.
+        // Two hours later the short file is denied to every reader as expired. The product sweeps
+        // hourly here, so the object is certainly still stored: the denial is the lifetime's, not
+        // the sweep's.
         yield* serverControl("clock/advance", 200, { milliseconds: 2 * hour * 1000 });
         expect(yield* app.failure("stat", { id: short.handle.id })).toMatchObject({
-          _tag: "BlobNotFound",
+          _tag: "BlobExpired",
         });
         expect(
           yield* app.failure("slice", { handle: short.handle, offset: 0, length: 10 }),
-        ).toMatchObject({ _tag: "BlobNotFound" });
+        ).toMatchObject({ _tag: "BlobExpired" });
+        expect(yield* objectsIn(folder)).toContain(short.handle.id);
+        // An operator who sweeps every second restarts the product; its first sweep removes the
+        // object, and the file then reads as missing. The long file is untouched throughout.
+        yield* serverControl("stop");
+        yield* serverControl("environment", 200, { EXECUTOR_FILE_HANDLE_SWEEP_SECONDS: "1" });
+        yield* serverControl("start");
         yield* objectsIn(folder).pipe(
           Effect.filterOrFail(
             (objects) => !objects.includes(short.handle.id),
@@ -347,9 +354,57 @@ layer(HostedLive, { excludeTestServices: true })("File handles", (it) => {
           (yield* app.call("slice", { handle: long.handle, offset: 0, length: 256 })).value,
         );
         expect(slice.hex).toBe(hex(files.other.bytes.slice(0, 256)));
+        expect(yield* app.failure("stat", { id: short.handle.id })).toMatchObject({
+          _tag: "BlobNotFound",
+        });
         // Storing the expired bytes again makes a new file.
         const again = yield* app.capture("capture", { url: upstream.url("blob", "small") });
         expect(again.handle.id).not.toBe(short.handle.id);
+      }),
+    ),
+  );
+
+  it.effect(scenarios.appBlobHandleTransfers.title, (context) =>
+    withHostedCase(
+      context,
+      Effect.gen(function* () {
+        const upstream = yield* blobUpstream;
+        const actors = yield* Actors;
+        const organization = yield* createOrganization("Files transfers");
+        const app = yield* blobApp(actors.owner, organization.id);
+        const folder = yield* folderOf(organization.id);
+
+        // An empty file is a file: it is stored, hashed and read back as nothing.
+        const empty = yield* app.capture("capture", { url: upstream.url("blob", "empty") });
+        expect(empty.handle.size).toBe(0);
+        expect(empty.handle.sha256).toBe(sha256Hex(new Uint8Array(0)));
+        expect(
+          (yield* app.call("slice", { handle: empty.handle, offset: 0, length: 16 })).value,
+        ).toEqual({ length: 0, hex: "" });
+
+        // Two transfers of the same bytes at once end on one handle and one stored object.
+        const pair = yield* Effect.all(
+          [
+            app.capture("capture", { url: upstream.url("blob", "other") }),
+            app.capture("capture", { url: upstream.url("blob", "other") }),
+          ],
+          { concurrency: "unbounded" },
+        );
+        expect(pair[0].handle.id).toBe(pair[1].handle.id);
+        expect(yield* objectsIn(folder)).toEqual([empty.handle.id, pair[0].handle.id].sort());
+
+        // The reservation outlives its lifetime while a stalled upstream keeps the transfer
+        // running: here it lasts 6 seconds, the product sweeps every second and the upstream
+        // pauses for 10, yet the file commits whole.
+        expect(stallMillis).toBeGreaterThan(6_000);
+        const stalled = yield* app.capture("capture", { url: upstream.url("stalled", "small") });
+        expect(stalled.handle.size).toBe(files.small.bytes.length);
+        expect(stalled.handle.sha256).toBe(sha256Hex(files.small.bytes));
+        const digest = yield* Schema.decodeUnknownEffect(Digest)(
+          (yield* app.call("digest", { handle: stalled.handle, offset: 0, length: mebibyte }))
+            .value,
+        );
+        expect(digest.sha256).toBe(sha256Hex(files.small.bytes));
       }),
     ),
   );
