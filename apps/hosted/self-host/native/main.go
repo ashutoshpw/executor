@@ -528,7 +528,7 @@ func serve(mode string) error {
 	if os.SameFile(productInfo, motelInfo) {
 		return errors.New("Motel and product data cannot share a datastore")
 	}
-	paths := map[string]string{"product-data": filepath.Join(directory, "product"), "legacy-data": filepath.Join(directory, "hosted.pglite"), "app-data": filepath.Join(directory, "workerd"), "workflow-data": filepath.Join(directory, "workerd", "workflows"), "builds": filepath.Join(directory, "builds")}
+	paths := map[string]string{"product-data": filepath.Join(directory, "product"), "legacy-data": filepath.Join(directory, "hosted.pglite"), "app-data": filepath.Join(directory, "workerd"), "workflow-data": filepath.Join(directory, "workerd", "workflows"), "builds": filepath.Join(directory, "builds"), "user-content": filepath.Join(directory, "user-content")}
 	if mode == "export" {
 		// Export must not wake retained workflow alarms while their product callbacks
 		// are offline. Only the product actor opens its live durable store.

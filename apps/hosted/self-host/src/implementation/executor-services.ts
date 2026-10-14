@@ -40,7 +40,15 @@ import {
   UsageStore,
   executorDefaultRedeployed,
   hostedAppCopies,
+  organizationBlobTtl,
 } from "@executor-js/hosted-server";
+import {
+  defaultBlobPolicy,
+  fileHandleSweepLoop,
+  makeFileHandleStore,
+  maxLocalFileBytes,
+  type UserContentOptions,
+} from "@executor-js/sdk/blobs";
 import { hostedResourceLifecycle } from "@executor-js/hosted-server/resource-lifecycle";
 import { hostedEventAuthority } from "@executor-js/hosted-server/events";
 import { AutomationToolObservation, deliverEvents } from "@executor-js/sdk/scheduling";
@@ -56,6 +64,8 @@ import { SqlClient } from "effect/sql";
 /** Native resources supplied at the self-host composition boundary. */
 export interface SelfHostPlatform {
   readonly blobs: BlobStorage;
+  /** Files apps keep by handle; private to the instance. */
+  readonly userContent: BlobStorage;
   readonly repositories: RepositoryBackend;
   readonly runtime: AppRuntime;
   readonly workflows: WorkflowRuntime;
@@ -98,7 +108,7 @@ export const selfHostExecutorServices = <E, R>(
       // request, record their tool calls beside the requests' own.
       const usage = yield* selfHostUsageStore;
       const automationObservation = usage === undefined ? undefined : automationUsage(usage);
-      const { runtime, workflows, declarations, blobs, repositories } = yield* acquire(
+      const { runtime, workflows, declarations, blobs, userContent, repositories } = yield* acquire(
         Deferred.await(ready),
       ).pipe(
         automationObservation === undefined
@@ -111,12 +121,26 @@ export const selfHostExecutorServices = <E, R>(
         ),
       );
       const lifecycle = yield* hostedResourceLifecycle;
+      // Files apps keep by handle: the instance's own store, its rows beside the product's, and
+      // each organization's chosen lifetime.
+      const database = yield* SqlClient.SqlClient;
+      const userContentOptions: UserContentOptions = {
+        store: userContent,
+        handles: makeFileHandleStore({ sql: database, table: "hosted_file_handles" }),
+        policy: {
+          ...defaultBlobPolicy,
+          maxFileBytes: maxLocalFileBytes,
+          requiresSize: false,
+          ttlSeconds: organizationBlobTtl(database),
+        },
+      };
       const executor = yield* createExecutor({
         database: storage,
         secret: key,
         origin,
         git: repositories,
         blobs,
+        userContent: userContentOptions,
         runtime,
         workflows,
         registry,
@@ -174,6 +198,18 @@ export const selfHostExecutorServices = <E, R>(
           Effect.repeat(Schedule.spaced("1 day")),
         ),
       );
+      // Expired files leave the store, then their rows. The interval is an operator setting so a
+      // test host can sweep within a scenario's deadline; the default is every ten minutes.
+      const sweepSeconds = yield* Config.Number("EXECUTOR_FILE_HANDLE_SWEEP_SECONDS").pipe(
+        Config.withDefault(600),
+      );
+      yield* Effect.forkScoped(
+        fileHandleSweepLoop({
+          handles: userContentOptions.handles,
+          store: userContent,
+          every: Schedule.spaced(`${sweepSeconds} seconds`),
+        }),
+      );
       yield* Effect.forkScoped(
         executor[RepositoryHost].recover.pipe(
           Effect.catch(() => Effect.logWarning("App repository recovery failed")),
@@ -201,6 +237,7 @@ export const selfHostExecutorServices = <E, R>(
       const workflowRequests = yield* workerdHostHandler({
         executor: Effect.succeed(executor),
         blobs,
+        userContent,
       }).pipe(
         automationObservation === undefined
           ? (effect) => effect

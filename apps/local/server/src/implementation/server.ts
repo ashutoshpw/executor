@@ -45,6 +45,14 @@ import {
   remoteRegistry,
 } from "@executor-js/sdk/core";
 import { filesystemBlobStore, workerdApps } from "@executor-js/sdk/node";
+import {
+  defaultBlobPolicy,
+  defaultBlobTtlSeconds,
+  fileHandleSweepLoop,
+  makeFileHandleStore,
+  maxLocalFileBytes,
+  type UserContentOptions,
+} from "@executor-js/sdk/blobs";
 import { officialCatalogUrl } from "@executor-js/catalog";
 import {
   Config,
@@ -126,10 +134,16 @@ export const localApi = (
       const httpClient = yield* safeHttpClient(config.urlPolicy);
       const egress: HostEgress = { policy: config.urlPolicy, client: httpClient };
       const blobs = filesystemBlobStore({ directory: path.join(directory, "builds") });
+      // What apps store as files by handle; private to this user, like the data directory.
+      const userContent = filesystemBlobStore({
+        directory: path.join(directory, "user-content"),
+        mode: 0o700,
+      });
       const ready = yield* Deferred.make<Executor>();
       const { runtime, workflows, declarations } = yield* workerdApps({
         directory: path.join(directory, "workerd"),
         blobs,
+        userContent,
         executor: Deferred.await(ready),
         legacyDataDirectories: [
           path.join(directory, "app-data"),
@@ -151,6 +165,16 @@ export const localApi = (
       );
       const repositories = nativeRepositories(path.join(directory, "repositories"));
       const server = yield* Scope.Scope;
+      const userContentOptions: UserContentOptions = {
+        store: userContent,
+        handles: makeFileHandleStore({ sql, table: "local_file_handles" }),
+        policy: {
+          ...defaultBlobPolicy,
+          maxFileBytes: maxLocalFileBytes,
+          requiresSize: false,
+          ttlSeconds: () => Effect.succeed(defaultBlobTtlSeconds),
+        },
+      };
       const evaluation = yield* declarationConfig;
       // MCP grants are checked again before each event delivery; OAuth starts after the executor.
       const grants = yield* Deferred.make<LocalMcpOAuth>();
@@ -161,6 +185,7 @@ export const localApi = (
         git: repositories,
         hooks: localResourceLifecycle(Deferred.await(ready), sql),
         blobs,
+        userContent: userContentOptions,
         runtime,
         workflows,
         registry,
@@ -228,6 +253,14 @@ export const localApi = (
           Effect.catch(() => Effect.logWarning("Idle agent grant expiry failed")),
           Effect.repeat(Schedule.spaced("1 day")),
         ),
+      );
+      // Expired files leave the store, then their rows.
+      yield* Effect.forkScoped(
+        fileHandleSweepLoop({
+          handles: userContentOptions.handles,
+          store: userContent,
+          every: Schedule.spaced("10 minutes"),
+        }),
       );
       yield* Effect.forkScoped(
         executor[RepositoryHost].recover.pipe(

@@ -26,7 +26,7 @@ import {
   type RemoteCapabilities,
 } from "@executor-js/sdk/workerd";
 import { owned, withRemoteSpan } from "@executor-js/telemetry";
-import { cloudBuildReader } from "./infrastructure/blobs.ts";
+import { cloudBuildReader, cloudUserContent } from "./infrastructure/blobs.ts";
 import { cloudOrigin } from "./infrastructure/stage.ts";
 import { loadCloudBuildRecord, loadCloudFramework } from "./implementation/build-storage.ts";
 import { cachedRuntimeBuilds } from "./implementation/runtime-build-cache.ts";
@@ -141,6 +141,8 @@ const runnerBindings = Effect.gen(function* () {
   // The runner reads builds itself, by the ID each invocation names, so callers never load,
   // decode or send app code. The cache keys match the ones a deploy warms.
   const blobs = yield* cloudBuildReader;
+  // The runner streams `ctx.blobs` file bytes into this bucket, under keys the product reserved.
+  const userContent = yield* cloudUserContent;
   const origin = yield* cloudOrigin.pipe(Effect.orDie);
   /**
    * A runner for one call. Built for each call, never shared across requests: a fiber woken by
@@ -175,6 +177,7 @@ const runnerBindings = Effect.gen(function* () {
             Effect.orDie,
           ),
           outbound: yield* credentials.outbound,
+          userContent,
           credentialKey: credentials.key,
           data: options.data,
           waitUntil: options.waitUntil,
@@ -213,9 +216,9 @@ const AppDataSupervisorLive = AppDataSupervisor.make(
       // A database call's runner runs here, beside the facet it calls: the caller reaches this
       // object directly instead of through a runner isolate that would only forward the call.
       const local: AppDataHost = {
-        invoke: (input, load, elicit, controls) =>
+        invoke: (input, load, elicit, controls, blobs) =>
           supervisor
-            .invoke(input, load, elicit, controls)
+            .invoke(input, load, elicit, controls, blobs)
             .pipe(Effect.withSpan("runtime.app.data.invoke")),
         cancel: (id) => supervisor.cancel(id),
         cache: (namespace, command) => supervisor.cache(namespace, command),
@@ -241,8 +244,9 @@ const AppDataSupervisorLive = AppDataSupervisor.make(
           load: () => Promise<typeof FacetBundle.Type>,
           elicitation: ((input: unknown) => Promise<unknown>) | null = null,
           workflows: ((input: unknown) => Promise<unknown>) | null = null,
+          blobs: ((input: unknown) => Promise<unknown>) | null = null,
         ) =>
-          supervisor.invoke(input, load, elicitation, workflows).pipe(
+          supervisor.invoke(input, load, elicitation, workflows, blobs).pipe(
             // The runner's trace context travels in the invocation's headers, so the supervisor's
             // part of a database call joins the tool call's trace.
             withRemoteSpan(
@@ -319,9 +323,9 @@ export default AppData.make(
           // Start this isolate's colo lookup with the invocation, ahead of its first command.
           colo();
           return {
-            invoke: (input, load, elicit, controls) =>
+            invoke: (input, load, elicit, controls, blobs) =>
               target
-                .invoke(input, load, elicit, controls)
+                .invoke(input, load, elicit, controls, blobs)
                 .pipe(Effect.provide(RuntimeContext.phantom)),
             cancel: (id) => target.cancel(id).pipe(Effect.provide(RuntimeContext.phantom)),
             // No caller waits on it, so it is background work, not the call's Executor time. It
