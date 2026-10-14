@@ -359,7 +359,10 @@ layer(HostedLive, { excludeTestServices: true })("App public files", (it) => {
                   fetch("/audio/chime.mp3", { headers: { range: "bytes=999999999-" } }),
                   fetch(`${pinned}wasm/add.wasm`, { cache: "no-store" }),
                   fetch("/wasm/add.wasm", { cache: "no-store" }),
-                ]).then(([range, tail, beyond, fixed, root]) => {
+                  // Mid-file, and across the 1 MiB boundary of the streamed write.
+                  fetch("/media/large.bin", { headers: { range: "bytes=10485767-10485866" } }),
+                  fetch("/media/large.bin", { headers: { range: "bytes=1048526-1048625" } }),
+                ]).then(([range, tail, beyond, fixed, root, middle, across]) => {
                   const etag = range.headers.get("etag") ?? "";
                   return Promise.all([
                     bytes(range),
@@ -368,13 +371,25 @@ layer(HostedLive, { excludeTestServices: true })("App public files", (it) => {
                       cache: "no-store",
                       headers: { "if-none-match": etag },
                     }),
-                  ]).then(([ranged, ending, revalidated]) => ({
+                    bytes(middle),
+                    bytes(across),
+                  ]).then(([ranged, ending, revalidated, middleBytes, acrossBytes]) => ({
                     status: range.status,
                     contentRange: range.headers.get("content-range"),
                     bytes: ranged,
                     etag,
                     revalidated: revalidated.status,
                     tail: ending,
+                    middle: {
+                      status: middle.status,
+                      contentRange: middle.headers.get("content-range"),
+                      bytes: middleBytes,
+                    },
+                    across: {
+                      status: across.status,
+                      contentRange: across.headers.get("content-range"),
+                      bytes: acrossBytes,
+                    },
                     beyond: beyond.status,
                     fixedCache: fixed.headers.get("cache-control"),
                     rootCache: root.headers.get("cache-control"),
@@ -391,6 +406,12 @@ layer(HostedLive, { excludeTestServices: true })("App public files", (it) => {
           expect(ranges.etag).toBe(`"${blobId(large.bytes)}"`);
           expect(ranges.revalidated).toBe(304);
           expect(ranges.tail).toEqual(Array.from(large.bytes.slice(-10)));
+          expect(ranges.middle.status).toBe(206);
+          expect(ranges.middle.contentRange).toBe(`bytes 10485767-10485866/${large.bytes.length}`);
+          expect(ranges.middle.bytes).toEqual(Array.from(large.bytes.slice(10485767, 10485867)));
+          expect(ranges.across.status).toBe(206);
+          expect(ranges.across.contentRange).toBe(`bytes 1048526-1048625/${large.bytes.length}`);
+          expect(ranges.across.bytes).toEqual(Array.from(large.bytes.slice(1048526, 1048626)));
           expect(ranges.beyond).toBe(416);
           expect(ranges.fixedCache).toBe("private, max-age=31536000, immutable");
           expect(ranges.rootCache).toBe("private, no-cache");
