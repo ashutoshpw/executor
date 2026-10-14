@@ -7,7 +7,7 @@ import { OrganizationBoundary, OrganizationContent } from "@executor-js/hosted-w
 import { NameAccountDialog } from "@executor-js/hosted-web/pages/name-account-dialog";
 import { HostedNavigation } from "@executor-js/hosted-web/navigation";
 import { CloudSupport } from "../components/support.tsx";
-import { CloudNavigation } from "../components/navigation.tsx";
+import { CloudNavigation, useCloudCommandItems } from "../components/navigation.tsx";
 import { V1ImportNotice } from "../components/v1-import-links.tsx";
 
 /** The URL owns this tab's organization; all product pages inherit this boundary. Cloud records
@@ -19,6 +19,7 @@ export const Route = createFileRoute("/org/$organizationSlug")({
 });
 function OrganizationLayout() {
   const { organizationSlug } = Route.useParams();
+  const commandItems = useCloudCommandItems(organizationSlug);
   return (
     <OrganizationBoundary slug={organizationSlug}>
       <ErrorTrackingProvider>
@@ -30,6 +31,7 @@ function OrganizationLayout() {
           }
           support={<CloudSupport />}
           notice={<V1ImportNotice />}
+          commandItems={commandItems}
         >
           <OrganizationContent pending={<CloudPagePending />}>
             <Outlet />
