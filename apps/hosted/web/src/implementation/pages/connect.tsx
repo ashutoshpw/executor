@@ -1,7 +1,7 @@
 import { Link } from "@tanstack/react-router";
 import { Button } from "@executor-js/ui/components/button";
 import { Code } from "@executor-js/ui/dashboard/code";
-import { McpInstallInstructions } from "@executor-js/ui/dashboard/connect";
+import { McpInstallInstructions, mcpServerName } from "@executor-js/ui/dashboard/connect";
 import { ScopedConnectionsPage } from "@executor-js/ui/dashboard/scoped-connections";
 import { ConnectedAgents } from "@executor-js/ui/dashboard/connected-agents";
 import { ConnectionToolPicker } from "@executor-js/ui/dashboard/connection-tool-picker";
@@ -17,7 +17,7 @@ import {
   saveMcpConnectionAtom,
 } from "../../contracts/mcp-connections.ts";
 import { useDocumentationUrl } from "../documentation.ts";
-import { useResourceOrigins } from "../resource-origin.ts";
+import { organizationMcpUrl, useOrganizationMcp, useResourceOrigins } from "../resource-origin.ts";
 
 /** Headless setup: a personal access token against this organization's own addresses. */
 function PersonalTokenSetup({
@@ -31,9 +31,9 @@ function PersonalTokenSetup({
   const mcp = JSON.stringify(
     {
       mcpServers: {
-        executor: {
+        [mcpServerName({ slug })]: {
           type: "http",
-          url: `${mcpOrigin}/org/${encodeURIComponent(slug)}/mcp`,
+          url: organizationMcpUrl(mcpOrigin, slug),
           headers: { Authorization: "Bearer <YOUR_PAT>" },
         },
       },
@@ -70,6 +70,7 @@ export function ConnectPage() {
   const origins = useResourceOrigins();
   const mcpOrigin = origins.mcp[0];
   const { organization } = useOrganizationRoute();
+  const mcp = useOrganizationMcp();
   const docs = useDocumentationUrl();
   return (
     <ScopedConnectionsPage
@@ -89,7 +90,8 @@ export function ConnectPage() {
       }
       installation={
         <McpInstallInstructions
-          endpoint={`${mcpOrigin}/mcp`}
+          endpoint={mcp.endpoint}
+          organization={mcp.organization}
           docs={docs}
           token={<PersonalTokenSetup apiOrigin={origins.api[0]} mcpOrigin={mcpOrigin} />}
         />
