@@ -28,6 +28,26 @@ const liveConfiguration = browserOnly(
   ),
 );
 
+const InstanceOwnership = Schema.Struct({ instanceOwner: Schema.Boolean });
+
+/**
+ * Whether the signed-in person completed setup and so may create organizations. It only decides
+ * what the interface offers; the server rejects everyone else.
+ */
+export const instanceOwnerAtom = browserOnly(
+  BrowserAtoms.atom(
+    authRequest((options) => authClient.$fetch<unknown>("/self-host/me", options)).pipe(
+      Effect.flatMap(Schema.decodeUnknownEffect(InstanceOwnership)),
+      Effect.map((ownership) => ownership.instanceOwner),
+      Effect.catchTag("SchemaError", () =>
+        Effect.fail(
+          new AuthFailed({ message: "Unable to load your account. Reload to try again." }),
+        ),
+      ),
+    ),
+  ),
+);
+
 /** The settings the server read for this sign-in page, sent to the browser with it. */
 const entryConfiguration = Atom.make<Option.Option<SignInSettings>>(Option.none()).pipe(
   Atom.serializable({ key: "self-host:sign-in-settings", schema: Schema.Option(SignInSettings) }),
@@ -104,6 +124,7 @@ export const selfHostSignInAtom = BrowserAtoms.fn((input: SelfHostSignIn, get) =
       Effect.sync(() => {
         invalidate(get, sessionAtom);
         get.refresh(configurationAtom);
+        get.refresh(instanceOwnerAtom);
       }),
     ),
     Effect.asVoid,

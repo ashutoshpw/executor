@@ -81,10 +81,10 @@ export const provisionSelfHostActors = Effect.gen(function* () {
   const listed = yield* api.request(owner, "GET", "/api/auth/organization/list");
   yield* ready(listed.status);
   const organizations = yield* body(Schema.Array(Organization), listed);
-  if (organizations.length !== 1)
-    return yield* new ActorsUnavailable({ message: "Expected one self-host organization" });
-  const organization = organizations[0];
-  if (!organization) return yield* Effect.die(new Error("Setup did not create an organization"));
+  // Other scenarios may have added organizations to a reused instance; actors live in the setup one.
+  const organization = organizations.find((candidate) => candidate.slug === "executor");
+  if (!organization)
+    return yield* new ActorsUnavailable({ message: "The self-host setup organization is missing" });
   const join = (role: "admin" | "member") =>
     Effect.gen(function* () {
       const session = yield* api.session();
