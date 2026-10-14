@@ -18,8 +18,9 @@ EXECUTOR_DISABLE_ANALYTICS=1
 ```
 
 Any value other than empty, `0`, `false`, `no` or `off` turns analytics off.
-Nothing is recorded or sent, including feedback: the `feedback.submit` tool then
-returns `FeedbackDisabled`.
+No analytics event is recorded or sent, including feedback: the `feedback.submit`
+tool then returns `FeedbackDisabled`. The local tool-call record on self-host is
+separate and is still kept; see below.
 
 ## What is sent
 
@@ -53,6 +54,10 @@ insights can show which tools run most. Each record holds the app and tool
 names, the calling agent or key label, the outcome, the error type and the
 duration. It is written to `usage.duckdb` in the data directory and is not sent
 to PostHog or anywhere else. Tool inputs and outputs are never recorded.
+
+The record is kept whether or not the variables above are set, because usage
+insights are a local feature. To remove the history, stop Executor and delete
+`usage.duckdb`; it is created again on the next start.
 
 ## What is never sent
 
