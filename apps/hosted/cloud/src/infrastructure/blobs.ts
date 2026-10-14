@@ -13,6 +13,7 @@ import { Effect, Option, Stream } from "effect";
 import { testStage } from "./stage.ts";
 import { providerFailureCode } from "../implementation/provider-failure.ts";
 import { persistR2Object } from "../implementation/r2-write.ts";
+import { collectBytes } from "@executor-js/sdk/blobs";
 import type { WorkspaceObjects } from "../implementation/workspace-cache.ts";
 
 /** Configured stages keep retained builds; a destroyed test stage leaves nothing behind. */
@@ -23,6 +24,9 @@ export const AppBuilds = Cloudflare.R2.Bucket(
     Effect.orDie,
   ),
 ).pipe(retain(testStage.pipe(Effect.map(Option.isNone), Effect.orDie)));
+
+/** R2 accepts at most 5 GiB in one put; larger objects need multipart uploads. */
+const singlePutLimit = 5 * 1024 ** 3;
 
 type ReadClient = Effect.Success<ReturnType<typeof Cloudflare.R2.ReadBucket>>;
 
@@ -114,6 +118,44 @@ export const cloudBlobs = Effect.gen(function* () {
         ),
         Effect.mapError(() => new BlobStoreError({ operation: "put" })),
       ),
+    // One R2 put, so the object appears whole or not at all. R2 needs the length up front, and
+    // alchemy pipes the stream through a FixedLengthStream, which fails a different byte count.
+    // Not wrapped in persistR2Object: a retry would resend a stream that was already read.
+    putStream: <E>(
+      key: BlobKey,
+      body: Stream.Stream<Uint8Array, E>,
+      options?: { readonly size?: number },
+    ) => {
+      let sourceFailure: { readonly error: E } | undefined;
+      const observed = body.pipe(
+        Stream.tapError((error) =>
+          Effect.sync(() => {
+            sourceFailure = { error };
+          }),
+        ),
+      );
+      const write =
+        options?.size === undefined
+          ? // Without a length R2 cannot take a stream, so this adapter buffers the object.
+            collectBytes(observed, undefined).pipe(
+              Effect.flatMap((bytes) => bucket.put(key, bytes)),
+            )
+          : options.size > singlePutLimit
+            ? Effect.fail(new BlobStoreError({ operation: "put" }))
+            : bucket.put(key, observed, { contentLength: options.size });
+      return write.pipe(
+        Effect.asVoid,
+        Effect.provide(RuntimeContext.phantom),
+        Effect.tapError((error) =>
+          Effect.annotateCurrentSpan({ "storage.blob.failure.code": providerFailureCode(error) }),
+        ),
+        Effect.mapError((): BlobStoreError | E =>
+          sourceFailure === undefined
+            ? new BlobStoreError({ operation: "put" })
+            : sourceFailure.error,
+        ),
+      );
+    },
     remove: (key) =>
       bucket.delete(key).pipe(
         Effect.asVoid,
@@ -157,6 +199,7 @@ export const cloudBuildReader = Effect.gen(function* () {
         observe("exists"),
       ),
     put: () => Effect.fail(new BlobStoreError({ operation: "put" })),
+    putStream: () => Effect.fail(new BlobStoreError({ operation: "put" })),
     remove: () => Effect.fail(new BlobStoreError({ operation: "remove" })),
     list: (folder, options) => listFolder(bucket, folder, options),
     stream: (key, range) => streamObject(bucket, key, range),

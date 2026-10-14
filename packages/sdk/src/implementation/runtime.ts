@@ -198,6 +198,12 @@ export const toEffectRuntime = (
           attributes: { "storage.blob.size": body.byteLength },
         }),
       ),
+    putStream: (key, body, options) =>
+      blobs.putStream(key, body, options).pipe(
+        Effect.withSpan("storage.blob.put", {
+          attributes: options?.size === undefined ? {} : { "storage.blob.size": options.size },
+        }),
+      ),
     remove: (key) => blobs.remove(key).pipe(Effect.withSpan("storage.blob.remove")),
     list: (folder, options) =>
       blobs.list(folder, options).pipe(Effect.withSpan("storage.blob.list")),

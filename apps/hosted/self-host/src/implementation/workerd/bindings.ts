@@ -2,8 +2,14 @@
 import { Effect, Option, Schema, Stream } from "effect";
 import { FetchHttpClient, HttpClient, HttpServerResponse } from "effect/http";
 import { dashboardRoutes, fileHeaders } from "../web.ts";
-import { BlobKey, BlobStoreError, SourceError, type BlobStorage } from "@executor-js/sdk/core";
-import { pageOf, rangeWindow, windowed } from "@executor-js/sdk/blobs";
+import {
+  BlobKey,
+  BlobStoreError,
+  SourceError,
+  type BlobBody,
+  type BlobStorage,
+} from "@executor-js/sdk/core";
+import { collectBytes, pageOf, rangeWindow, windowed } from "@executor-js/sdk/blobs";
 import { gitRepositories } from "@executor-js/app-source/host";
 import {
   parseDestination,
@@ -15,6 +21,9 @@ import {
 export interface HttpBinding {
   readonly fetch: (request: Request) => Promise<Response>;
 }
+/** workerd's global: a byte stream that fails unless exactly `length` bytes pass through. */
+declare const FixedLengthStream: new (length: number) => TransformStream<Uint8Array, Uint8Array>;
+
 const diskRequest = (key: BlobKey, init?: RequestInit) =>
   new Request(`http://disk.internal/${key.split("/").map(encodeURIComponent).join("/")}`, init);
 
@@ -60,6 +69,45 @@ export const bindingBlobStore = (disk: HttpBinding): BlobStorage => {
       ),
     put: (key, body) =>
       send("put", key, [204], { method: "PUT", body: new Uint8Array(body) }).pipe(Effect.asVoid),
+    // With a declared size the request body streams to the disk service, through a stream that
+    // fails unless exactly `size` bytes pass. workerd publishes the file only after the body
+    // ends, and an errored or short body aborts the request, so nothing truncated is committed
+    // and the source's own error is the one reported. Without a size workerd would commit
+    // whatever arrived before a source failed, so that case buffers the object here first.
+    putStream: <E>(
+      key: BlobKey,
+      body: Stream.Stream<Uint8Array, E>,
+      options?: { readonly size?: number },
+    ): Effect.Effect<void, BlobStoreError | E> => {
+      const size = options?.size;
+      if (size === undefined)
+        return collectBytes(body, undefined).pipe(
+          Effect.flatMap((bytes) =>
+            send("put", key, [204], { method: "PUT", body: new Uint8Array(bytes) }),
+          ),
+          Effect.asVoid,
+        );
+      let sourceFailure: { readonly error: E } | undefined;
+      const readable = Stream.toReadableStream(
+        body.pipe(
+          Stream.tapError((error) =>
+            Effect.sync(() => {
+              sourceFailure = { error };
+            }),
+          ),
+        ),
+      ).pipeThrough(new FixedLengthStream(size));
+      return send("put", key, [204], {
+        method: "PUT",
+        body: readable,
+        duplex: "half",
+      } as RequestInit).pipe(
+        Effect.asVoid,
+        Effect.catch((error: BlobStoreError): Effect.Effect<never, BlobStoreError | E> =>
+          Effect.fail(sourceFailure === undefined ? error : sourceFailure.error),
+        ),
+      );
+    },
     remove: (key) => send("remove", key, [204, 404], { method: "DELETE" }).pipe(Effect.asVoid),
     list: (folder, options) =>
       send("list", folder, [200, 404]).pipe(
@@ -78,23 +126,50 @@ export const bindingBlobStore = (disk: HttpBinding): BlobStorage => {
           ),
         ),
       ),
-    // The disk service sends whole files, so a range is cut from the stream here.
+    // A range goes to the disk service as a Range request. A 200 answer means it sent the whole
+    // file, so the range is cut from the stream here instead.
     stream: (key, range) =>
       Effect.gen(function* () {
-        const response = yield* send("get", key, [200, 404]);
+        const size = (response: Response) => Number(response.headers.get("content-length"));
+        const head = (): Effect.Effect<Option.Option<BlobBody>, BlobStoreError> =>
+          send("get", key, [200, 404], { method: "HEAD" }).pipe(
+            Effect.flatMap((response) =>
+              response.status === 404
+                ? Effect.succeed(Option.none())
+                : Number.isSafeInteger(size(response))
+                  ? Effect.succeed(Option.some({ size: size(response), body: Stream.empty }))
+                  : Effect.fail(new BlobStoreError({ operation: "get" })),
+            ),
+          );
+        if (range !== undefined && range.length === 0) return yield* head();
+        const response = yield* send(
+          "get",
+          key,
+          [200, 206, 404, 416],
+          range === undefined
+            ? undefined
+            : { headers: { range: `bytes=${range.offset}-${range.offset + range.length - 1}` } },
+        );
         if (response.status === 404) return Option.none();
+        // Past the end of the object: the answer carries no size we trust, so ask for it.
+        if (response.status === 416) return yield* head();
         const readable = response.body;
-        const size = Number(response.headers.get("content-length"));
-        if (readable === null || !Number.isSafeInteger(size))
-          return yield* new BlobStoreError({ operation: "get" });
-        const { start, end } = rangeWindow(size, range);
+        if (readable === null) return yield* new BlobStoreError({ operation: "get" });
         const body = Stream.fromReadableStream({
           evaluate: () => readable,
           onError: (cause) => new BlobStoreError({ operation: "get", cause }),
         });
+        if (response.status === 206) {
+          const total = Number(/\/(\d+)$/.exec(response.headers.get("content-range") ?? "")?.[1]);
+          if (!Number.isSafeInteger(total)) return yield* new BlobStoreError({ operation: "get" });
+          return Option.some({ size: total, body });
+        }
+        const whole = size(response);
+        if (!Number.isSafeInteger(whole)) return yield* new BlobStoreError({ operation: "get" });
+        const { start, end } = rangeWindow(whole, range);
         return Option.some({
-          size,
-          body: start === 0 && end === size ? body : windowed(body, start, end),
+          size: whole,
+          body: start === 0 && end === whole ? body : windowed(body, start, end),
         });
       }),
   };

@@ -4,6 +4,14 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { BlobKey, BlobStoreError, type BlobStorage } from "../contracts/blobs.ts";
 import { pageOf, rangeWindow } from "./blob-streams.ts";
 
+/** Marks a failure of the caller's stream, so it passes through while storage failures are mapped. */
+class SourceFailure<E> {
+  readonly error: E;
+  constructor(error: E) {
+    this.error = error;
+  }
+}
+
 /** Keep objects under a caller-owned directory. Symlinks may not escape that root. Construction performs no I/O. */
 export const filesystemBlobStore = (options: { readonly directory: string }): BlobStorage => {
   const location = (key: BlobKey, write: boolean) =>
@@ -74,6 +82,45 @@ export const filesystemBlobStore = (options: { readonly directory: string }): Bl
         }),
       ).pipe(
         Effect.mapError(() => new BlobStoreError({ operation: "put" })),
+        Effect.provide(NodeServices.layer),
+      ),
+    putStream: <E>(
+      key: BlobKey,
+      body: Stream.Stream<Uint8Array, E>,
+      putOptions?: { readonly size?: number },
+    ) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const found = yield* location(key, true);
+          if (found === undefined) return yield* new BlobStoreError({ operation: "put" });
+          const { fs, path, target } = found;
+          const parent = path.dirname(target);
+          yield* fs.makeDirectory(parent, { recursive: true });
+          const staging = yield* fs.makeTempDirectoryScoped({
+            directory: parent,
+            prefix: ".blob-",
+          });
+          const file = path.join(staging, "body");
+          let written = 0;
+          yield* body.pipe(
+            Stream.mapError((error) => new SourceFailure(error)),
+            Stream.tap((chunk) =>
+              Effect.sync(() => {
+                written += chunk.byteLength;
+              }),
+            ),
+            Stream.run(fs.sink(file)),
+          );
+          if (putOptions?.size !== undefined && written !== putOptions.size)
+            return yield* new BlobStoreError({ operation: "put" });
+          yield* fs.rename(file, target);
+        }),
+      ).pipe(
+        Effect.mapError((error): BlobStoreError | E =>
+          error instanceof SourceFailure
+            ? (error.error as E)
+            : new BlobStoreError({ operation: "put" }),
+        ),
         Effect.provide(NodeServices.layer),
       ),
     remove: (key) =>
