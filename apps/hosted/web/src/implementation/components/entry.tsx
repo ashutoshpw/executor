@@ -89,7 +89,7 @@ export function DashboardEntryPending({
   /** The resolved dashboard's host pages, for the same reason; links stay disabled until it loads. */
   readonly navigation?: ReactNode;
 } = {}) {
-  const pendingPage = pathname?.split("/")[3] ?? "apps";
+  const pendingPage = pathname?.split("/")[3] ?? "home";
   return (
     <DashboardFrame
       banner={banner}
