@@ -138,9 +138,7 @@ export const blobTransfer = (options: {
         });
         const location = response.headers.get("location");
         if (response.status >= 300 && response.status < 400 && location !== null) {
-          yield* Effect.promise(() => response.body?.cancel() ?? Promise.resolve()).pipe(
-            Effect.ignore,
-          );
+          yield* discardBody(response);
           url = yield* parseUrl(new URL(location, url).href);
           if (response.status !== 307 && response.status !== 308) {
             method = "GET";
@@ -152,6 +150,13 @@ export const blobTransfer = (options: {
       }
       return yield* new BlobUpstreamFailed({ reason: "status", status: 310 });
     });
+
+  /** Release a response's body; one already read, or locked by a reader, has nothing to release. */
+  const discardBody = (response: Awaited<ReturnType<Fetcher["fetch"]>>) =>
+    Effect.tryPromise({
+      try: () => response.body?.cancel() ?? Promise.resolve(),
+      catch: () => undefined,
+    }).pipe(Effect.ignore);
 
   const hasKnownLength = (response: Awaited<ReturnType<Fetcher["fetch"]>>) => {
     // A compressed answer's Content-Length is not the length of the bytes the body yields.
@@ -165,9 +170,7 @@ export const blobTransfer = (options: {
   const fromUrl = (command: Extract<BlobCommand, { op: "fromUrl" }>) =>
     Effect.gen(function* () {
       const response = yield* fetchFollowing(command);
-      const cancel = Effect.promise(() => response.body?.cancel() ?? Promise.resolve()).pipe(
-        Effect.ignore,
-      );
+      const cancel = discardBody(response);
       if (response.status < 200 || response.status >= 300) {
         yield* cancel;
         return yield* new BlobUpstreamFailed({ reason: "status", status: response.status });
@@ -232,7 +235,7 @@ export const blobTransfer = (options: {
                   ? new BlobIntegrityError({ reason: "size" })
                   : new BlobUnavailable(),
             ),
-            Effect.as(counted),
+            Effect.map(() => counted),
           );
         if (command.expectedSize !== undefined && written !== command.expectedSize)
           return yield* new BlobIntegrityError({ reason: "size" });

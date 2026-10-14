@@ -64,6 +64,30 @@ const appAccountLinks = Effect.gen(function* () {
 });
 
 /**
+ * Files apps keep by handle, as hosted keeps them: one row per file, shared by the owner's apps by
+ * content. The table is new and empty, and nothing else refers to it. Local has no organizations,
+ * so there are no settings: every file lives the default lifetime.
+ */
+const fileHandles = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`create table if not exists local_file_handles (
+    id text primary key,
+    owner text not null,
+    state text not null check (state in ('pending', 'complete', 'deleting')),
+    sha256 text check (sha256 is null or sha256 ~ '^[0-9a-f]{64}$'),
+    size bigint check (size is null or size >= 0),
+    content_type text not null,
+    created_at timestamp with time zone not null default now(),
+    expires_at timestamp with time zone not null,
+    creator_app_id text,
+    check (state = 'pending' or state = 'deleting' or (sha256 is not null and size is not null))
+  )`;
+  yield* sql`create unique index if not exists local_file_handles_owner_sha256
+    on local_file_handles (owner, sha256) where state = 'complete'`;
+  yield* sql`create index if not exists local_file_handles_expiry on local_file_handles (expires_at)`;
+});
+
+/**
  * Local product tables beside the SDK schema, each applied once and recorded in the same SQL
  * transaction. Append new steps; never change one that has shipped.
  */
@@ -81,6 +105,8 @@ const migrateLocalProduct = Effect.gen(function* () {
       "1_data_steps": createDataStepJournal("private_local"),
       // Runs after SDK 4.0.13, which keeps the profiles and plans their copies.
       "2_app_account_links": appAccountLinks,
+      // Additive: file handles for `ctx.blobs`; nothing else reads or changes them.
+      "3_file_handles": fileHandles,
     }),
   });
 });

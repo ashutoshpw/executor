@@ -2,7 +2,12 @@
 import { urlPolicyConfig, type HostEgress } from "@executor-js/utils/url-policy";
 import * as BrowserCrypto from "@effect/platform-browser/BrowserCrypto";
 import { makeRegistryStorage } from "@executor-js/app-registry";
-import { firstPartyOAuthClients, hostedOAuthClientName } from "@executor-js/hosted-server";
+import {
+  firstPartyOAuthClients,
+  hostedOAuthClientName,
+  organizationBlobTtl,
+} from "@executor-js/hosted-server";
+import { defaultBlobPolicy, makeFileHandleStore } from "@executor-js/sdk/blobs";
 import { hostedResourceLifecycle } from "@executor-js/hosted-server/resource-lifecycle";
 import {
   createExecutor,
@@ -20,7 +25,7 @@ import { cachedVersionSources } from "../implementation/version-source-cache.ts"
 import { organizationPublishers } from "../implementation/publishers.ts";
 import type { AppSources } from "./source.ts";
 import { isolateDeclarations } from "./isolate-memory.ts";
-import { cloudBlobs } from "./blobs.ts";
+import { cloudBlobs, cloudUserContent } from "./blobs.ts";
 import { cloudWorkflows } from "./workflow-runtime.ts";
 import { cloudRuntime } from "./runtime.ts";
 import { durableDeclarations } from "./durable-declarations.ts";
@@ -32,6 +37,9 @@ import { missingFirstPartyGitHubClient } from "./first-party-oauth-settings.ts";
 import { cloudAccountSignIns } from "../implementation/oauth-proxy-settings.ts";
 import { cloudClientMetadata } from "./client-metadata.ts";
 import type { AppDataSupervisor } from "./app-data.ts";
+
+/** The largest file Cloud stores: what a Worker moves in one request. Larger needs presigned uploads. */
+export const cloudMaxFileBytes = 100 * 1024 * 1024;
 
 /**
  * Cloudflare offers no connect hook for global fetch, so this host cannot re-check a resolved
@@ -84,6 +92,7 @@ export const cloudExecutor = Effect.fn(function* (
   const makeRuntime = yield* cloudRuntime(origin, databases);
   const workflows = yield* cloudWorkflows;
   const blobs = yield* cloudBlobs;
+  const userContent = yield* cloudUserContent;
   // App storage, hosted permission checks and Better Auth share the event's client.
   const database = (yield* InvocationDatabase).pipe(Effect.mapError(() => new StorageError()));
   const executor = yield* makeExecutionMemo(
@@ -120,6 +129,21 @@ export const cloudExecutor = Effect.fn(function* (
         webhookOrigin,
         git: appSources(background),
         blobs: yield* cachedVersionSources(origin, blobs),
+        // Files apps keep by handle: this event's rows, the product's bucket, and Workers' limits.
+        userContent: {
+          store: userContent,
+          handles: makeFileHandleStore({
+            sql: Context.get(services, SqlClient.SqlClient),
+            table: "hosted_file_handles",
+          }),
+          policy: {
+            ...defaultBlobPolicy,
+            maxFileBytes: cloudMaxFileBytes,
+            // R2 takes a stream only with its length up front.
+            requiresSize: true,
+            ttlSeconds: organizationBlobTtl(Context.get(services, SqlClient.SqlClient)),
+          },
+        },
         runtime: yield* makeRuntime,
         workflows,
         registry: {
