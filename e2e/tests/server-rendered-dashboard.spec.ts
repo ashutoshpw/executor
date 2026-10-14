@@ -138,7 +138,7 @@ layer(HostedLive, { excludeTestServices: true })("Server-rendered dashboard", (i
         );
         expect(
           new URL(resumed.headers()["location"] ?? "", "http://dashboard.invalid").pathname,
-        ).toBe(`/org/${actors.organization.slug}/apps`);
+        ).toBe(`/org/${actors.organization.slug}`);
 
         const consent = yield* browser.use("Open the MCP consent page", (page) =>
           page.context().request.get("/mcp/authorize?client_id=unknown&response_type=code", {

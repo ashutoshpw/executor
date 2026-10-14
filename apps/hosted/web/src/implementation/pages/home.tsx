@@ -18,6 +18,9 @@ const ranges = [
   { value: "30d", label: "30 days" },
 ] as const satisfies readonly { readonly value: UsageRange; readonly label: string }[];
 
+/** The range the page shows when the address names none. */
+export const defaultRange = "7d" as const satisfies UsageRange;
+
 const count = new Intl.NumberFormat();
 const percent = (rate: number) => `${(rate * 100).toFixed(rate === 1 || rate === 0 ? 0 : 1)}%`;
 const duration = (ms: number) =>
@@ -30,13 +33,21 @@ const dayFormat = new Intl.DateTimeFormat(undefined, {
 const formatDay = (date: string) => dayFormat.format(new Date(`${date}T00:00:00Z`));
 
 /** Who is using the connected apps, and which apps and tools they use most. */
-export function HomePage() {
+export function HomePage({
+  range = defaultRange,
+  onRangeChange,
+}: {
+  readonly range?: UsageRange | undefined;
+  readonly onRangeChange: (range: UsageRange) => void;
+}) {
   const { organization, slug: organizationSlug } = useOrganizationRoute();
-  const [range, setRange] = useState<UsageRange>("7d");
   useDocumentTitle(productTitle(homeTitle));
   return (
     <PageFrame>
-      <PageHeader title={homeTitle} description="Tool calls made through your connected agents.">
+      <PageHeader
+        title={homeTitle}
+        description="Tool calls made by your connected agents, schedules and workflows."
+      >
         <div role="group" aria-label="Time range" className="flex items-center gap-1.5">
           {ranges.map((item) => (
             <Button
@@ -44,7 +55,7 @@ export function HomePage() {
               size="sm"
               variant={item.value === range ? "default" : "outline"}
               aria-pressed={item.value === range}
-              onClick={() => setRange(item.value)}
+              onClick={() => onRangeChange(item.value)}
             >
               {item.label}
             </Button>

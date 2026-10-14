@@ -1,5 +1,5 @@
 /** Effect-only host lifecycle. These privileged operations are not mounted on the SDK HTTP API. */
-import { Context, Effect } from "effect";
+import { Clock, Context, Effect, type Exit } from "effect";
 import type { ScheduledRun } from "./schedules.ts";
 import type { AppId, OwnerId, StorageError } from "./shared.ts";
 
@@ -35,3 +35,46 @@ export const ScheduleObservation = Context.Reference<{
     >,
   ) => Effect.Effect<void>;
 }>("executor/ScheduleObservation", { defaultValue: () => ({ completed: () => Effect.void }) });
+
+/** One tool call a schedule or a workflow step made on its own, without a caller waiting on it. */
+export interface AutomationToolCall {
+  readonly source: "schedule" | "workflow";
+  readonly app: AppId;
+  readonly owner: OwnerId;
+  /** Whom the work runs for; null for an app schedule or a workflow started without a caller. */
+  readonly actor: string | null;
+  /** The schedule copy's ID, or the workflow's name within its app. */
+  readonly automation: { readonly id: string; readonly name: string };
+  readonly tool: string;
+  readonly durationMs: number;
+  /** A schedule's tool result, a workflow step's output, or the failure that ended the call. */
+  readonly exit: Exit.Exit<unknown, unknown>;
+}
+
+/**
+ * Optional host observer for tool calls that schedules and workflows make, reported when each call
+ * finishes. It is advisory: a failing observer never reaches the run, and the call never waits on
+ * more than the effect it returns.
+ */
+export const AutomationToolObservation = Context.Reference<{
+  readonly completed: (call: AutomationToolCall) => Effect.Effect<void>;
+}>("executor/AutomationToolObservation", {
+  defaultValue: () => ({ completed: () => Effect.void }),
+});
+
+/** Report a finished automation call without letting the observer disturb the run. */
+export const observeAutomationTool = <A, E, R>(
+  call: Omit<AutomationToolCall, "durationMs" | "exit">,
+  work: Effect.Effect<A, E, R>,
+) =>
+  Effect.flatMap(Clock.currentTimeMillis, (started) =>
+    work.pipe(
+      Effect.onExit((exit) =>
+        Effect.flatMap(Clock.currentTimeMillis, (finished) =>
+          Effect.flatMap(AutomationToolObservation, (observer) =>
+            observer.completed({ ...call, durationMs: Math.max(0, finished - started), exit }),
+          ),
+        ).pipe(Effect.catchCause(() => Effect.void)),
+      ),
+    ),
+  );

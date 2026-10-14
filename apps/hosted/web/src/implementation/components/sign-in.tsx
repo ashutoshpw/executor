@@ -2,9 +2,8 @@ import { usePageUrl } from "@executor-js/dashboard-start/page";
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { useEffect, useState, type ReactNode } from "react";
-import { InventoryPageSkeleton } from "@executor-js/ui/dashboard/loading";
+import { PageSkeleton } from "@executor-js/ui/dashboard/loading";
 import { McpConsentLoading } from "@executor-js/ui/dashboard/mcp-consent";
-import { Skeleton } from "@executor-js/ui/components/skeleton";
 import { DashboardEntryPending, OrganizationLookupError } from "./entry.tsx";
 import { PagePending } from "./page-pending.tsx";
 import { Spinner } from "@executor-js/ui/components/spinner";
@@ -51,13 +50,8 @@ function ReplaceAfterSignIn({
   return <SignInPending />;
 }
 
-function PendingApps() {
-  return (
-    <InventoryPageSkeleton
-      kind="apps"
-      action={<Skeleton className="h-9 w-22 rounded-md" aria-label="Loading app actions" />}
-    />
-  );
+function PendingHome() {
+  return <PageSkeleton title="Home" />;
 }
 
 function FirstOrganizationDestination({ verified }: { readonly verified: boolean }) {
@@ -66,16 +60,16 @@ function FirstOrganizationDestination({ verified }: { readonly verified: boolean
   return (
     <DashboardEntryPending>
       {AsyncResult.builder(organizations)
-        .onInitialOrWaiting(() => <PendingApps />)
+        .onInitialOrWaiting(() => <PendingHome />)
         .onFailure(() => <OrganizationLookupError retry={refresh} />)
         .onSuccess((items) => {
           const only = items.length === 1 ? items[0] : undefined;
           return (
             <ReplaceAfterSignIn
               verified={verified}
-              destination={only ? `/org/${encodeURIComponent(only.slug)}/apps` : "/"}
+              destination={only ? `/org/${encodeURIComponent(only.slug)}` : "/"}
             >
-              <PendingApps />
+              <PendingHome />
             </ReplaceAfterSignIn>
           );
         })
@@ -100,10 +94,7 @@ export function ContinueAfterSignIn({
   if (redirect !== "/") return <ReplaceAfterSignIn verified={verified} destination={redirect} />;
   if (recent !== undefined)
     return (
-      <ReplaceAfterSignIn
-        verified={verified}
-        destination={`/org/${encodeURIComponent(recent)}/apps`}
-      />
+      <ReplaceAfterSignIn verified={verified} destination={`/org/${encodeURIComponent(recent)}`} />
     );
   return <FirstOrganizationDestination verified={verified} />;
 }

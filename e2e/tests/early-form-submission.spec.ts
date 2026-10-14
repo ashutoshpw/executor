@@ -54,7 +54,7 @@ layer(HostedLive, { excludeTestServices: true })("Early form submission", (it) =
           return Promise.resolve();
         });
         yield* browser.use("The held submission signs in once the page is interactive", (page) =>
-          page.waitForURL(`**/org/${actors.organization.slug}/apps`),
+          page.waitForURL(`**/org/${actors.organization.slug}`),
         );
         expect(leaked()).toEqual([]);
       }),

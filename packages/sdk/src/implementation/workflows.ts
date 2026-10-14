@@ -1,4 +1,5 @@
 import { CurrentActor } from "../contracts/executor.ts";
+import { observeAutomationTool } from "../contracts/scheduler.ts";
 /** Retained run identities pin code/accounts; the backend owns timers and checkpoint execution. */
 import { Cause, Clock, Effect, Redacted, Result, Schema, type Crypto } from "effect";
 import { Hex } from "effect/encoding";
@@ -251,8 +252,17 @@ export const makeWorkflowRuns = (
         const deadline = (yield* Clock.currentTimeMillis) + input.timeout;
         const current = yield* seed(run);
         const bound = yield* context(run);
-        const result = yield* runtime
-          .call({
+        const row = yield* read(run);
+        const result = yield* observeAutomationTool(
+          {
+            source: "workflow",
+            app: current.app,
+            owner: row.owner,
+            actor: row.actor,
+            automation: { id: `${current.app}/${current.name}`, name: current.name },
+            tool: input.name,
+          },
+          runtime.call({
             app: current.app,
             build: current.build,
             ...bound,
@@ -279,35 +289,35 @@ export const makeWorkflowRuns = (
                   },
                 }
               : {}),
-          })
-          .pipe(
-            Effect.catchTags({
-              HostToolApprovalRequired: () => Effect.fail(failure("approval")),
-              HostToolBlocked: () => Effect.fail(failure("approval")),
-              HostInputInvalid: () => Effect.fail(failure("input")),
-              HostToolNotFound: () => Effect.fail(failure("operation")),
-              HostKindMismatch: () => Effect.fail(failure("operation")),
-              HostOperationFailed: ({ errorName, message }) =>
-                Effect.fail(
-                  new WorkflowFailure({
-                    reason: "execution",
-                    retryable: true,
-                    ...(errorName === undefined ? {} : { errorName }),
-                    ...(message.length === 0 ? {} : { message }),
-                  }),
-                ),
-              // The same step exceeds the same budget again, so retrying it cannot succeed.
-              DatabaseLimitExceeded: (error) =>
-                Effect.fail(
-                  new WorkflowFailure({
-                    reason: "execution",
-                    retryable: false,
-                    errorName: error._tag,
-                    message: error.message,
-                  }),
-                ),
-            }),
-          );
+          }),
+        ).pipe(
+          Effect.catchTags({
+            HostToolApprovalRequired: () => Effect.fail(failure("approval")),
+            HostToolBlocked: () => Effect.fail(failure("approval")),
+            HostInputInvalid: () => Effect.fail(failure("input")),
+            HostToolNotFound: () => Effect.fail(failure("operation")),
+            HostKindMismatch: () => Effect.fail(failure("operation")),
+            HostOperationFailed: ({ errorName, message }) =>
+              Effect.fail(
+                new WorkflowFailure({
+                  reason: "execution",
+                  retryable: true,
+                  ...(errorName === undefined ? {} : { errorName }),
+                  ...(message.length === 0 ? {} : { message }),
+                }),
+              ),
+            // The same step exceeds the same budget again, so retrying it cannot succeed.
+            DatabaseLimitExceeded: (error) =>
+              Effect.fail(
+                new WorkflowFailure({
+                  reason: "execution",
+                  retryable: false,
+                  errorName: error._tag,
+                  message: error.message,
+                }),
+              ),
+          }),
+        );
         return yield* Schema.decodeUnknownEffect(WorkflowValue)(result).pipe(
           Effect.mapError(() => failure("output")),
         );

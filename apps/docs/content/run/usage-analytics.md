@@ -52,7 +52,8 @@ hosts are reported as `private`.
 Self-host also keeps a local record of each finished tool call so its usage
 insights can show which tools run most. Each record holds the app and tool
 names, the calling agent or key label, the outcome, the error type and the
-duration. It is written to `usage.duckdb` in the data directory and is not sent
+duration. Tool calls made by schedules and workflows are recorded too, under the
+schedule or workflow name. It is written to `usage.duckdb` in the data directory and is not sent
 to PostHog or anywhere else. Tool inputs and outputs are never recorded.
 
 The record is kept whether or not the variables above are set, because usage

@@ -1,10 +1,12 @@
 /** Attribution for the local usage records; analytics opt-outs do not apply to this product feature. */
-import { Effect, Option } from "effect";
+import { Cause, Effect, Exit, Option, Predicate, Schema } from "effect";
+import type { AutomationToolCall, AutomationToolObservation } from "@executor-js/sdk/scheduling";
+import { toolCompletion } from "@executor-js/telemetry/product-analytics";
 import { CurrentUserId, CurrentPrincipal } from "../contracts/auth.ts";
 import { CurrentMcpGrant } from "../contracts/mcp.ts";
 import { CurrentOrganization } from "../contracts/organization.ts";
 import { patGrantOf } from "./mcp-oauth.ts";
-import { CurrentUsage } from "../contracts/product-analytics.ts";
+import { CurrentUsage, usageFailure } from "../contracts/product-analytics.ts";
 import { CurrentApiKey, UsageStore, type UsageOutcome } from "../contracts/usage.ts";
 
 const sourceLabels: Record<string, string> = {
@@ -72,3 +74,75 @@ export const recordToolCall = (call: {
       }),
     ).pipe(Effect.ignore);
   });
+
+/** Failures that end a call before the tool runs. */
+const notRun = new Set([
+  "HostToolApprovalRequired",
+  "HostToolBlocked",
+  "HostToolNotFound",
+  "HostKindMismatch",
+  "HostInputInvalid",
+]);
+
+/** How an automation's tool call finished, or nothing when it did not run the tool. */
+const automationResult = (
+  call: AutomationToolCall,
+): { readonly outcome?: UsageOutcome; readonly error_type?: string } | undefined => {
+  if (Exit.isFailure(call.exit)) {
+    // A workflow step that paused for approval, was blocked or was rejected before dispatch
+    // did not run the tool, the same as an approval pause or a lookup miss for a schedule.
+    const error = Cause.findErrorOption(call.exit.cause);
+    if (
+      Option.isSome(error) &&
+      notRun.has(Predicate.hasProperty(error.value, "_tag") ? String(error.value._tag) : "")
+    )
+      return undefined;
+    return usageFailure(call.exit.cause);
+  }
+  if (call.source === "workflow") return { outcome: "success" };
+  // A schedule reports the tool result. An approval pause is not a call, and a repeated or late
+  // answer did not run the tool.
+  const result = Schema.decodeUnknownOption(
+    Schema.Struct({
+      status: Schema.String,
+      toolError: Schema.optional(Schema.Boolean),
+      reason: Schema.optional(Schema.String),
+    }),
+  )(call.exit.value);
+  if (Option.isNone(result)) return undefined;
+  const { status, reason } = result.value;
+  if (status === "approval-required" || status === "already-consumed") return undefined;
+  if (status === "failed" && reason === "expired") return undefined;
+  return toolCompletion(result.value);
+};
+
+/**
+ * Keep one record of each tool call a schedule or workflow makes, attributed to that automation
+ * the way a request is to its agent. The record belongs to the user the work runs for, so members
+ * see their own schedules and workflows, and administrators also see app schedules and workflows
+ * started without a caller, which carry no user. Runs have no request to read an organization
+ * from, so it comes from the app's owner.
+ */
+export const automationUsage = (
+  store: typeof UsageStore.Service,
+): typeof AutomationToolObservation.Service => ({
+  completed: (call) =>
+    Effect.sync(() => {
+      if (!store.available || !call.owner.startsWith("organization:")) return;
+      const result = automationResult(call);
+      if (result?.outcome === undefined) return;
+      store.record({
+        at: new Date(),
+        organizationId: call.owner.slice("organization:".length),
+        userId: call.actor ?? "",
+        agentKey: `${call.source}:${call.automation.id}`,
+        agentLabel: call.automation.name.slice(0, 200),
+        source: call.source,
+        appId: call.app,
+        toolName: call.tool,
+        outcome: result.outcome,
+        ...(result.error_type === undefined ? {} : { errorType: result.error_type }),
+        durationMs: call.durationMs,
+      });
+    }).pipe(Effect.catchCause(() => Effect.void)),
+});
