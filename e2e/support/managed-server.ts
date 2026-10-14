@@ -66,6 +66,8 @@ export const OperatorSettings = Schema.Struct({
   EXECUTOR_OAUTH_GOOGLE_CLIENT_SECRET: Schema.optionalKey(Schema.String),
   EXECUTOR_OAUTH_SLACK_CLIENT_ID: Schema.optionalKey(Schema.String),
   EXECUTOR_OAUTH_SLACK_CLIENT_SECRET: Schema.optionalKey(Schema.String),
+  /** How often the product sweeps expired files; a scenario speeds it up after its own checks. */
+  EXECUTOR_FILE_HANDLE_SWEEP_SECONDS: Schema.optionalKey(Schema.String),
 });
 /** The runner owns every process generation and keeps the same synthetic secrets across restarts. */
 export const startManagedServer = (

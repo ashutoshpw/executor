@@ -28,12 +28,15 @@ export const sha256Hex = (bytes: Uint8Array) => createHash("sha256").update(byte
 export const hex = (bytes: Uint8Array) => Buffer.from(bytes).toString("hex");
 
 const chunk = 64 * 1024;
+/** How long a stalled upstream pauses after its first chunk. */
+export const stallMillis = 10_000;
 
 /** The files the server serves, by name. */
 export const files = {
   large: { seed: 7, bytes: generatedBytes(7, 5 * 1024 * 1024) },
   small: { seed: 11, bytes: generatedBytes(11, 300 * 1024) },
   other: { seed: 13, bytes: generatedBytes(13, 64 * 1024) },
+  empty: { seed: 17, bytes: new Uint8Array(0) },
 } as const;
 export type FileName = keyof typeof files;
 
@@ -69,6 +72,17 @@ export const blobUpstream = Effect.gen(function* () {
           ),
           { contentType: "application/x-fixture" },
         );
+      // The first chunk at once, the rest after a pause: an upstream that stalls mid-transfer.
+      if (kind === "stalled" && file !== undefined)
+        return HttpServerResponse.stream(
+          Stream.concat(
+            Stream.make(file.bytes.slice(0, chunk)),
+            Stream.fromEffect(Effect.sleep(stallMillis)).pipe(
+              Stream.flatMap(() => Stream.make(file.bytes.slice(chunk))),
+            ),
+          ),
+          { contentType: "application/x-fixture" },
+        );
       if (kind === "redirect" && file !== undefined)
         return HttpServerResponse.empty({
           status: 302,
@@ -91,7 +105,8 @@ export const blobUpstream = Effect.gen(function* () {
   const origin = `http://127.0.0.1:${server.address.port}`;
   return {
     origin,
-    url: (kind: "blob" | "chunked" | "redirect", name: FileName) => `${origin}/${kind}/${name}`,
+    url: (kind: "blob" | "chunked" | "stalled" | "redirect", name: FileName) =>
+      `${origin}/${kind}/${name}`,
     status: (code: number) => `${origin}/status/${code}`,
     received: Effect.sync(() => [...received]),
     /** How many requests reached `path`. */

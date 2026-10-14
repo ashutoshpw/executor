@@ -15,6 +15,7 @@ import {
   BlobUnavailable,
 } from "apps/contracts";
 import {
+  pendingBlobSeconds,
   BlobBegun,
   BlobCommitted,
   BlobControlCommand,
@@ -34,6 +35,7 @@ export const makeBlobControl = (options: {
   readonly owner: Effect.Effect<string, BlobUnavailable>;
 }): BlobControl => {
   const { store, handles, policy } = options.userContent;
+  const pendingSeconds = policy.pendingSeconds ?? pendingBlobSeconds;
   const limits = (owner: string) =>
     policy.ttlSeconds(owner).pipe(
       Effect.map((ttlSeconds) =>
@@ -57,6 +59,7 @@ export const makeBlobControl = (options: {
             owner,
             appId: options.app,
             contentType: command.contentType,
+            pendingSeconds,
           });
           return yield* Schema.encodeEffect(BlobBegun)({
             id: pending.id,
@@ -64,6 +67,7 @@ export const makeBlobControl = (options: {
             maxFileBytes: policy.maxFileBytes,
             maxInlineBytes: policy.maxInlineBytes,
             requiresSize: policy.requiresSize,
+            renewSeconds: Math.max(1, Math.floor(pendingSeconds / 3)),
           }).pipe(Effect.orDie);
         }
         case "commit": {
@@ -84,6 +88,9 @@ export const makeBlobControl = (options: {
           });
           return yield* Schema.encodeEffect(BlobCommitted)(committed).pipe(Effect.orDie);
         }
+        case "touch":
+          yield* handles.touch({ owner, id: command.id, pendingSeconds });
+          return null;
         case "abort":
           yield* handles.abort({ owner, id: command.id });
           return null;

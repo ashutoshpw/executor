@@ -47,6 +47,7 @@ import {
   fileHandleSweepLoop,
   makeFileHandleStore,
   maxLocalFileBytes,
+  pendingBlobSeconds,
   type UserContentOptions,
 } from "@executor-js/sdk/blobs";
 import { hostedResourceLifecycle } from "@executor-js/hosted-server/resource-lifecycle";
@@ -66,6 +67,11 @@ export interface SelfHostPlatform {
   readonly blobs: BlobStorage;
   /** Files apps keep by handle; private to the instance. */
   readonly userContent: BlobStorage;
+  /**
+   * The user-content store cannot take a stream of unknown length: the packaged host's disk
+   * binding buffers one in the product Worker, which a large upload must not do.
+   */
+  readonly userContentRequiresSize: boolean;
   readonly repositories: RepositoryBackend;
   readonly runtime: AppRuntime;
   readonly workflows: WorkflowRuntime;
@@ -108,9 +114,15 @@ export const selfHostExecutorServices = <E, R>(
       // request, record their tool calls beside the requests' own.
       const usage = yield* selfHostUsageStore;
       const automationObservation = usage === undefined ? undefined : automationUsage(usage);
-      const { runtime, workflows, declarations, blobs, userContent, repositories } = yield* acquire(
-        Deferred.await(ready),
-      ).pipe(
+      const {
+        runtime,
+        workflows,
+        declarations,
+        blobs,
+        userContent,
+        userContentRequiresSize,
+        repositories,
+      } = yield* acquire(Deferred.await(ready)).pipe(
         automationObservation === undefined
           ? (effect) => effect
           : Effect.provideService(AutomationToolObservation, automationObservation),
@@ -124,13 +136,19 @@ export const selfHostExecutorServices = <E, R>(
       // Files apps keep by handle: the instance's own store, its rows beside the product's, and
       // each organization's chosen lifetime.
       const database = yield* SqlClient.SqlClient;
+      // A reservation lives this long after its transfer's last renewal; an operator setting so a
+      // test host can see a stalled upload outlive it.
+      const pendingSeconds = yield* Config.Number("EXECUTOR_FILE_HANDLE_PENDING_SECONDS").pipe(
+        Config.withDefault(pendingBlobSeconds),
+      );
       const userContentOptions: UserContentOptions = {
         store: userContent,
         handles: makeFileHandleStore({ sql: database, table: "hosted_file_handles" }),
         policy: {
           ...defaultBlobPolicy,
           maxFileBytes: maxLocalFileBytes,
-          requiresSize: false,
+          requiresSize: userContentRequiresSize,
+          pendingSeconds,
           ttlSeconds: organizationBlobTtl(database),
         },
       };

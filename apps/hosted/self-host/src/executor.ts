@@ -47,6 +47,7 @@ export const selfHostExecutor = (egress: HostEgress) =>
         ...host,
         blobs,
         userContent,
+        userContentRequiresSize: false,
         repositories: nativeRepositories(path.resolve(directory, "repositories")),
       };
     }),
