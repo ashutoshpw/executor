@@ -9,6 +9,7 @@ import { Atom } from "effect/reactivity";
 import { acknowledge, acknowledgedQuery, readInto } from "./mutations.ts";
 
 class OwnedCopy extends Data.Class<{ readonly app: AppId }> {}
+class PublicCopy extends Data.Class<{ readonly package: string; readonly commit: string }> {}
 class SourceFileKey extends Data.Class<{
   readonly app: AppId;
   readonly commit: string;
@@ -39,6 +40,10 @@ export const makeAppManagementAtoms = <R, E>(
   params: { readonly organization?: string },
   retainFailure?: (cause: Cause.Cause<E>) => boolean,
 ) => {
+  /** Public listings anyone can copy; publishing and unpublishing patch this list as well as the owner's own. */
+  const catalog = runtime
+    .atom(Effect.flatMap(client, (api) => api.catalog({ params, query: {} })))
+    .pipe(revalidated, (source) => acknowledgedQuery(source, retainFailure));
   const published = runtime
     .atom(Effect.flatMap(client, (api) => api.published({ params })))
     .pipe(hydrate("published", params), (source) => acknowledgedQuery(source, retainFailure));
@@ -166,7 +171,7 @@ export const makeAppManagementAtoms = <R, E>(
         ),
     ),
   );
-  const copies = Atom.family((from: OwnedCopy) =>
+  const copies = Atom.family((from: OwnedCopy | PublicCopy) =>
     runtime.fn((input: { name: string; onApp: AppAcknowledgement }, get) =>
       Effect.flatMap(client, (api) =>
         api.copy({ params, payload: { from, name: input.name } }),
@@ -180,10 +185,11 @@ export const makeAppManagementAtoms = <R, E>(
       ).pipe(
         Effect.tap((saved) =>
           Effect.sync(() => {
-            acknowledge(get, published, (rows) => [
-              ...rows.filter((row) => row.name !== saved.name),
-              saved,
-            ]);
+            for (const query of [published, catalog])
+              acknowledge(get, query, (rows) => [
+                ...rows.filter((row) => row.name !== saved.name),
+                saved,
+              ]);
           }),
         ),
       ),
@@ -194,13 +200,15 @@ export const makeAppManagementAtoms = <R, E>(
       Effect.flatMap(client, (api) => api.unpublish({ params, payload: { package: name } })).pipe(
         Effect.tap((saved) =>
           Effect.sync(() => {
-            acknowledge(get, published, (rows) => rows.filter((row) => row.name !== saved.name));
+            for (const query of [published, catalog])
+              acknowledge(get, query, (rows) => rows.filter((row) => row.name !== saved.name));
           }),
         ),
       ),
     ),
   );
   return {
+    catalog,
     published,
     authoring,
     source,
@@ -211,7 +219,9 @@ export const makeAppManagementAtoms = <R, E>(
     workspace,
     commitFile,
     deploy,
-    copy: (from: { readonly app: AppId }) => copies(new OwnedCopy(from)),
+    /** Copies an owned app or a public listing's reviewed commit through the same operation. */
+    copy: (from: { readonly app: AppId } | { readonly package: string; readonly commit: string }) =>
+      copies("app" in from ? new OwnedCopy(from) : new PublicCopy(from)),
     publish,
     unpublish,
   };

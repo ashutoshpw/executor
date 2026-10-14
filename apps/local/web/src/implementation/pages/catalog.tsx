@@ -1,5 +1,7 @@
 import { Failure } from "../components/common.tsx";
 import { dashboardAtoms } from "../../contracts/dashboard-bindings.ts";
+import { acknowledgeApp } from "../../contracts/apps.ts";
+import { appManagement } from "../../contracts/app-management.ts";
 import { Link } from "@tanstack/react-router";
 import { CatalogPage as Catalog } from "@executor-js/ui/dashboard/catalog";
 import { Button } from "@executor-js/ui/components/button";
@@ -15,6 +17,12 @@ export function CatalogPage() {
       mutation={dashboardAtoms.install}
       InstallFailure={Failure}
       inventory={dashboardAtoms.inventory}
+      publications={appManagement.catalog}
+      PublicationFailure={Failure}
+      copy={(publication) =>
+        appManagement.copy({ package: publication.name, commit: publication.commit })
+      }
+      onApp={acknowledgeApp}
       open={(app) => (
         <Link
           to={Object.keys(app.requirements.accounts).length ? "/apps/$appId/setup" : "/apps/$appId"}
