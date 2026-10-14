@@ -8,6 +8,7 @@ import { Schema, type Effect } from "effect";
 import {
   BlobError,
   BlobHandle,
+  type BlobExpired,
   type BlobLimits,
   type BlobNotFound,
   type BlobUnavailable,
@@ -25,6 +26,11 @@ export interface BlobPolicy {
    * Content-Length or an `expectedSize`.
    */
   readonly requiresSize: boolean;
+  /**
+   * How long a reservation lives without a renewal; `pendingBlobSeconds` when absent. A running
+   * transfer renews it several times per period, so only an abandoned one outlives it.
+   */
+  readonly pendingSeconds?: number;
   /** The lifetime a new handle gets for this owner. */
   readonly ttlSeconds: (owner: string) => Effect.Effect<number>;
 }
@@ -44,7 +50,7 @@ export const defaultBlobTtlSeconds = 7 * 24 * 60 * 60;
 export const minBlobTtlSeconds = 60 * 60;
 /** ...to one year. */
 export const maxBlobTtlSeconds = 365 * 24 * 60 * 60;
-/** How long a transfer that never committed keeps its reservation. */
+/** How long a reservation lives after its transfer's last renewal. */
 export const pendingBlobSeconds = 60 * 60;
 
 /** One file as the product stores it. */
@@ -85,7 +91,14 @@ export interface FileHandleStore {
     readonly owner: string;
     readonly appId: string | undefined;
     readonly contentType: string;
+    readonly pendingSeconds: number;
   }) => Effect.Effect<PendingFileHandle, BlobUnavailable>;
+  /** Keep a reservation alive for another `pendingSeconds` while its transfer runs. */
+  readonly touch: (input: {
+    readonly owner: string;
+    readonly id: string;
+    readonly pendingSeconds: number;
+  }) => Effect.Effect<void, BlobUnavailable>;
   /**
    * Publish a reservation once its bytes are stored. The owner's file with the same SHA-256 wins:
    * the reservation is dropped and that file's lifetime extended.
@@ -103,11 +116,15 @@ export interface FileHandleStore {
     readonly owner: string;
     readonly id: string;
   }) => Effect.Effect<void, BlobUnavailable>;
-  /** A live file of `owner`. Another owner's file and an expired one read as `BlobNotFound`. */
+  /**
+   * A live file of `owner`. Another owner's file reads as `BlobNotFound`. A file past its
+   * lifetime that the sweep has not removed yet reads as `BlobExpired`, and as `BlobNotFound`
+   * once it has.
+   */
   readonly stat: (input: {
     readonly owner: string;
     readonly id: string;
-  }) => Effect.Effect<StoredFileHandle, BlobNotFound | BlobUnavailable>;
+  }) => Effect.Effect<StoredFileHandle, BlobNotFound | BlobExpired | BlobUnavailable>;
   /**
    * Hide a file from every reader and return the row for removal. Only the creating app may.
    * `BlobNotFound` for anyone else.
@@ -151,6 +168,7 @@ export const BlobControlCommand = Schema.Union([
     size: Schema.Int,
     sha256: Schema.String,
   }),
+  Schema.Struct({ op: Schema.Literal("touch"), id: Schema.String }),
   Schema.Struct({ op: Schema.Literal("abort"), id: Schema.String }),
   Schema.Struct({ op: Schema.Literal("stat"), id: Schema.String }),
   Schema.Struct({ op: Schema.Literal("delete"), id: Schema.String }),
@@ -164,6 +182,8 @@ export const BlobBegun = Schema.Struct({
   maxFileBytes: Schema.Int,
   maxInlineBytes: Schema.Int,
   requiresSize: Schema.Boolean,
+  /** How often the transfer renews its reservation while it runs. */
+  renewSeconds: Schema.Int,
 });
 export type BlobBegun = typeof BlobBegun.Type;
 export const BlobCommitted = Schema.Struct({ handle: BlobHandle, deduped: Schema.Boolean });
