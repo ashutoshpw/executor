@@ -4,7 +4,6 @@ import type { DocumentApi } from "@executor-js/dashboard-start/document-api";
 import { hostedDocumentContext } from "@executor-js/hosted-server/document";
 import type { ResourceOrigins } from "@executor-js/hosted-server";
 import { Effect } from "effect";
-import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import type { DashboardRenderer } from "../contracts/dashboard.ts";
 import type { CloudEntryPage } from "../contracts/entry.ts";
 import type { CloudDocumentContext } from "@executor-js/hosted-cloud-web/document";
@@ -74,16 +73,3 @@ export const dashboardPageRoutes = dashboardRoutes.filter(
     !route.endsWith("/") &&
     !["/login", "/login/sso", "/create"].includes(route),
 );
-
-/**
- * An organization root opens its apps. The Worker answers it before any document work: the
- * redirect needs no session, because the destination checks it, so it costs one round trip
- * rather than a session lookup and a render. The router applies the same redirect in the browser.
- */
-export const organizationRoot = Effect.gen(function* () {
-  const request = yield* HttpServerRequest.HttpServerRequest;
-  const url = new URL(request.url, "http://executor.internal");
-  return HttpServerResponse.redirect(`${url.pathname.replace(/\/?$/, "/apps")}${url.search}`, {
-    status: 307,
-  });
-});

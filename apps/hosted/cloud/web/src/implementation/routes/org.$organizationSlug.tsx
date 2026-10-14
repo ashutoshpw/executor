@@ -47,7 +47,7 @@ function OrganizationPending() {
     <DashboardEntryPending
       pathname={pathname}
       support={<CloudSupport />}
-      navigation={<CloudNavigation pendingPage={pathname.split("/")[3] ?? "apps"} />}
+      navigation={<CloudNavigation pendingPage={pathname.split("/")[3] ?? "home"} />}
     >
       <CloudPagePending />
     </DashboardEntryPending>

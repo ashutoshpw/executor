@@ -25,6 +25,8 @@ const make = Effect.gen(function* () {
         readonly whileApproving?: Effect.Effect<void, unknown>;
         /** Another origin that serves the product's MCP endpoint, such as a Cloud role host. */
         readonly origin?: string;
+        /** The client name sent when the connection initializes. */
+        readonly clientName?: string;
       } = {},
     ) =>
       Effect.gen(function* () {
@@ -33,7 +35,7 @@ const make = Effect.gen(function* () {
           Effect.sync(
             () =>
               new Client(
-                { name: "executor-e2e", version: "1" },
+                { name: options.clientName ?? "executor-e2e", version: "1" },
                 options.mode === "native" ? { capabilities: { elicitation: { form: {} } } } : {},
               ),
           ),
@@ -120,7 +122,7 @@ const make = Effect.gen(function* () {
         const compatible: Omit<StreamableHTTPClientTransport, "sessionId"> = transport;
         yield* Effect.addFinalizer(() =>
           evidence.json(`mcp-${label}.json`, {
-            client: { name: "executor-e2e", version: "1" },
+            client: { name: options.clientName ?? "executor-e2e", version: "1" },
             server: client.getServerVersion(),
             capabilities: client.getServerCapabilities(),
             requests,
