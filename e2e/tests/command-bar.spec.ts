@@ -6,7 +6,7 @@ import { Api, body } from "../support/api.ts";
 import { Actors } from "../support/actors.ts";
 import { Browser } from "../support/browser.ts";
 import { HostedLive, withHostedCase } from "../support/case.ts";
-import { App } from "../support/contracts.ts";
+import { App, Organization } from "../support/contracts.ts";
 import { scenarios } from "../test-plan.ts";
 import { appsManifest } from "../support/apps-release.ts";
 
@@ -37,6 +37,28 @@ export default defineApp({}, { tools: router({ status: query({ input: object({})
         yield* Effect.addFinalizer(() =>
           api.request(actors.owner, "DELETE", `${prefix}/apps/${app.id}`).pipe(
             Effect.tap((response) => Effect.sync(() => expect(response.status).toBe(200))),
+            Effect.orDie,
+          ),
+        );
+        const neighbourName = `Palette neighbour ${randomUUID().slice(0, 8)}`;
+        const neighbourResponse = yield* api.request(
+          actors.owner,
+          "POST",
+          "/api/auth/organization/create",
+          {
+            name: neighbourName,
+            slug: `palette-${randomUUID().slice(0, 8)}`,
+            keepCurrentActiveOrganization: true,
+          },
+        );
+        expect(neighbourResponse.status).toBe(200);
+        const neighbour = yield* body(Organization, neighbourResponse);
+        // Self-host has no organization removal; its server is isolated to this scenario.
+        yield* Effect.addFinalizer(() =>
+          api.request(actors.owner, "DELETE", `/api/organizations/${neighbour.id}`).pipe(
+            Effect.tap((response) =>
+              Effect.sync(() => expect([200, 404]).toContain(response.status)),
+            ),
             Effect.orDie,
           ),
         );
@@ -149,6 +171,42 @@ export default defineApp({}, { tools: router({ status: query({ input: object({})
           dialog(page).waitFor({ state: "hidden" }),
         );
         expect(yield* focused("Focus returns to the trigger", "Search", "button")).toBe(true);
+
+        yield* browser.use("Open before switching organization", (page) =>
+          page.getByRole("button", { name: "Search", exact: true }).click(),
+        );
+        yield* browser.use("The Organizations group is listed", (page) =>
+          dialog(page).getByRole("group", { name: "Organizations" }).waitFor(),
+        );
+        yield* browser.use("Filter to the other organization", (page) =>
+          page.getByRole("combobox").fill(neighbourName),
+        );
+        expect(
+          yield* browser.use("Only the other organization is listed", (page) =>
+            dialog(page)
+              .getByRole("group", { name: "Organizations" })
+              .getByRole("option")
+              .allTextContents(),
+          ),
+        ).toEqual([`Switch to ${neighbourName}`]);
+        yield* browser.use("Enter switches organization", (page) => page.keyboard.press("Enter"));
+        yield* browser.use("The other organization opens on its Home page", (page) =>
+          page.waitForURL(new RegExp(`/org/${neighbour.slug}(?:\\?[^/]*)?$`)),
+        );
+        yield* browser.use("The palette closed after switching", (page) =>
+          dialog(page).waitFor({ state: "hidden" }),
+        );
+        yield* browser.use("The switcher shows the other organization", (page) =>
+          page
+            .getByRole("button", { name: `Organization: ${neighbourName}` })
+            .first()
+            .waitFor(),
+        );
+        expect(
+          yield* browser.use("Switching organization did not reload the page", (page) =>
+            page.evaluate(() => Reflect.get(window, "commandBarMarker")),
+          ),
+        ).toBe(true);
 
         yield* browser.use("Fail the next sign-out", (page) =>
           page.route("**/sign-out", (route) => route.fulfill({ status: 500, body: "{}" })),
