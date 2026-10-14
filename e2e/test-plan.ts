@@ -1647,6 +1647,26 @@ export const scenarios = plan({
       local: na("Local has no hosted dashboard frame."),
     },
   },
+  darkPages: {
+    fixtures: "actors",
+    file: "theme-pages.spec.ts",
+    title: "Dashboard pages stay readable in the dark theme",
+    targets: {
+      "self-host": scheduled,
+      cloud: scheduled,
+      local: na("Local has no hosted dashboard frame."),
+    },
+  },
+  lightPages: {
+    fixtures: "actors",
+    file: "theme-pages.spec.ts",
+    title: "Dashboard pages stay readable in the light theme",
+    targets: {
+      "self-host": scheduled,
+      cloud: scheduled,
+      local: na("Local has no hosted dashboard frame."),
+    },
+  },
   sdkQueryBudgets: {
     fixtures: "actors",
     // Statement budgets compare reads against the provisioned personal account, so setup waits for it.
