@@ -48,6 +48,45 @@ export const instanceOwnerAtom = browserOnly(
   ),
 );
 
+const TransferCandidates = Schema.Struct({
+  candidates: Schema.Array(
+    Schema.Struct({ id: Schema.String, name: Schema.String, email: Schema.String }),
+  ),
+});
+export type TransferCandidate = (typeof TransferCandidates.Type)["candidates"][number];
+
+/** People the instance owner may hand the instance to; the server refuses anyone else. */
+export const transferCandidatesAtom = browserOnly(
+  BrowserAtoms.atom(
+    authRequest((options) =>
+      authClient.$fetch<unknown>("/self-host/transfer-candidates", options),
+    ).pipe(
+      Effect.flatMap(Schema.decodeUnknownEffect(TransferCandidates)),
+      Effect.map((view) => view.candidates),
+      Effect.catchTag("SchemaError", () =>
+        Effect.fail(
+          new AuthFailed({ message: "Unable to load the people you can transfer to. Reload." }),
+        ),
+      ),
+    ),
+  ),
+);
+
+/** Hand the instance to another person; the person who asked stops being its owner. */
+export const transferOwnershipAtom = BrowserAtoms.fn((userId: string, get) =>
+  authRequest((options) =>
+    authClient.$fetch("/self-host/transfer-ownership", {
+      ...options,
+      method: "POST",
+      body: { userId },
+    }),
+  ).pipe(
+    Effect.withSpan("ui.auth.transfer-ownership"),
+    Effect.tap(() => Effect.sync(() => get.refresh(instanceOwnerAtom))),
+    Effect.asVoid,
+  ),
+);
+
 /** The settings the server read for this sign-in page, sent to the browser with it. */
 const entryConfiguration = Atom.make<Option.Option<SignInSettings>>(Option.none()).pipe(
   Atom.serializable({ key: "self-host:sign-in-settings", schema: Schema.Option(SignInSettings) }),
