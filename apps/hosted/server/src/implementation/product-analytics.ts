@@ -2,6 +2,7 @@
 import type { Executor, ToolCallResult, ToolResumeResult } from "@executor-js/sdk/core";
 import { toolCompletion } from "@executor-js/telemetry/product-analytics";
 import { Clock, Effect, Exit } from "effect";
+import { recordToolCall } from "./usage.ts";
 import {
   observeUsage,
   recordUsage,
@@ -20,24 +21,36 @@ const observeTool = <A extends ToolCallResult | ToolResumeResult, E, R>(
     return yield* work.pipe(
       Effect.onExit((exit) =>
         Effect.gen(function* () {
-          const timed = {
-            ...properties,
-            duration_ms: Math.max(0, (yield* Clock.currentTimeMillis) - started),
-          };
+          const duration = Math.max(0, (yield* Clock.currentTimeMillis) - started);
+          const timed = { ...properties, duration_ms: duration };
+          const record = (finished: {
+            readonly outcome?: "success" | "failure" | "cancelled" | undefined;
+            readonly error_type?: string | undefined;
+          }) =>
+            finished.outcome === undefined
+              ? Effect.void
+              : recordToolCall({
+                  appId: properties.app_id,
+                  toolName: properties.tool_name,
+                  outcome: finished.outcome,
+                  errorType: finished.error_type,
+                  durationMs: duration,
+                });
           if (Exit.isFailure(exit)) {
-            yield* recordUsage("tool_execution_completed", {
-              ...timed,
-              ...usageFailure(exit.cause),
-            });
+            const failure = usageFailure(exit.cause);
+            yield* recordUsage("tool_execution_completed", { ...timed, ...failure });
+            yield* record(failure);
             return;
           }
           const status = exit.value.status;
           if (status !== "approval-required") {
-            yield* recordUsage("tool_execution_completed", {
-              ...timed,
-              status,
-              ...toolCompletion(exit.value),
-            });
+            const completion = toolCompletion(exit.value);
+            yield* recordUsage("tool_execution_completed", { ...timed, status, ...completion });
+            // A repeated or late answer did not run the tool, so it is not another call.
+            const replayed =
+              status === "already-consumed" ||
+              (status === "failed" && "reason" in exit.value && exit.value.reason === "expired");
+            if (!replayed) yield* record(completion);
           } else {
             yield* recordUsage("tool_approval_requested", { ...timed, status });
           }
