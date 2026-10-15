@@ -4,6 +4,7 @@ import {
   observeProductOperation,
   traceProductRead,
 } from "../contracts/product-analytics.ts";
+import { CurrentToolArguments } from "../contracts/usage.ts";
 import { McpSchema } from "effect/ai";
 import { authorizeApp, authorizeSavedTool, authorizeTool } from "./authorization.ts";
 import { callerLinkedAccounts, linkedAccounts } from "./app-accounts.ts";
@@ -298,6 +299,7 @@ export const hostedMcpBackend = Effect.gen(function* () {
               app_id: request.invocation.app,
               tool_name: request.invocation.tool,
             }),
+            Effect.provideService(CurrentToolArguments, request.invocation.input),
           );
       }).pipe((work) => observe("resumeInvocation", work)),
   } satisfies McpBackend<Error>;

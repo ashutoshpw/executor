@@ -36,6 +36,8 @@ import { fileCreatorsOf, hostedOrganizationFilesHandlers } from "./organization-
 import { hostedMcpConnectionHandlers } from "./mcp-connections.ts";
 import { hostedFeedbackHandlers } from "./feedback.ts";
 import { hostedUsageHandlers } from "./usage-report.ts";
+import { hostedTasksHandlers } from "./tasks.ts";
+import { hostedTaskInsightsSettingsHandlers } from "./task-insights-settings.ts";
 
 const health = HttpApiBuilder.group(HostedApi, "health", (handlers) =>
   handlers.handle("get", () => Effect.succeed({ status: "ok" as const })),
@@ -101,6 +103,8 @@ export const hostedHandlers = Layer.mergeAll(
   hostedMcpConnectionHandlers,
   hostedFeedbackHandlers,
   hostedUsageHandlers,
+  hostedTasksHandlers,
+  hostedTaskInsightsSettingsHandlers,
   HttpApiBuilder.group(HostedApi, "viewer", (handlers) =>
     handlers.handle("get", () =>
       Effect.gen(function* () {

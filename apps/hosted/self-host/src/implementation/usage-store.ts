@@ -3,6 +3,11 @@ import type { DuckDBConnection, DuckDBValue } from "@w3devx/duckdb-node-api";
 import {
   emptyUsage,
   UsageStore,
+  type ArgumentRetention,
+  type TaskCallRecord,
+  type TaskCallsQuery,
+  type TaskListQuery,
+  type TaskSummary,
   type UsageAggregates,
   type UsageQuery,
   type UsageRange,
@@ -23,7 +28,9 @@ const rangeMillis: Record<UsageRange, number> = {
   "7d": 7 * dayMillis,
   "30d": 30 * dayMillis,
 };
-const schemaVersion = 1;
+/** Version 2 adds the task, session, run and arguments columns. */
+const schemaVersion = 2;
+const taskColumns = ["task_id", "mcp_session_id", "run_id", "arguments"] as const;
 
 class UnsupportedDuckDB extends Data.TaggedError("UnsupportedDuckDB")<{
   readonly version: string;
@@ -69,12 +76,33 @@ export const selfHostUsageStore = Effect.gen(function* () {
         tool_name varchar not null,
         outcome varchar not null,
         error_type varchar,
-        duration_ms integer not null
+        duration_ms integer not null,
+        task_id varchar,
+        mcp_session_id varchar,
+        run_id varchar,
+        arguments varchar
       )`,
     );
+    // A file from an earlier version keeps its rows; the new columns are null for them. Tasks are
+    // read by scanning the organization's range, which DuckDB's column zone maps keep cheap at the
+    // 90-day retention, so there is no index to slow the appender and hold memory.
     const rows = await writer.runAndReadAll("select version from usage_schema");
-    if (rows.getRowObjects().length === 0)
-      await writer.run("insert into usage_schema values (?)", [schemaVersion]);
+    const stored = rows.getRowObjects().map((row) => Number(row.version));
+    if (stored.length === 0 || Math.min(...stored) < schemaVersion) {
+      await writer.run("begin transaction");
+      try {
+        for (const column of taskColumns)
+          await writer.run(
+            `alter table usage_tool_calls add column if not exists ${column} varchar`,
+          );
+        await writer.run("delete from usage_schema");
+        await writer.run("insert into usage_schema values (?)", [schemaVersion]);
+        await writer.run("commit");
+      } catch (error) {
+        await writer.run("rollback").catch(() => {});
+        throw error;
+      }
+    }
   });
 
   const buffer: UsageToolCall[] = [];
@@ -98,6 +126,9 @@ export const selfHostUsageStore = Effect.gen(function* () {
           if (call.errorType === undefined) appender.appendNull();
           else appender.appendVarchar(call.errorType);
           appender.appendInteger(Math.min(Math.round(call.durationMs), 2_147_483_647));
+          for (const value of [call.taskId, call.mcpSessionId, call.runId, call.arguments])
+            if (value === undefined) appender.appendNull();
+            else appender.appendVarchar(value);
           appender.endRow();
         }
         appender.flushSync();
@@ -249,6 +280,121 @@ export const selfHostUsageStore = Effect.gen(function* () {
       ),
     );
 
+  /** One task key per call: its task ID, else its MCP session, else its run. Older records have none. */
+  const taskKey = `case when task_id is not null then 'task:' || task_id
+    when mcp_session_id is not null then 'session:' || mcp_session_id
+    when run_id is not null then 'run:' || run_id end`;
+  const separator = "\u001f";
+  const tasks = (input: TaskListQuery) =>
+    read(
+      `select task_key, epoch_ms(min(occurred_at)) as first_at, epoch_ms(max(occurred_at)) as last_at,
+        count(*) as calls, count(*) filter (where outcome = 'failure') as failures,
+        string_agg(distinct app_id, chr(31) order by app_id) as apps, sum(duration_ms) as total_ms
+      from (
+        select *, ${taskKey} as task_key from usage_tool_calls
+        where organization_id = ? and occurred_at >= ?
+      )
+      where task_key is not null
+      group by task_key
+      ${input.after === undefined ? "" : "having epoch_ms(max(occurred_at)) < ? or (epoch_ms(max(occurred_at)) = ? and task_key > ?)"}
+      order by last_at desc, task_key
+      limit ?`,
+      [
+        input.organization,
+        timestamp(new Date(Date.now() - rangeMillis[input.range])),
+        ...(input.after === undefined
+          ? []
+          : [input.after.lastAt, input.after.lastAt, input.after.key]),
+        input.limit,
+      ],
+    ).pipe(
+      Effect.map((rows) =>
+        rows.map((row): TaskSummary => ({
+          key: String(row.task_key),
+          firstAt: count(row.first_at),
+          lastAt: count(row.last_at),
+          calls: count(row.calls),
+          failures: count(row.failures),
+          appIds: String(row.apps).split(separator),
+          totalDurationMs: count(row.total_ms),
+        })),
+      ),
+      Effect.catch(() =>
+        Effect.logWarning("Usage records could not be read").pipe(
+          Effect.as([] as ReadonlyArray<TaskSummary>),
+        ),
+      ),
+    );
+  const taskCalls = (input: TaskCallsQuery) =>
+    read(
+      `select epoch_ms(occurred_at) as at, app_id, tool_name, outcome, error_type, duration_ms,
+        task_id, mcp_session_id, run_id, arguments
+      from (
+        select *, ${taskKey} as task_key from usage_tool_calls
+        where organization_id = ? and occurred_at >= ?
+      )
+      where task_key = ?
+      order by occurred_at, rowid
+      limit ?`,
+      [
+        input.organization,
+        timestamp(new Date(Date.now() - rangeMillis[input.range])),
+        input.key,
+        input.limit,
+      ],
+    ).pipe(
+      Effect.map((rows) =>
+        rows.map((row): TaskCallRecord => ({
+          at: count(row.at),
+          appId: String(row.app_id),
+          toolName: String(row.tool_name),
+          outcome: String(row.outcome) as TaskCallRecord["outcome"],
+          errorType: row.error_type === null ? null : String(row.error_type),
+          durationMs: count(row.duration_ms),
+          taskId: row.task_id === null ? null : String(row.task_id),
+          sessionId: row.mcp_session_id === null ? null : String(row.mcp_session_id),
+          runId: row.run_id === null ? null : String(row.run_id),
+          arguments: row.arguments === null ? null : String(row.arguments),
+        })),
+      ),
+      Effect.catch(() =>
+        Effect.logWarning("Usage records could not be read").pipe(
+          Effect.as([] as ReadonlyArray<TaskCallRecord>),
+        ),
+      ),
+    );
+  /** Null the arguments past each organization's retention; the rest of every record stays. */
+  const scrubArguments = (retention: ArgumentRetention) =>
+    flush.pipe(
+      Effect.andThen(
+        writerLock.withPermits(1)(
+          Effect.tryPromise(async () => {
+            const now = Date.now();
+            const byDays = new Map<number, string[]>();
+            for (const [organization, days] of retention.byOrganization)
+              byDays.set(days, [...(byDays.get(days) ?? []), organization]);
+            for (const [days, organizations] of byDays)
+              await writer.run(
+                `update usage_tool_calls set arguments = null
+                where arguments is not null and occurred_at < ?
+                  and organization_id in (${organizations.map(() => "?").join(", ")})`,
+                [timestamp(new Date(now - days * dayMillis)), ...organizations],
+              );
+            if (retention.defaultDays !== undefined) {
+              const listed = [...retention.byOrganization.keys()];
+              await writer.run(
+                `update usage_tool_calls set arguments = null
+                where arguments is not null and occurred_at < ?
+                  ${listed.length === 0 ? "" : `and organization_id not in (${listed.map(() => "?").join(", ")})`}`,
+                [timestamp(new Date(now - retention.defaultDays * dayMillis)), ...listed],
+              );
+            }
+          }),
+        ),
+      ),
+      Effect.catch(() => Effect.logWarning("Usage argument retention could not run")),
+    );
+
   const store: typeof UsageStore.Service = {
     available: true,
     record: (call) => {
@@ -257,6 +403,9 @@ export const selfHostUsageStore = Effect.gen(function* () {
       if (buffer.length >= flushSize) Effect.runFork(flush);
     },
     query,
+    tasks,
+    taskCalls,
+    scrubArguments,
   };
   return store;
 }).pipe(

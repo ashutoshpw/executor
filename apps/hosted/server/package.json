@@ -8,6 +8,8 @@
     "./api-keys": "./src/contracts/api-keys.ts",
     "./auth": "./src/contracts/auth.ts",
     "./usage": "./src/contracts/usage.ts",
+    "./tasks": "./src/contracts/tasks.ts",
+    "./task-insights-settings": "./src/contracts/task-insights-settings.ts",
     "./contracts": "./src/contracts/api.ts",
     "./mcp/browser": "./src/contracts/mcp-browser.ts",
     "./organization": "./src/contracts/organization.ts",

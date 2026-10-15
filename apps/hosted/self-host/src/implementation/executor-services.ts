@@ -46,6 +46,7 @@ import {
   organizationBlobTtl,
   PublishingDomain,
   publishingDomain as defaultPublishingDomain,
+  taskArgumentRetention,
 } from "@executor-js/hosted-server";
 import {
   defaultBlobPolicy,
@@ -252,6 +253,15 @@ export const selfHostExecutorServices = <E, R>(
           every: Schedule.spaced(`${sweepSeconds} seconds`),
         }),
       );
+      // Stored tool-call arguments leave their records when they pass the organization's retention.
+      if (usage !== undefined)
+        yield* Effect.forkScoped(
+          taskArgumentRetention(database).pipe(
+            Effect.flatMap(usage.scrubArguments),
+            Effect.catch(() => Effect.logWarning("Usage argument retention could not run")),
+            Effect.repeat(Schedule.spaced("1 hour")),
+          ),
+        );
       yield* Effect.forkScoped(
         executor[RepositoryHost].recover.pipe(
           Effect.catch(() => Effect.logWarning("App repository recovery failed")),

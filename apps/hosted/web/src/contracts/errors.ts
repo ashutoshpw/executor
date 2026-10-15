@@ -50,6 +50,10 @@ const errorMessage = Match.type<HostedError>().pipe(
           "Organization membership changed. Your changes were not saved. Close this form and select the current members.",
       })[reason],
     BlobTtlOutOfRange: () => "Choose a file lifetime between 1 hour and 365 days.",
+    TaskInsightsSettingsInvalid: () =>
+      "Use up to 50 names to mask, each 1 to 64 characters, and try again.",
+    TasksCursorInvalid: () => "The task list changed. Reload the page to start again.",
+    TaskNotFound: () => "No calls were recorded for this task in the selected range.",
     FileNotFound: () => "This file no longer exists.",
     FilesCursorInvalid: () => "The file list changed. Reload the page to start again.",
     FileExpired: () => "This file has expired.",

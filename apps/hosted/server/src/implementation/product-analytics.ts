@@ -2,6 +2,7 @@
 import type { Executor, ToolCallResult, ToolResumeResult } from "@executor-js/sdk/core";
 import { toolCompletion } from "@executor-js/telemetry/product-analytics";
 import { Clock, Effect, Exit } from "effect";
+import { CurrentToolArguments } from "../contracts/usage.ts";
 import { recordToolCall } from "./usage.ts";
 import {
   observeUsage,
@@ -14,9 +15,12 @@ import {
 const observeTool = <A extends ToolCallResult | ToolResumeResult, E, R>(
   properties: UsageProperties,
   work: Effect.Effect<A, E, R>,
+  /** The call's input, for the host's own usage records only; never for analytics. */
+  input?: unknown,
 ) =>
   Effect.gen(function* () {
     const started = yield* Clock.currentTimeMillis;
+    const toolArguments = input === undefined ? yield* CurrentToolArguments : input;
     yield* recordUsage("tool_execution_started", properties);
     return yield* work.pipe(
       Effect.onExit((exit) =>
@@ -35,6 +39,8 @@ const observeTool = <A extends ToolCallResult | ToolResumeResult, E, R>(
                   outcome: finished.outcome,
                   errorType: finished.error_type,
                   durationMs: duration,
+                  startedAt: started,
+                  arguments: toolArguments,
                 });
           if (Exit.isFailure(exit)) {
             const failure = usageFailure(exit.cause);
@@ -68,6 +74,7 @@ export const withExecutorAnalytics = (executor: Executor): Executor => ({
       observeTool(
         { app_id: input.app, tool_name: input.tool },
         executor.tools.call(input, options),
+        input.input,
       ),
     resume: (input, options) =>
       observeTool({ resumed: true }, executor.tools.resume(input, options)),

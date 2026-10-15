@@ -14,6 +14,8 @@ import { CatalogEntry, CatalogUnavailable } from "@executor-js/catalog/contracts
 import { Context, Schema } from "effect";
 import { HostedGroups } from "./groups.ts";
 import { HostedBlobSettings } from "./blob-settings.ts";
+import { HostedTaskInsightsSettings } from "./task-insights-settings.ts";
+import { HostedTasks } from "./tasks.ts";
 import { HostedOrganizationFiles } from "./files.ts";
 import { HostedMcpConnections } from "./mcp-connections.ts";
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, OpenApi } from "effect/http-api";
@@ -191,6 +193,8 @@ export const HostedApi = HttpApi.make("executor-hosted")
     HostedMcpConnections,
     HostedFeedback,
     HostedUsage,
+    HostedTasks,
+    HostedTaskInsightsSettings,
   )
   .add(
     HttpApiGroup.make("context").add(
