@@ -2,8 +2,10 @@ import { localSourceFormatter } from "@executor-js/app-management/source-format"
 import {
   LocalAppAccess,
   LocalAppManagementApi,
+  LocalFileTransferApi,
   LocalFrameworkApi,
 } from "../contracts/app-management.ts";
+import { fileTransferRoutes } from "@executor-js/app-management/files";
 import { DashboardAccess } from "../contracts/dashboard.ts";
 import { dashboardAccess } from "./dashboard.ts";
 /** Local authoring shares pairing, persistent app IDs, and the ordinary Git source store. */
@@ -96,6 +98,7 @@ export const localAppManagement = (
     );
     return Layer.mergeAll(
       appManagementRoutes(LocalAppManagementApi),
+      fileTransferRoutes(LocalFileTransferApi),
       frameworkRoutes(LocalFrameworkApi).pipe(
         Layer.provide(frameworkDocumentation(Effect.succeed(assets))),
       ),

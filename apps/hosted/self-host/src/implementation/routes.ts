@@ -26,6 +26,7 @@ import {
   clientMetadataSetting,
   authSettings,
   hostedWebhookCallback,
+  hostedFileLink,
   catalogLive,
   hostedMiddlewareLive,
   mcpProtectedResource,
@@ -163,6 +164,10 @@ export const selfHostRouteMap = <DashboardE, DashboardR>(options: {
       api,
       browserTelemetry.pipe(HttpRouter.provideRequest(auth.identity)),
       HttpRouter.add("*", "/api/webhooks/:appId/:subscriptionId", hostedWebhookCallback).pipe(
+        HttpRouter.provideRequest(executorServices),
+      ),
+      // A file link carries its own authority, so it is served outside the API's credentials.
+      HttpRouter.add("*", "/api/file-links/*", hostedFileLink).pipe(
         HttpRouter.provideRequest(executorServices),
       ),
       HttpRouter.add("*", "/api/auth/*", auth.handler),

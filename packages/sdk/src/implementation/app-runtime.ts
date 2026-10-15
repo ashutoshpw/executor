@@ -43,6 +43,7 @@ import {
   type Runtime,
   type RuntimeBuildUnavailable,
 } from "../contracts/runtime.ts";
+import { CurrentActor } from "../contracts/executor.ts";
 import { Json, type BuildId } from "../contracts/shared.ts";
 import type { LoadedWorkerBuild } from "../contracts/worker-build.ts";
 import type { BlobStore } from "../contracts/blobs.ts";
@@ -162,7 +163,7 @@ export const appRuntime = (host: AppRuntimeHost) =>
           );
           const build = input.build;
           const run = yield* InvocationRun;
-          const blobControl = (yield* InvocationBlobs)?.(input.app);
+          const blobControl = (yield* InvocationBlobs)?.(input.app, yield* CurrentActor);
           const invocation: AppInvocation = {
             app: input.app,
             build,

@@ -81,7 +81,18 @@ export const hostedAppAccess = Layer.effect(
               : CurrentOrganization;
             const policy = yield* CurrentAuthorization;
             if (
-              ["create", "copy", "published", "unpublish"].includes(endpoint.identifier) &&
+              [
+                "create",
+                "copy",
+                "published",
+                "unpublish",
+                // Files belong to the organization, not to an app: a credential limited to some
+                // apps' tools reaches none of them.
+                "download",
+                "downloadUrl",
+                "upload",
+                "uploadUrl",
+              ].includes(endpoint.identifier) &&
               policy.tools.kind !== "all"
             )
               return yield* new OrganizationForbidden();
@@ -105,7 +116,9 @@ export const hostedAppAccess = Layer.effect(
               endpoint.identifier === "sourceDisplay" ||
               endpoint.identifier === "sourceDisplayFile" ||
               endpoint.identifier === "history" ||
-              endpoint.identifier === "published"
+              endpoint.identifier === "published" ||
+              endpoint.identifier === "download" ||
+              endpoint.identifier === "downloadUrl"
             ? "read"
             : "manage",
       ).pipe(

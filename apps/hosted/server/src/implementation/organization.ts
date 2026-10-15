@@ -104,6 +104,15 @@ const refuseRemoved = (organization: OrganizationId) =>
     Effect.flatMap((gone) => (gone ? Effect.fail(new OrganizationForbidden()) : Effect.void)),
   );
 
+/**
+ * Responses are not stored by default; a handler that states its own `Cache-Control`, such as a
+ * file download that must also stay untransformed, keeps it.
+ */
+const privateByDefault = (response: HttpServerResponse.HttpServerResponse) =>
+  response.headers["cache-control"] === undefined
+    ? HttpServerResponse.setHeader(response, "cache-control", "no-store")
+    : response;
+
 /** Access resolves only the explicit route ID or slug. Shared session preferences never participate. */
 export const withOrganizationRequest = <E, R>(
   response: (
@@ -149,7 +158,7 @@ export const withOrganizationRequest = <E, R>(
         Effect.provideService(CurrentUserId, grant.userId),
         Effect.provideService(CurrentUsage, { source: "api" }),
         Effect.provideService(CurrentApiKey, grant.key?.id),
-      )).pipe(HttpServerResponse.setHeader("cache-control", "no-store"));
+      )).pipe(privateByDefault);
     }
     if (
       request.method !== "GET" &&
@@ -180,7 +189,7 @@ export const withOrganizationRequest = <E, R>(
       Effect.provideService(CurrentUsage, { source: "dashboard" }),
       Effect.provideService(CurrentPrincipal, principal),
       Effect.provideService(CurrentAuthorization, fullAuthority),
-    )).pipe(HttpServerResponse.setHeader("cache-control", "no-store"));
+    )).pipe(privateByDefault);
   });
 
 /** Apply the current organization checks without translating away product failures. */

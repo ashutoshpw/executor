@@ -20,6 +20,7 @@ import {
   BlobHandle,
   BlobIntegrityError,
   BlobLimits,
+  BlobLink,
   BlobNotFound,
   BlobRangeInvalid,
   BlobReply,
@@ -36,33 +37,13 @@ import {
   BlobStatted,
   type BlobControlCommand,
 } from "../contracts/file-handles.ts";
+import { digestStreamSha256 } from "./digest-stream.ts";
+import { storeTransfer } from "./stored-transfer.ts";
 
 const redirectLimit = 5;
 const defaultContentType = "application/octet-stream";
 /** Headers that carry the caller's credentials; a redirect to another origin drops them. */
 const crossOriginStripped = new Set(["authorization", "cookie", "proxy-authorization"]);
-
-interface Sha256 {
-  readonly write: (chunk: Uint8Array) => Promise<void>;
-  readonly finish: () => Promise<string>;
-}
-/** workerd's streaming digest: the runner always runs in workerd, whatever product hosts it. */
-interface DigestStreamConstructor {
-  new (algorithm: string): WritableStream<Uint8Array> & { readonly digest: Promise<ArrayBuffer> };
-}
-const sha256 = (): Sha256 => {
-  // SAFETY: `DigestStream` is a workerd extension of the global `crypto`, absent from DOM typings.
-  const { DigestStream } = crypto as unknown as { DigestStream: DigestStreamConstructor };
-  const stream = new DigestStream("SHA-256");
-  const writer = stream.getWriter();
-  return {
-    write: (chunk) => writer.write(chunk),
-    finish: async () => {
-      await writer.close();
-      return Hex.encode(new Uint8Array(await stream.digest));
-    },
-  };
-};
 
 /** One transfer's operations over the product's control callback and the user-content store. */
 export const blobTransfer = (options: {
@@ -197,108 +178,45 @@ export const blobTransfer = (options: {
       const begun = yield* ask(BlobBegun, { op: "begin", contentType }).pipe(
         Effect.onError(() => cancel),
       );
-      const key = begun.key as BlobKey;
-      // `sent` once the commit may have reached the product; `refused` once it said no.
-      let commit: "none" | "sent" | "refused" = "none";
-      const transfer = Effect.gen(function* () {
-        const length = hasKnownLength(response);
-        if (length !== undefined && length > begun.maxFileBytes)
-          return yield* new BlobTooLarge({ maximum: begun.maxFileBytes, requested: length });
-        if (command.expectedSize !== undefined) {
-          if (command.expectedSize > begun.maxFileBytes)
-            return yield* new BlobTooLarge({
-              maximum: begun.maxFileBytes,
-              requested: command.expectedSize,
-            });
-          if (length !== undefined && length !== command.expectedSize)
-            return yield* new BlobIntegrityError({ reason: "size" });
-        }
-        const declared = command.expectedSize ?? length;
-        if (declared === undefined && begun.requiresSize)
-          return yield* new BlobUpstreamFailed({ reason: "length-required" });
-        const digest = sha256();
-        let counted = 0;
-        const body = response.body;
-        const source: Stream.Stream<Uint8Array, BlobError> =
+      const body = response.body;
+      return yield* storeTransfer({
+        begun,
+        store,
+        hasher: digestStreamSha256,
+        source:
           body === null
             ? Stream.empty
             : Stream.fromReadableStream({
                 // SAFETY: workerd's ReadableStream is the global one under another declaration.
                 evaluate: () => body as unknown as ReadableStream<Uint8Array>,
                 onError: (): BlobError => new BlobUpstreamFailed({ reason: "transport" }),
+              }),
+        ports: {
+          commit: (input) => ask(BlobCommitted, { op: "commit", ...input }),
+          touch: (id) => ask(Schema.Null, { op: "touch", id }),
+          abort: (id) => ask(Schema.Null, { op: "abort", id }),
+        },
+        declare: Effect.gen(function* () {
+          const length = hasKnownLength(response);
+          if (length !== undefined && length > begun.maxFileBytes)
+            return yield* new BlobTooLarge({ maximum: begun.maxFileBytes, requested: length });
+          if (command.expectedSize !== undefined) {
+            if (command.expectedSize > begun.maxFileBytes)
+              return yield* new BlobTooLarge({
+                maximum: begun.maxFileBytes,
+                requested: command.expectedSize,
               });
-        const written = yield* store
-          .putStream(
-            key,
-            source.pipe(
-              Stream.mapEffect((chunk) =>
-                Effect.suspend((): Effect.Effect<Uint8Array, BlobError> => {
-                  counted += chunk.byteLength;
-                  if (counted > begun.maxFileBytes)
-                    return Effect.fail(new BlobTooLarge({ maximum: begun.maxFileBytes }));
-                  return Effect.tryPromise({
-                    try: () => digest.write(chunk),
-                    catch: () => new BlobUnavailable(),
-                  }).pipe(Effect.as(chunk));
-                }),
-              ),
-            ),
-            declared === undefined ? {} : { size: declared },
-          )
-          .pipe(
-            Effect.mapError((error): BlobError =>
-              Schema.is(BlobError)(error)
-                ? error
-                : // The store refuses a stream whose length differs from the declared size.
-                  declared !== undefined && counted !== declared
-                  ? new BlobIntegrityError({ reason: "size" })
-                  : new BlobUnavailable(),
-            ),
-            Effect.map(() => counted),
-          );
-        if (command.expectedSize !== undefined && written !== command.expectedSize)
-          return yield* new BlobIntegrityError({ reason: "size" });
-        const hash = yield* Effect.tryPromise({
-          try: () => digest.finish(),
-          catch: () => new BlobUnavailable(),
-        });
-        if (command.expectedSha256 !== undefined && command.expectedSha256.toLowerCase() !== hash)
-          return yield* new BlobIntegrityError({ reason: "sha256" });
-        commit = "sent";
-        const committed = yield* ask(BlobCommitted, {
-          op: "commit",
-          id: begun.id,
-          size: written,
-          sha256: hash,
-        }).pipe(
-          Effect.tapError((error) =>
-            Effect.sync(() => {
-              if (Schema.is(BlobNotFound)(error) || Schema.is(BlobTooLarge)(error))
-                commit = "refused";
-            }),
-          ),
-        );
-        // The owner already held these bytes: the surviving handle's object is not this one.
-        if (committed.deduped) yield* removeObject(key);
-        return committed.handle;
+            if (length !== undefined && length !== command.expectedSize)
+              return yield* new BlobIntegrityError({ reason: "size" });
+          }
+          const declared = command.expectedSize ?? length;
+          if (declared === undefined && begun.requiresSize)
+            return yield* new BlobUpstreamFailed({ reason: "length-required" });
+          return declared;
+        }),
+        expected: { size: command.expectedSize, sha256: command.expectedSha256 },
+        release: cancel,
       });
-      // The reservation stays alive for as long as the transfer runs, however slow the upstream.
-      const renewal = ask(Schema.Null, { op: "touch", id: begun.id }).pipe(
-        Effect.ignore,
-        Effect.delay(`${begun.renewSeconds} seconds`),
-        Effect.forever,
-      );
-      return yield* Effect.raceFirst(transfer, renewal).pipe(
-        Effect.onExit((exit) =>
-          Exit.isSuccess(exit)
-            ? Effect.void
-            : Effect.andThen(
-                cancel,
-                // An unconfirmed commit may have published the file; its object is not ours to remove.
-                commit === "sent" ? Effect.void : discard(begun.id, key),
-              ),
-        ),
-      );
     });
 
   const create = (command: Extract<BlobCommand, { op: "create" }>) =>
@@ -398,6 +316,20 @@ export const blobTransfer = (options: {
         return ask(BlobStatted, { op: "stat", id: command.id }).pipe(
           Effect.map((found) => found.handle),
           encodeHandle,
+        );
+      case "url":
+        // A link is a URL, never bytes: the product signs it and the runner passes it through.
+        return ask(BlobLink, {
+          op: "url",
+          id: command.id,
+          ...(command.expiresInSeconds === undefined
+            ? {}
+            : { expiresInSeconds: command.expiresInSeconds }),
+          ...(command.filename === undefined ? {} : { filename: command.filename }),
+        }).pipe(
+          Effect.flatMap((link) =>
+            Schema.encodeEffect(BlobLink)(link).pipe(Effect.mapError(() => new BlobUnavailable())),
+          ),
         );
       case "read":
         return read(command);

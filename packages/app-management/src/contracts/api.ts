@@ -25,6 +25,7 @@ import {
   RegistryError,
 } from "@executor-js/sdk/core";
 export * from "./framework.ts";
+export * from "./files.ts";
 
 /** Authentication failures never expose whether another owner's app exists. */
 export const AppAccessDenied = ApiError.define({

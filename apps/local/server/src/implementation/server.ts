@@ -44,7 +44,7 @@ import {
   hostedExecutorOrigin,
   remoteRegistry,
 } from "@executor-js/sdk/core";
-import { filesystemBlobStore, workerdApps } from "@executor-js/sdk/node";
+import { filesystemBlobStore, nodeSha256, workerdApps } from "@executor-js/sdk/node";
 import {
   defaultBlobPolicy,
   defaultBlobTtlSeconds,
@@ -98,6 +98,7 @@ import { webFiles } from "./web.ts";
 import { withHostPipeline } from "@executor-js/dashboard-start/in-process";
 import { layerBuildHeader } from "@executor-js/dashboard-start/build-header";
 import { LocalExecutorApi, localManagementDocument } from "../contracts/management.ts";
+import { localFileLink } from "./file-links.ts";
 import { nativeRepositories } from "@executor-js/app-source/node";
 import { feedbackDisabled } from "@executor-js/telemetry/product-analytics";
 import { LocalFeedbackApi } from "../contracts/feedback.ts";
@@ -168,6 +169,7 @@ export const localApi = (
       const userContentOptions: UserContentOptions = {
         store: userContent,
         handles: makeFileHandleStore({ sql, table: "local_file_handles" }),
+        hasher: nodeSha256,
         policy: {
           ...defaultBlobPolicy,
           maxFileBytes: maxLocalFileBytes,
@@ -498,6 +500,8 @@ export const localApi = (
           Layer.provide(localWebhookSetupHandlers(executor, config, auth)),
         ),
         HttpRouter.add("*", "/api/webhooks/:appId/:subscriptionId", webhookCallback(executor)),
+        // A file link carries its own authority, so it is served outside the API's credentials.
+        HttpRouter.add("*", "/api/file-links/*", localFileLink(executor)),
         authoring,
         options.devtools === undefined ? Layer.empty : options.devtools(auth, config),
         HttpRouter.add(
