@@ -1,16 +1,19 @@
 /** Attribution for the local usage records; analytics opt-outs do not apply to this product feature. */
 import { Cause, Effect, Exit, Option, Predicate, Schema } from "effect";
+import { FileTransferHost } from "@executor-js/sdk/blobs";
 import { CurrentTask } from "@executor-js/mcp";
 import type { AutomationToolCall, AutomationToolObservation } from "@executor-js/sdk/scheduling";
 import { toolCompletion } from "@executor-js/telemetry/product-analytics";
 import { CurrentUserId, CurrentPrincipal } from "../contracts/auth.ts";
 import { CurrentMcpGrant } from "../contracts/mcp.ts";
+import { HostedExecutor } from "../contracts/executor.ts";
 import { CurrentOrganization } from "../contracts/organization.ts";
 import { patGrantOf } from "./mcp-oauth.ts";
 import { CurrentUsage, usageFailure } from "../contracts/product-analytics.ts";
 import { CurrentApiKey, UsageStore, type UsageOutcome } from "../contracts/usage.ts";
 import { recordingSettings } from "./task-insights-settings.ts";
 import { storedArguments } from "./task-arguments.ts";
+import { prepareResponse, saveResponseMedia, unsavedMedia } from "./task-responses.ts";
 
 const sourceLabels: Record<string, string> = {
   dashboard: "Dashboard",
@@ -35,6 +38,11 @@ export const recordToolCall = (call: {
   readonly startedAt?: number | undefined;
   /** The call's arguments. Kept, masked, only when the organization records them. */
   readonly arguments?: unknown;
+  /**
+   * The value of a completed call, wrapped so a null value is told from none. Kept, masked, only
+   * when the organization records responses.
+   */
+  readonly response?: { readonly value: unknown } | undefined;
 }) =>
   Effect.gen(function* () {
     const store = yield* UsageStore;
@@ -65,36 +73,76 @@ export const recordToolCall = (call: {
                 : fallback,
             ];
     const task = yield* CurrentTask;
-    // Only MCP tool calls are recorded with arguments. The setting is read only for a call that
-    // has some, and a failed read means not recorded.
+    // Only MCP tool calls are recorded with arguments or responses. The setting is read only for
+    // a call that has some, and a failed read means not recorded.
     const settings =
-      call.arguments === undefined || task === undefined
+      (call.arguments === undefined && call.response === undefined) || task === undefined
         ? undefined
         : yield* recordingSettings(organization.value.organization);
     const kept =
       settings?.recordArguments === true
         ? storedArguments(call.arguments, settings.extraMaskedKeys)
         : undefined;
-    // A record that cannot be kept never reaches the tool call.
-    yield* Effect.try(() =>
-      store.record({
-        at: new Date(call.startedAt ?? Date.now()),
-        organizationId: organization.value.organization,
-        userId,
-        agentKey,
-        agentLabel: agentLabel.slice(0, 200),
-        source: usage.source,
-        appId,
-        toolName,
-        outcome: call.outcome,
-        ...(call.errorType === undefined ? {} : { errorType: call.errorType }),
-        durationMs: call.durationMs,
-        ...(task?.taskId === undefined ? {} : { taskId: task.taskId }),
-        ...(task?.sessionId == null ? {} : { mcpSessionId: task.sessionId }),
-        ...(task === undefined ? {} : { runId: task.runId }),
-        ...(kept === undefined ? {} : { arguments: kept }),
+    const organizationId = organization.value.organization;
+    const record = (response: string | undefined) =>
+      // A record that cannot be kept never reaches the tool call.
+      Effect.try(() =>
+        store.record({
+          at: new Date(call.startedAt ?? Date.now()),
+          organizationId,
+          userId,
+          agentKey,
+          agentLabel: agentLabel.slice(0, 200),
+          source: usage.source,
+          appId,
+          toolName,
+          outcome: call.outcome,
+          ...(call.errorType === undefined ? {} : { errorType: call.errorType }),
+          durationMs: call.durationMs,
+          ...(task?.taskId === undefined ? {} : { taskId: task.taskId }),
+          ...(task?.sessionId == null ? {} : { mcpSessionId: task.sessionId }),
+          ...(task === undefined ? {} : { runId: task.runId }),
+          ...(kept === undefined ? {} : { arguments: kept }),
+          ...(response === undefined ? {} : { response }),
+        }),
+      ).pipe(Effect.ignore);
+    if (settings?.recordResponses !== true || call.response === undefined)
+      return yield* record(undefined);
+    // Saving media needs the request's file storage, so it is looked up before anything is
+    // detached from the request.
+    const executor = yield* Effect.serviceOption(HostedExecutor);
+    const transfer = Option.isNone(executor)
+      ? undefined
+      : yield* executor.value.pipe(
+          Effect.map((found) => found[FileTransferHost]),
+          Effect.orElseSucceed(() => undefined),
+        );
+    const prepared = yield* Effect.try(() =>
+      prepareResponse(call.response?.value, {
+        organization: organizationId,
+        extraKeys: settings.extraMaskedKeys,
+        limit: transfer === undefined ? 0 : transfer.userContent.policy.maxFileBytes,
       }),
-    ).pipe(Effect.ignore);
+    ).pipe(Effect.option);
+    // A response that cannot be prepared is not recorded.
+    if (Option.isNone(prepared)) return yield* record(undefined);
+    const { media, finish } = prepared.value;
+    // Without media the record is made now, as arguments are.
+    if (media.length === 0 || transfer === undefined)
+      return yield* record(finish(media.map((item) => unsavedMedia(item.contentType, item.size))));
+    const owner = organization.value.owner;
+    // The tool call must not wait for files to be stored, so the save and the record run on their own.
+    yield* saveResponseMedia({
+      transfer,
+      organization: organizationId,
+      owner,
+      appId,
+      media,
+    }).pipe(
+      Effect.flatMap((replacements) => record(finish(replacements))),
+      Effect.catchCause(() => Effect.logWarning("A tool response could not be recorded")),
+      Effect.forkDetach,
+    );
   });
 
 /** Failures that end a call before the tool runs. */

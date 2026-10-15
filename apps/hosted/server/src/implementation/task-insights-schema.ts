@@ -29,3 +29,10 @@ export const migrateTaskInsights = Effect.gen(function* () {
   yield* sql`create index if not exists hosted_organization_setting_audit_organization
     on hosted_organization_setting_audit (organization_id, created_at desc)`;
 });
+
+/** Additive: the response recording choice, off for every existing row. */
+export const migrateTaskInsightsResponses = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`alter table hosted_organization_task_settings
+    add column if not exists record_responses boolean not null default false`;
+});

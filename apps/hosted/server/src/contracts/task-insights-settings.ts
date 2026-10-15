@@ -1,6 +1,6 @@
 /**
- * The "Task insights" organization setting: whether tool-call arguments are kept with the usage
- * records, for how long, and which extra argument names are masked. Arguments are off by default.
+ * The "Task insights" organization setting: whether tool-call arguments and responses are kept with
+ * the usage records, for how long, and which extra names are masked. Both are off by default.
  */
 import { Schema } from "effect";
 import { HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
@@ -12,7 +12,7 @@ import {
   RequireOrganization,
 } from "./organization.ts";
 
-/** How long stored arguments are kept before they are removed from their records. */
+/** How long stored arguments and responses are kept before they are removed from their records. */
 export const TaskArgumentRetentionDays = Schema.Literals([7, 30, 90]);
 export type TaskArgumentRetentionDays = typeof TaskArgumentRetentionDays.Type;
 export const defaultTaskArgumentRetentionDays: TaskArgumentRetentionDays = 30;
@@ -23,11 +23,23 @@ export const maxExtraMaskedKeyLength = 64;
 export const TaskInsightsSettingsFields = Schema.Struct({
   /** Whether tool-call arguments are recorded. Off by default. */
   recordArguments: Schema.Boolean,
+  /** Whether tool-call responses are recorded. Off by default, separate from arguments. */
+  recordResponses: Schema.Boolean,
   retentionDays: TaskArgumentRetentionDays,
   /** Argument names masked in addition to the built-in credential names, matched in any case. */
   extraMaskedKeys: Schema.Array(Schema.String),
 });
 export type TaskInsightsSettingsFields = typeof TaskInsightsSettingsFields.Type;
+
+/**
+ * What a save sends. `recordResponses` may be absent so callers from before it existed keep
+ * working; absent keeps the stored value.
+ */
+export const TaskInsightsSettingsUpdate = Schema.Struct({
+  ...TaskInsightsSettingsFields.fields,
+  recordResponses: Schema.optional(Schema.Boolean),
+});
+export type TaskInsightsSettingsUpdate = typeof TaskInsightsSettingsUpdate.Type;
 
 export const TaskInsightsSettings = Schema.Struct({
   ...TaskInsightsSettingsFields.fields,
@@ -38,6 +50,7 @@ export type TaskInsightsSettings = typeof TaskInsightsSettings.Type;
 
 export const defaultTaskInsightsSettings: TaskInsightsSettingsFields = {
   recordArguments: false,
+  recordResponses: false,
   retentionDays: defaultTaskArgumentRetentionDays,
   extraMaskedKeys: [],
 };
@@ -65,7 +78,7 @@ export const HostedTaskInsightsSettings = HttpApiGroup.make("taskInsightsSetting
   .add(
     HttpApiEndpoint.put("update", "/api/organizations/:organization/task-insights-settings", {
       params: organization,
-      payload: TaskInsightsSettingsFields,
+      payload: TaskInsightsSettingsUpdate,
       success: TaskInsightsSettings,
       error: [...errors, TaskInsightsSettingsInvalid],
     }),

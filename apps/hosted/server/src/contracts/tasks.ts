@@ -18,6 +18,8 @@ import { UsageRange } from "./usage.ts";
 /** The most tasks one page lists, and how many it lists when the caller names no limit. */
 export const maxTasksPageSize = 100;
 export const defaultTasksPageSize = 25;
+/** The most files listed for one call. */
+export const maxTaskCallFiles = 20;
 /** The most calls the detail view returns for one task. */
 export const maxTaskCalls = 1000;
 
@@ -72,6 +74,18 @@ export const TaskList = Schema.Struct({
 });
 export type TaskList = typeof TaskList.Type;
 
+/** A file a call's arguments or response name by its `executor-file://` address. */
+export const TaskCallFile = Schema.Struct({
+  id: Schema.String,
+  /** The address, `executor-file://<organization id>/<file id>`. */
+  uri: Schema.String,
+  contentType: Schema.NullOr(Schema.String),
+  size: Schema.NullOr(Schema.Number),
+  /** False when the file expired or was removed; the address then opens nothing. */
+  available: Schema.Boolean,
+});
+export type TaskCallFile = typeof TaskCallFile.Type;
+
 export const TaskCall = Schema.Struct({
   /** ISO 8601 time the call started. */
   at: Schema.String,
@@ -85,6 +99,10 @@ export const TaskCall = Schema.Struct({
   runId: Schema.NullOr(Schema.String),
   /** The masked arguments, as JSON text. Null unless the organization recorded them. */
   arguments: Schema.NullOr(Schema.String),
+  /** The masked response, as JSON text. Null unless the organization recorded it. */
+  response: Schema.NullOr(Schema.String),
+  /** Files the arguments or response point at, at most 20 per call. */
+  files: Schema.Array(TaskCallFile),
 });
 export type TaskCall = typeof TaskCall.Type;
 
@@ -137,7 +155,7 @@ export const HostedTasks = HttpApiGroup.make("tasks")
       .annotate(OpenApi.Summary, "Get a task")
       .annotate(
         OpenApi.Description,
-        "The calls of one task in the order they were made, with masked arguments when the organization records them. Owners and admins only.",
+        "The calls of one task in the order they were made, with masked arguments and responses when the organization records them, and the files they name. Owners and admins only.",
       ),
   )
   .middleware(RequireOrganization);

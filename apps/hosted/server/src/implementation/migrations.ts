@@ -15,7 +15,7 @@ import { migrateApiKeyMemberships } from "./api-key-membership-schema.ts";
 import { queueExecutorAppUpgrades } from "./executor-app-upgrades.ts";
 import { migrateAppAccountLinks } from "./app-account-schema.ts";
 import { migrateFileHandleListing, migrateFileHandles } from "./file-handle-schema.ts";
-import { migrateTaskInsights } from "./task-insights-schema.ts";
+import { migrateTaskInsights, migrateTaskInsightsResponses } from "./task-insights-schema.ts";
 
 /**
  * Migration failures stop startup; callers must not log the driver's secret-bearing cause. The
@@ -119,6 +119,8 @@ const hostedProductMigrations = migrateProductSteps("private_hosted_migrations",
   // Additive: the organization's task insights setting and a settings change trail; the running
   // server never reads them.
   "12_task_insights": migrateTaskInsights,
+  // Additive: whether tool-call responses are recorded; the running server never reads it.
+  "13_task_insights_responses": migrateTaskInsightsResponses,
 });
 
 /**

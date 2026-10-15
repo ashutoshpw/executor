@@ -4,7 +4,7 @@ import { revalidated } from "@executor-js/ui/contracts/refresh";
 import { Atom } from "effect/reactivity";
 import { Effect } from "effect";
 import type { OrganizationReference } from "@executor-js/hosted-server/organization";
-import type { TaskInsightsSettingsFields } from "@executor-js/hosted-server/task-insights-settings";
+import type { TaskInsightsSettingsUpdate } from "@executor-js/hosted-server/task-insights-settings";
 import { acknowledge, acknowledgedQuery } from "@executor-js/ui/contracts/mutations";
 import { HostedClient } from "./api.ts";
 
@@ -18,7 +18,7 @@ export const taskInsightsSettingsAtom = Atom.family((organization: OrganizationR
 
 /** Save the setting; the server's answer replaces the view, never a local guess. */
 export const saveTaskInsightsSettingsAtom = Atom.family((organization: OrganizationReference) =>
-  HostedClient.runtime.fn((payload: TaskInsightsSettingsFields, get) =>
+  HostedClient.runtime.fn((payload: TaskInsightsSettingsUpdate, get) =>
     Effect.flatMap(HostedClient, (client) =>
       client.taskInsightsSettings.update({ params: { organization }, payload }),
     ).pipe(
