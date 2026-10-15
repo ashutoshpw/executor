@@ -110,11 +110,14 @@ export function AppDetailPage({
   view,
   tool,
   openApp,
+  listingHref,
 }: {
   readonly appId: AppId;
   readonly view?: AppView | undefined;
   readonly tool?: string | undefined;
   readonly openApp?: (app: App) => ReactNode;
+  /** Where this product lists published apps; Cloud omits it and links its public page. */
+  readonly listingHref?: string;
 }) {
   const { organization, role, slug: organizationSlug } = useOrganizationRoute();
   const navigate = useNavigate();
@@ -201,7 +204,12 @@ export function AppDetailPage({
           <>
             {canUse && openApp?.(app)}
             {canManage && (role === "owner" || role === "admin") ? (
-              <PublishApp app={app} atoms={appManagement(organization)} Failure={HostedFailure} />
+              <PublishApp
+                app={app}
+                atoms={appManagement(organization)}
+                Failure={HostedFailure}
+                listingHref={listingHref}
+              />
             ) : (
               <Button
                 variant="outline"
