@@ -55,7 +55,9 @@ The image ships the `apps` framework it was built with, and an app that
 declares exactly that version in its `package.json` builds from the image's own
 files instead of installing the version from npm. Every other version installs
 from the npm registry as before. Set `EXECUTOR_APPS_FRAMEWORK_DISABLED=true` to
-install every version from npm.
+install every version from npm. A Node host run from a source checkout serves the
+checkout's `packages/apps/dist` (run `bun run apps:build` first), or the built package that
+`EXECUTOR_APPS_FRAMEWORK_DIR` names; the image ignores that variable.
 
 Each app runs in its own Worker for each set of accounts it is called with, and
 each loaded Worker holds its own memory. The server keeps at most

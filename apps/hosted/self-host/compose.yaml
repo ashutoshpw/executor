@@ -28,6 +28,7 @@ services:
       # Seconds a Worker stays loaded without a call (default 300); 0 keeps idle ones until the limit.
       EXECUTOR_APP_WORKER_IDLE_SECONDS:
       # Set to true to install every apps release from npm, including the version this image ships.
+      # EXECUTOR_APPS_FRAMEWORK_DIR is for the Node host only; this image always serves its own build.
       EXECUTOR_APPS_FRAMEWORK_DISABLED:
       EXECUTOR_OAUTH_CALLBACK_URL:
       # Off by default. <BETTER_AUTH_URL>/oauth/client-metadata.json serves a client metadata

@@ -77,6 +77,12 @@ NodeRuntime.runMain(
         message: `--publish and --await check only ${npm}, not APPS_REGISTRY ${registry}.`,
       });
 
+    // A fork-only version exists so that no npm release can share it; the hosts serve it themselves.
+    if (version.includes("-fork."))
+      return yield* new AppsReleaseMismatch({
+        message: `apps@${version} is a fork-only version that is never published; the hosts serve their own build of it. Skip this check for it.`,
+      });
+
     const built = yield* stagedVersion(staged);
     if (built !== version)
       return yield* new AppsReleaseMismatch({

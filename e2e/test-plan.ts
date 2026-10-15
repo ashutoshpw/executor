@@ -2338,8 +2338,18 @@ export const scenarios = plan({
       cloud: na(
         "Cloud's compiler already serves its checkout's framework to a test stage from EXECUTOR_APPS_VERSION; production installs published releases.",
       ),
-      local: na(
-        "The local product does not serve its own framework yet; its apps install their declared version from the registry.",
+      local: na("Local runs the same build in the local scenario."),
+    },
+  },
+  localAppHostFramework: {
+    file: "app-host-framework.spec.ts",
+    title:
+      "A local app declaring the checkout's apps version, as every scaffold does, builds from files the server serves even when the registry lacks that version",
+    targets: {
+      local: scheduled,
+      "self-host": na("Self-host runs the same build in the hosted scenario."),
+      cloud: na(
+        "Cloud serves its framework only to a test stage deployed with EXECUTOR_APPS_VERSION; the Cloud compiler scenarios cover it.",
       ),
     },
   },

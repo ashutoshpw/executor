@@ -6,6 +6,7 @@ import {
 } from "@executor-js/app-templates/executor";
 import { localAppBrowserHandlers } from "./app-browser.ts";
 import { accountChoiceRefusal } from "./account-choice.ts";
+import { localAppsFramework } from "./apps-framework.ts";
 import { startupPhase } from "./startup-diagnostics.ts";
 import {
   startScheduleWorker,
@@ -158,6 +159,10 @@ export const localApi = (
         ...Option.match(yield* Config.String("EXECUTOR_NPM_REGISTRY").pipe(Config.option), {
           onNone: () => ({}),
           onSome: (registry) => ({ npmRegistry: registry }),
+        }),
+        ...Option.match(Option.fromNullishOr(yield* localAppsFramework), {
+          onNone: () => ({}),
+          onSome: (framework) => ({ appsFramework: framework }),
         }),
       }).pipe(startupPhase("runtime"));
       const registry = remoteRegistry(
