@@ -3,6 +3,7 @@ import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { Deferred, Effect, Exit, Layer, Option, Ref, Scope } from "effect";
 import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http";
 import { createServer } from "node:http";
+import { withApps } from "./apps-release.ts";
 
 export const registryPublication = {
   name: "@fixture/example",
@@ -10,6 +11,22 @@ export const registryPublication = {
   description: "A shared example",
   publishedAt: "2026-01-01T00:00:00.000Z",
 };
+
+/** The listing's installable source, which a snapshot read returns. */
+const registrySource = [
+  {
+    path: "index.ts",
+    content: `import { defineApp } from "apps";\nexport default defineApp({}, {});\n`,
+  },
+  {
+    path: "package.json",
+    content: JSON.stringify({
+      name: registryPublication.name,
+      description: registryPublication.description,
+      dependencies: withApps(),
+    }),
+  },
+];
 
 /** Package names that select each upstream behavior. */
 export const registryFixtureNames = {
@@ -22,7 +39,8 @@ export const registryFixtureNames = {
 /**
  * Start the registry on loopback. `paths` lists every received request. `close` stops the
  * listener early so later reads cannot connect; the case scope otherwise closes it. `hold` keeps
- * later listing responses pending until `release`; `held` waits until one has arrived.
+ * later listing responses pending until `release`; `held` waits until one has arrived. While
+ * `outage` is on, every listing read answers 503.
  */
 export const registryUpstream = Effect.gen(function* () {
   const listener = yield* Scope.make();
@@ -43,6 +61,7 @@ export const registryUpstream = Effect.gen(function* () {
   );
   yield* Effect.addFinalizer(() => release.pipe(Effect.andThen(Scope.close(listener, Exit.void))));
   const paths = yield* Ref.make<ReadonlyArray<string>>([]);
+  const down = yield* Ref.make(false);
   const list = HttpServerResponse.jsonUnsafe([registryPublication]);
   const routes = Layer.mergeAll(
     HttpRouter.add(
@@ -57,6 +76,7 @@ export const registryUpstream = Effect.gen(function* () {
           yield* Deferred.succeed(held.value.arrived, undefined);
           yield* Deferred.await(held.value.open);
         }
+        if (yield* Ref.get(down)) return HttpServerResponse.text("unavailable", { status: 503 });
         switch (url.searchParams.get("name")) {
           case registryFixtureNames.redirect:
             // A followed redirect would succeed here, so only a refused redirect fails.
@@ -73,6 +93,24 @@ export const registryUpstream = Effect.gen(function* () {
           default:
             return list;
         }
+      }),
+    ),
+    HttpRouter.add(
+      "GET",
+      "/api/registry/source",
+      Effect.gen(function* () {
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        const url = new URL(request.url, "http://registry.invalid");
+        return url.searchParams.get("name") === registryPublication.name &&
+          url.searchParams.get("commit") === registryPublication.commit
+          ? HttpServerResponse.jsonUnsafe({
+              publication: registryPublication,
+              files: registrySource,
+            })
+          : HttpServerResponse.jsonUnsafe(
+              { _tag: "RegistryError", reason: "not-found" },
+              { status: 400 },
+            );
       }),
     ),
     HttpRouter.add(
@@ -101,6 +139,7 @@ export const registryUpstream = Effect.gen(function* () {
       return { held: Deferred.await(arrived).pipe(Effect.timeout("20 seconds")) };
     }),
     release,
+    outage: (on: boolean) => Ref.set(down, on),
     close: Scope.close(listener, Exit.void),
   };
 });

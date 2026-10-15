@@ -9,7 +9,7 @@ const WorkspaceDisplay = Schema.Struct({
 });
 
 /**
- * Self-host does not publish; replace only that capability on real workspace reads for UI checks.
+ * Replace only the publishing capability on real workspace reads for UI checks; registry authorization is covered through the API.
  * A function derives the result from the real revision, so saved repairs can change readiness.
  */
 export const publishingPreview = (
