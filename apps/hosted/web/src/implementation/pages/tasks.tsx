@@ -1,9 +1,15 @@
 import { useAtomRefresh, useAtomValue } from "@effect/atom-react";
 import { AsyncResult } from "effect/reactivity";
 import { Option } from "effect";
-import { Fragment, useState } from "react";
+import { Link } from "@tanstack/react-router";
+import { Fragment, useState, type ReactNode } from "react";
 import type { UsageRange } from "@executor-js/hosted-server/usage";
-import type { TaskCall, TaskDetail, TaskSummary } from "@executor-js/hosted-server/tasks";
+import type {
+  TaskCall,
+  TaskCallFile,
+  TaskDetail,
+  TaskSummary,
+} from "@executor-js/hosted-server/tasks";
 import { Button } from "@executor-js/ui/components/button";
 import { LocalTime } from "@executor-js/ui/components/local-time";
 import { Skeleton } from "@executor-js/ui/components/skeleton";
@@ -26,6 +32,7 @@ import {
   Tile,
 } from "../components/usage-parts.tsx";
 import { defaultRange, ranges } from "./home.tsx";
+import { formatFileSize } from "./files.tsx";
 
 const tasksTitle = "Tasks";
 const kindLabel = { task: "Task", session: "Session", run: "Run" } as const;
@@ -390,6 +397,19 @@ function CallsTable({ calls }: { readonly calls: ReadonlyArray<TaskCall> }) {
                         {pretty(call.arguments)}
                       </pre>
                     )}
+                    <p className="mt-3 text-xs text-muted-foreground">Response (masked)</p>
+                    {call.response === null ? (
+                      <p className="mt-1 text-xs text-muted-foreground">
+                        {call.outcome === "success"
+                          ? "Not recorded. Turn on response recording in organization settings."
+                          : "The call failed and has no response."}
+                      </p>
+                    ) : (
+                      <pre className="mt-1 max-h-72 overflow-auto rounded-md border bg-background p-3 font-mono text-xs whitespace-pre-wrap break-words">
+                        <LinkedFiles text={pretty(call.response)} files={call.files} />
+                      </pre>
+                    )}
+                    {call.files.length > 0 && <CallFiles files={call.files} />}
                   </td>
                 </tr>
               )}
@@ -415,3 +435,77 @@ const pretty = (text: string) => {
   const parsed = Option.liftThrowable(() => JSON.parse(text) as unknown)();
   return Option.isSome(parsed) ? JSON.stringify(parsed.value, null, 2) : text;
 };
+
+const fileUri = /executor-file:\/\/[^\s"\\]+/g;
+const filesPath = "/org/$organizationSlug/files" as const;
+
+/** The file list link for one file: the Files page with its preview drawer open. */
+function FileLink({
+  file,
+  children,
+}: {
+  readonly file: TaskCallFile;
+  readonly children: ReactNode;
+}) {
+  const { slug: organizationSlug } = useOrganizationRoute();
+  return (
+    <Link
+      to={filesPath}
+      params={{ organizationSlug }}
+      search={{ file: file.id }}
+      className="underline underline-offset-2"
+    >
+      {children}
+    </Link>
+  );
+}
+
+/** The JSON text with each available file's address turned into a link to its preview. */
+function LinkedFiles({
+  text,
+  files,
+}: {
+  readonly text: string;
+  readonly files: readonly TaskCallFile[];
+}) {
+  const parts: ReactNode[] = [];
+  let last = 0;
+  for (const match of text.matchAll(fileUri)) {
+    const file = files.find((item) => item.uri === match[0]);
+    if (file === undefined || !file.available) continue;
+    parts.push(text.slice(last, match.index));
+    parts.push(
+      <FileLink key={match.index} file={file}>
+        {match[0]}
+      </FileLink>,
+    );
+    last = match.index + match[0].length;
+  }
+  parts.push(text.slice(last));
+  return <>{parts}</>;
+}
+
+/** The files a call's arguments or response name, with their type and size. */
+function CallFiles({ files }: { readonly files: readonly TaskCallFile[] }) {
+  return (
+    <ul className="mt-2 grid gap-1 text-xs" aria-label="Files">
+      {files.map((file) => {
+        const detail = [file.contentType, file.size === null ? null : formatFileSize(file.size)]
+          .filter((part) => part !== null)
+          .join(", ");
+        return (
+          <li key={file.id} className="break-all">
+            {file.available ? (
+              <FileLink file={file}>{file.uri}</FileLink>
+            ) : (
+              <span className="text-muted-foreground">{file.uri}</span>
+            )}{" "}
+            <span className="text-muted-foreground">
+              {file.available ? detail : "expired or deleted"}
+            </span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
