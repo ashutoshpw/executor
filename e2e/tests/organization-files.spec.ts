@@ -227,6 +227,13 @@ layer(HostedLive, { excludeTestServices: true })("Organization files", (it) => {
           "not-a-cursor",
           Buffer.from("{}").toString("base64url"),
           Buffer.from(JSON.stringify({ t: "yesterday", i: "x" })).toString("base64url"),
+          // Shaped like a timestamp but not one Postgres accepts.
+          Buffer.from(JSON.stringify({ t: "2026-99-99 00:00:00", i: "x" })).toString("base64url"),
+          Buffer.from(JSON.stringify({ t: "2026-02-30 00:00:00", i: "x" })).toString("base64url"),
+          Buffer.from(JSON.stringify({ t: "2026-01-01 25:00:00", i: "x" })).toString("base64url"),
+          Buffer.from(JSON.stringify({ t: "2026-01-01 00:00:00+99", i: "x" })).toString(
+            "base64url",
+          ),
         ];
         for (const after of garbage) {
           const refused = yield* list(actors.owner, `?after=${encodeURIComponent(after)}`);
@@ -320,7 +327,18 @@ layer(HostedLive, { excludeTestServices: true })("Organization files", (it) => {
         const upload = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Stored))(
           text(stored.bytes),
         );
+        // A file a member uploads has no creator app either, so the member cannot fetch it back:
+        // this is the decided rule, administrators reach it.
+        const memberStored = yield* raw("PUT", `${prefix}/files`, {
+          headers: { authorization: `Bearer ${memberKey}` },
+          body: new TextEncoder().encode(`member upload ${unique}`),
+        });
+        expect(memberStored.status).toBe(201);
+        const memberUpload = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Stored))(
+          text(memberStored.bytes),
+        );
         const files = [
+          { id: memberUpload.id, text: `member upload ${unique}`, visibleToMember: false },
           { id: a.id, text: content.a, visibleToMember: true },
           { id: b.id, text: content.b, visibleToMember: false },
           { id: upload.id, text: content.upload, visibleToMember: false },
