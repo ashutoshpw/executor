@@ -125,6 +125,11 @@ owns it: another organization's, expired, deleted and made-up handles all read
 as "Resource not found", and they get no link. A [scoped
 connection](#scoped-connections) cannot read files yet; connections that reach
 every app, such as a personal access token or the local server key, can.
+Authorization is per organization, not per app, matching signed download links: a
+connection that reaches every app reads any file of its organization by handle id,
+including one an app it could not use produced, and handle ids are unguessable.
+A missing or unreadable file answers with MCP's resource-not-found code (-32002);
+a store that cannot answer is an internal error (-32603).
 
 ## Signing in from the browser
 

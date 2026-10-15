@@ -1083,6 +1083,20 @@ export const scenarios = plan({
       local: na("Hosted app API fixture; the Node adapter is exercised by self-host."),
     },
   },
+  mcpFileResourceExpiry: {
+    fixtures: "actors",
+    file: "mcp-file-resources.spec.ts",
+    title: "An expired file reads as not found through resources/read and gets no link",
+    serverEnvironment: {
+      EXECUTOR_FILE_RESOURCE_READ_BYTES: "65536",
+      EXECUTOR_FILE_HANDLE_SWEEP_SECONDS: "3600",
+    },
+    targets: {
+      "self-host": scheduled,
+      cloud: na("Advances the wall clock of a runner-owned product process."),
+      local: na("Hosted app API fixture; the Node adapter is exercised by self-host."),
+    },
+  },
   mcpFileResourceOversize: {
     fixtures: "actors",
     file: "mcp-file-resources.spec.ts",
