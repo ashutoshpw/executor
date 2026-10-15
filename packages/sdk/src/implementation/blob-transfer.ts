@@ -303,10 +303,6 @@ export const blobTransfer = (options: {
 
   const create = (command: Extract<BlobCommand, { op: "create" }>) =>
     Effect.gen(function* () {
-      const bytes = yield* Result.match(Base64.decode(command.bytes), {
-        onFailure: () => Effect.fail(new BlobUpstreamFailed({ reason: "request" })),
-        onSuccess: Effect.succeed,
-      });
       const begun = yield* ask(BlobBegun, {
         op: "begin",
         contentType: command.contentType ?? defaultContentType,
@@ -314,6 +310,15 @@ export const blobTransfer = (options: {
       const key = begun.key as BlobKey;
       let commit: "none" | "sent" | "refused" = "none";
       return yield* Effect.gen(function* () {
+        // Padded base64 spells n bytes in 4 * ceil(n / 3) characters: refuse longer input before
+        // decoding it, so an oversized request never allocates its bytes.
+        const encodedLimit = Math.ceil(begun.maxInlineBytes / 3) * 4;
+        if (command.bytes.length > encodedLimit)
+          return yield* new BlobTooLarge({ maximum: begun.maxInlineBytes });
+        const bytes = yield* Result.match(Base64.decode(command.bytes), {
+          onFailure: () => Effect.fail(new BlobUpstreamFailed({ reason: "request" })),
+          onSuccess: Effect.succeed,
+        });
         if (bytes.byteLength > begun.maxInlineBytes)
           return yield* new BlobTooLarge({
             maximum: begun.maxInlineBytes,
