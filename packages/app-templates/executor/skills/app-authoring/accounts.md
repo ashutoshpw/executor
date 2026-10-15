@@ -487,6 +487,37 @@ there is no browser redirect. App code reads `account.fields.access_token`.
 Executor exchanges the client credentials again when the token expires; this
 grant has no refresh token.
 
+For a service account key, such as a Google service account, declare the JWT
+bearer grant (RFC 7523) with the token endpoint and the scopes the assertion
+asks for:
+
+```ts
+const drive = defineProvider({
+  name: "Google Drive",
+  auth: {
+    serviceAccount: oauth2({
+      grant: "jwt_bearer",
+      tokenUrl: "https://oauth2.googleapis.com/token",
+      scopes: ["https://www.googleapis.com/auth/drive"],
+      // Domain-wide delegation: ask for the user to impersonate. Omitted means "optional".
+      subject: "optional",
+    }),
+  },
+});
+```
+
+The connect page asks for the service account's JSON key and, when `subject` is
+`"optional"` or `"required"`, the email of the user to impersonate. Executor signs
+the assertion itself and exchanges it at `tokenUrl`; the key is stored encrypted
+and never reaches app code, which reads only `account.fields.access_token` (a
+sealed handle when the provider declares `hosts`). The key's `token_uri` must equal
+`tokenUrl`; a key created long ago may name `https://accounts.google.com/o/oauth2/token`,
+in which case declare that URL. Executor signs a new assertion when the token expires, and
+a token endpoint that answers `invalid_grant` (a disabled key or a bad signature) fails
+the call with `OAuthReconnectRequired`. A connect that fails reports
+`OAuthSetupFailed` with `invalid_service_account_key`, `token_url_mismatch`,
+`subject_required` or the service's own error code, never the key.
+
 Deploy the source, then request a connection for its account requirement.
 Use `appAccounts.userConnect` for a user requirement and
 `appAccounts.appConnect` for one of the app's own requirements. The examples

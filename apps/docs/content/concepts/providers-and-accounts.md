@@ -23,7 +23,8 @@ const vercel = defineProvider({
 ```
 
 `apiKey` is the method name. `secrets` means fields you paste; `oauth2` means a
-browser sign-in.
+browser sign-in, a client ID and secret for machine access, or, with
+`grant: "jwt_bearer"`, a service account key that Executor signs in with.
 
 A provider is not registered anywhere and has no owner and no slug. Two apps
 that declare the same provider resolve to the same provider reference, so an
