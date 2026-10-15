@@ -1,5 +1,5 @@
-import { useAtomSet, useAtomValue } from "@effect/atom-react";
-import { Exit, Option, type Cause } from "effect";
+import { useAtomRefresh, useAtomSet, useAtomValue } from "@effect/atom-react";
+import { Cause, Exit, Option, Predicate } from "effect";
 import { AsyncResult } from "effect/reactivity";
 import { useState } from "react";
 import { Link } from "@tanstack/react-router";
@@ -314,8 +314,24 @@ function LinkedPreview({
 }) {
   const { organization } = useOrganizationRoute();
   const result = useAtomValue(fileAtom({ organization, handle }));
+  const retry = useAtomRefresh(fileAtom({ organization, handle }));
   const entry = Option.getOrNull(AsyncResult.value(result));
-  if (AsyncResult.isFailure(result) && entry === null)
+  if (AsyncResult.isFailure(result) && entry === null) {
+    const error = Cause.findErrorOption(result.cause);
+    // Only a file the server says is absent gets the notice. A network error, a server error or
+    // unavailable storage says nothing about the file, so it can be retried.
+    if (
+      !(
+        Option.isSome(error) &&
+        Predicate.hasProperty(error.value, "_tag") &&
+        error.value._tag === "FileNotFound"
+      )
+    )
+      return (
+        <div className="mb-4">
+          <HostedFailure cause={result.cause} retry={retry} />
+        </div>
+      );
     return (
       <Alert className="mb-4">
         <AlertDescription className="flex items-center justify-between gap-3">
@@ -326,6 +342,7 @@ function LinkedPreview({
         </AlertDescription>
       </Alert>
     );
+  }
   return (
     <FilePreviewSheet
       file={entry}

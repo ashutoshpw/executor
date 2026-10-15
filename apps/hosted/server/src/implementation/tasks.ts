@@ -80,35 +80,40 @@ const namedFiles = (organization: string, texts: ReadonlyArray<string | null>) =
   return found;
 };
 
-/** The state of each file a call names, looked up in the organization's file store. */
-const callFiles = (
-  organization: string,
-  owner: OwnerId,
-  call: { readonly arguments: string | null; readonly response: string | null },
-) =>
+/** The most distinct files looked up for one request; files beyond it are shown as unavailable. */
+const maxStatsPerRequest = 200;
+
+type FileState = Pick<TaskCallFile, "contentType" | "size" | "available">;
+const unavailable: FileState = { contentType: null, size: null, available: false };
+
+/**
+ * The state of each distinct file the calls name, looked up once in the organization's file store.
+ * Beyond `maxStatsPerRequest` distinct files the rest are not looked up and count as unavailable.
+ */
+const resolveFiles = (organization: string, owner: OwnerId, ids: ReadonlyArray<string>) =>
   Effect.gen(function* () {
-    const named = namedFiles(organization, [call.arguments, call.response]);
-    if (named.size === 0) return [] as ReadonlyArray<TaskCallFile>;
+    const states = new Map<string, FileState>();
+    const wanted = ids.slice(0, maxStatsPerRequest);
+    if (wanted.length === 0) return states;
     const executor = yield* Effect.flatten(HostedExecutor);
     const transfer = executor[FileTransferHost];
-    return yield* Effect.forEach([...named], ([id, uri]) =>
-      (transfer === undefined
-        ? Effect.succeed(undefined)
-        : transfer.userContent.handles.stat({ owner, id }).pipe(
-            Effect.map((found) => found.handle),
-            Effect.orElseSucceed(() => undefined),
-          )
-      ).pipe(
-        Effect.map((handle): TaskCallFile => ({
-          id,
-          uri,
-          contentType: handle?.contentType ?? null,
-          size: handle?.size ?? null,
-          available: handle !== undefined,
-        })),
-      ),
+    if (transfer === undefined) return states;
+    yield* Effect.forEach(
+      wanted,
+      (id) =>
+        transfer.userContent.handles.stat({ owner, id }).pipe(
+          Effect.map((found): FileState => ({
+            contentType: found.handle.contentType,
+            size: found.handle.size,
+            available: true,
+          })),
+          Effect.orElseSucceed(() => unavailable),
+          Effect.tap((state) => Effect.sync(() => states.set(id, state))),
+        ),
+      { concurrency: 8, discard: true },
     );
-  }).pipe(Effect.orElseSucceed((): ReadonlyArray<TaskCallFile> => []));
+    return states;
+  }).pipe(Effect.orElseSucceed(() => new Map<string, FileState>()));
 
 /** Only owners and admins read tasks; every query is scoped to the caller's organization. */
 export const hostedTasksHandlers = HttpApiBuilder.group(HostedApi, "tasks", (handlers) =>
@@ -190,34 +195,38 @@ export const hostedTasksHandlers = HttpApiBuilder.group(HostedApi, "tasks", (han
           settings === undefined
             ? Number.POSITIVE_INFINITY
             : Date.now() - settings.retentionDays * dayMillis;
-        const calls = yield* Effect.forEach(
-          found.slice(0, maxTaskCalls),
-          (call) => {
-            const kept = call.at >= cutoff;
-            const args = kept ? call.arguments : null;
-            const response = kept ? call.response : null;
-            return callFiles(access.organization, access.owner, {
-              arguments: args,
-              response,
-            }).pipe(
-              Effect.map((files) => ({
-                at: new Date(call.at).toISOString(),
-                appId: AppId.make(call.appId),
-                ...named(names, call.appId),
-                toolName: call.toolName,
-                outcome: call.outcome,
-                errorType: call.errorType,
-                durationMs: call.durationMs,
-                sessionId: call.sessionId,
-                runId: call.runId,
-                arguments: args,
-                response,
-                files,
-              })),
-            );
-          },
-          { concurrency: 8 },
-        );
+        const shown = found.slice(0, maxTaskCalls).map((call) => {
+          const kept = call.at >= cutoff;
+          const args = kept ? call.arguments : null;
+          const response = kept ? call.response : null;
+          return {
+            call,
+            args,
+            response,
+            named: namedFiles(access.organization, [args, response]),
+          };
+        });
+        // Calls often name the same file, so each distinct file is looked up once per request.
+        const distinct = new Set(shown.flatMap((item) => [...item.named.keys()]));
+        const states = yield* resolveFiles(access.organization, access.owner, [...distinct]);
+        const calls = shown.map(({ call, args, response, named: files }) => ({
+          at: new Date(call.at).toISOString(),
+          appId: AppId.make(call.appId),
+          ...named(names, call.appId),
+          toolName: call.toolName,
+          outcome: call.outcome,
+          errorType: call.errorType,
+          durationMs: call.durationMs,
+          sessionId: call.sessionId,
+          runId: call.runId,
+          arguments: args,
+          response,
+          files: [...files].map(([id, uri]): TaskCallFile => ({
+            id,
+            uri,
+            ...(states.get(id) ?? unavailable),
+          })),
+        }));
         return {
           available: true,
           range,

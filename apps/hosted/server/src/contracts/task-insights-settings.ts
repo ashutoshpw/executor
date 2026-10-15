@@ -1,6 +1,7 @@
 /**
  * The "Task insights" organization setting: whether tool-call arguments and responses are kept with
- * the usage records, for how long, and which extra names are masked. Both are off by default.
+ * the usage records, for how long, and which extra names are masked. Both are on by default for an organization that never saved the setting;
+ * a database that cannot be read means nothing is recorded.
  */
 import { Schema } from "effect";
 import { HttpApiEndpoint, HttpApiGroup } from "effect/http-api";
@@ -21,9 +22,9 @@ export const maxExtraMaskedKeyLength = 64;
 
 /** The setting as the dashboard edits it. */
 export const TaskInsightsSettingsFields = Schema.Struct({
-  /** Whether tool-call arguments are recorded. Off by default. */
+  /** Whether tool-call arguments are recorded. On by default. */
   recordArguments: Schema.Boolean,
-  /** Whether tool-call responses are recorded. Off by default, separate from arguments. */
+  /** Whether tool-call responses are recorded. On by default, separate from arguments. */
   recordResponses: Schema.Boolean,
   retentionDays: TaskArgumentRetentionDays,
   /** Argument names masked in addition to the built-in credential names, matched in any case. */
@@ -48,9 +49,10 @@ export const TaskInsightsSettings = Schema.Struct({
 });
 export type TaskInsightsSettings = typeof TaskInsightsSettings.Type;
 
+/** What an organization that never saved the setting gets. */
 export const defaultTaskInsightsSettings: TaskInsightsSettingsFields = {
-  recordArguments: false,
-  recordResponses: false,
+  recordArguments: true,
+  recordResponses: true,
   retentionDays: defaultTaskArgumentRetentionDays,
   extraMaskedKeys: [],
 };

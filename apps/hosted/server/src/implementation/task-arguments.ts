@@ -51,7 +51,7 @@ const credentialValues: ReadonlyArray<RegExp> = [
 const urlCredentials = /:\/\/[^\s/:@]+:[^\s/@]+@/g;
 
 /** The text with every credential-looking part replaced, wherever it sits in the string. */
-const maskText = (value: string): string => {
+export const maskText = (value: string): string => {
   let text = value.replace(urlCredentials, `://${maskedValue}@`);
   for (const pattern of credentialValues) text = text.replace(pattern, maskedValue);
   return text;

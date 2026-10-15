@@ -17,8 +17,12 @@ function Files() {
       onAppChange={(next) =>
         void navigate({ search: (previous) => ({ ...previous, app: next }), replace: true })
       }
+      // Opening a file adds a history entry; closing replaces it, so Back does not reopen it.
       onFileChange={(next) =>
-        void navigate({ search: (previous) => ({ ...previous, file: next }) })
+        void navigate({
+          search: (previous) => ({ ...previous, file: next }),
+          replace: next === undefined,
+        })
       }
     />
   );

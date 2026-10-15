@@ -15,7 +15,11 @@ import { migrateApiKeyMemberships } from "./api-key-membership-schema.ts";
 import { queueExecutorAppUpgrades } from "./executor-app-upgrades.ts";
 import { migrateAppAccountLinks } from "./app-account-schema.ts";
 import { migrateFileHandleListing, migrateFileHandles } from "./file-handle-schema.ts";
-import { migrateTaskInsights, migrateTaskInsightsResponses } from "./task-insights-schema.ts";
+import {
+  migrateTaskInsights,
+  migrateTaskInsightsDefaultOn,
+  migrateTaskInsightsResponses,
+} from "./task-insights-schema.ts";
 
 /**
  * Migration failures stop startup; callers must not log the driver's secret-bearing cause. The
@@ -121,6 +125,9 @@ const hostedProductMigrations = migrateProductSteps("private_hosted_migrations",
   "12_task_insights": migrateTaskInsights,
   // Additive: whether tool-call responses are recorded; the running server never reads it.
   "13_task_insights_responses": migrateTaskInsightsResponses,
+  // Recording is on by default: new column defaults, and organizations that opted into arguments
+  // before responses existed record responses too. The running server writes every column.
+  "14_task_insights_default_on": migrateTaskInsightsDefaultOn,
 });
 
 /**
