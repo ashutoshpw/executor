@@ -7,6 +7,7 @@ import {
   encodeAppFailure,
   renderAppFailure,
 } from "@executor-js/app-management/cli";
+import { filesCommand } from "@executor-js/app-management/files/cli";
 /** CLI composition root. Platform dependencies and raw process arguments stop here. */
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -48,6 +49,7 @@ const cli = executorCommand.pipe(
   ),
   Command.withSubcommands([
     appsCommand(process.platform),
+    filesCommand,
     serveCommand.pipe(Command.withHandler(() => launch("headless", process.platform, entry))),
     pairCommand.pipe(Command.withHandler(() => pair(process.platform))),
     upgradeCommand.pipe(

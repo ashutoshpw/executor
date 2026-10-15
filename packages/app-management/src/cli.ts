@@ -55,6 +55,7 @@ import {
 import { UserFacingError } from "@executor-js/utils/user-facing-error";
 import {
   AppClientError,
+  FilesFailed,
   HostRecovery,
   HostRequestFailed,
   LoginFailed,
@@ -81,20 +82,20 @@ class SkillLookupFailed extends Schema.TaggedError<SkillLookupFailed>()("SkillLo
   reason: Schema.String,
 }) {}
 const localOrigin = "http://127.0.0.1:4312";
-const host = Flag.String("host").pipe(
+export const host = Flag.String("host").pipe(
   Flag.withDescription(
     `Executor origin. Defaults to EXECUTOR_HOST, then the local server at ${localOrigin}; use ${hostedExecutorOrigin} for hosted Executor`,
   ),
   Flag.withFallbackConfig(Config.String("EXECUTOR_HOST")),
   Flag.withDefault(localOrigin),
 );
-const organization = Flag.String("organization").pipe(
+export const organization = Flag.String("organization").pipe(
   Flag.withDescription(
     "Hosted organization. Required with EXECUTOR_ACCESS_TOKEN; after executor apps login it defaults to the signed-in organization",
   ),
   Flag.optional,
 );
-const connection = { host, organization };
+export const connection = { host, organization };
 const app = Flag.String("app").pipe(
   Flag.withSchema(AppId),
   Flag.withDescription("App ID, such as app_…; executor apps list prints each app's id"),
@@ -121,7 +122,7 @@ const publication = {
   commit: commit("of the published version to install"),
 };
 /** Resolve the credential and, for hosted Executor, the organization every request targets. */
-const access = (host: string, organization: Option.Option<string>) =>
+export const access = (host: string, organization: Option.Option<string>) =>
   Effect.gen(function* () {
     yield* Schema.decodeUnknownEffect(RegistryOrigin)(host).pipe(
       Effect.mapError(() => new AppClientError({ reason: "authentication" })),
@@ -145,7 +146,11 @@ const access = (host: string, organization: Option.Option<string>) =>
     return { token: Redacted.make(session.accessToken), organization: session.organization };
   });
 /** Authenticated requests to the host; redirects are refused so credentials never follow them. */
-const transport = (host: string, token: Redacted.Redacted<string>, path = (url: string) => url) =>
+export const transport = (
+  host: string,
+  token: Redacted.Redacted<string>,
+  path = (url: string) => url,
+) =>
   Effect.map(HttpClient.HttpClient, (client) =>
     client.pipe(
       HttpClient.mapRequest((request) =>
@@ -187,7 +192,7 @@ const hostAnswer = (response: HttpClientResponse.HttpClientResponse) =>
  * error the body states, so the command can say what the host answered. Credentials and other
  * response text are never kept.
  */
-const hostFailure = (error: HttpClientError.HttpClientError | Schema.SchemaError) =>
+export const hostFailure = (error: HttpClientError.HttpClientError | Schema.SchemaError) =>
   Effect.gen(function* () {
     if (!HttpClientError.isHttpClientError(error))
       return new HostRequestFailed({ reason: "response" });
@@ -405,6 +410,17 @@ const loginFailure: Record<LoginFailed["reason"], string> = {
     "Signed in, but the session could not be saved in the system credential store or in ~/.local/state/executor/auth. Check that this directory is writable.",
 };
 
+/** What a files command says when it refuses, by reason. */
+const filesFailure: Record<FilesFailed["reason"], string> = {
+  terminal:
+    "Not writing a file's bytes to a terminal. Pass --output <path> to save it, or pipe stdout to a file.",
+  exists:
+    "The output file already exists. Pass --resume to continue a partial download, or choose another --output.",
+  "not-a-file": "That path is not a regular file.",
+  checksum:
+    "The downloaded bytes do not match the file's checksum. The download is incomplete or corrupt; delete the output and download again.",
+};
+
 /**
  * A failed command, as agents read it: the error code, the HTTP status when the host answered, the
  * message, the declared recovery, and the error's other fields as the host sent them.
@@ -548,6 +564,12 @@ export const describeAppFailure = (error: unknown): AppCommandFailure | undefine
         };
   if (Schema.is(SkillLookupFailed)(error))
     return { code: "SkillLookupFailed", message: error.reason };
+  if (Schema.is(FilesFailed)(error))
+    return {
+      code: "FilesFailed",
+      message: filesFailure[error.reason],
+      details: { reason: error.reason },
+    };
   if (Schema.is(LoginFailed)(error))
     return {
       code: "LoginFailed",
