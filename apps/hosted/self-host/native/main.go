@@ -609,6 +609,9 @@ func serve(mode string) error {
 	// The image ships the apps framework it was built with; an app that declares exactly that
 	// version builds from it instead of installing it from npm. An empty version turns this off.
 	frameworkVersion := ""
+	if values["EXECUTOR_APPS_FRAMEWORK_DIR"] != "" {
+		fmt.Fprintln(os.Stderr, "Executor: EXECUTOR_APPS_FRAMEWORK_DIR applies only to the Node host and is ignored here; the image serves the apps framework it was built with.")
+	}
 	switch values["EXECUTOR_APPS_FRAMEWORK_DISABLED"] {
 	case "", "false":
 		shipped, err := os.ReadFile(filepath.Join(runtime, "framework", "version"))
