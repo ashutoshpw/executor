@@ -6,6 +6,7 @@ import {
   Key01Icon,
   Plug01Icon,
   Settings05Icon,
+  TaskDone01Icon,
   Shield01Icon,
   UserCircleIcon,
   UserGroupIcon,
@@ -21,6 +22,10 @@ export const items = [
   { to: "/org/$organizationSlug/approvals", label: "Approvals", icon: Shield01Icon },
   { to: "/org/$organizationSlug/files", label: "Files", icon: File01Icon },
   { to: "/org/$organizationSlug/groups", label: "Groups", icon: UserGroupIcon },
+] as const;
+/** Pages only owners and admins see: task records can include other people's work. */
+export const adminItems = [
+  { to: "/org/$organizationSlug/tasks", label: "Tasks", icon: TaskDone01Icon },
 ] as const;
 /** The organization settings page, listed after the host's own pages. */
 export const settings = {

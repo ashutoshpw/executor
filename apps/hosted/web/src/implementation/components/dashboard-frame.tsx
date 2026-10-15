@@ -7,7 +7,7 @@ import { DashboardShell as SharedShell } from "@executor-js/ui/dashboard/shell";
 import { Skeleton } from "@executor-js/ui/components/skeleton";
 import { SessionMenu } from "./auth.tsx";
 import { useDocumentationUrl } from "../documentation.ts";
-import { accountItems, items, settings } from "./navigation-items.ts";
+import { accountItems, adminItems, items, settings } from "./navigation-items.ts";
 import { CommandBar, type CommandBarItem } from "./command-bar.tsx";
 import { CommandBarProvider, CommandBarTrigger } from "./command-bar-context.tsx";
 
@@ -16,7 +16,7 @@ function NavigationItem({
   organizationSlug,
   pendingPage,
 }: {
-  readonly item: (typeof items)[number] | typeof settings;
+  readonly item: (typeof items)[number] | (typeof adminItems)[number] | typeof settings;
   readonly organizationSlug: string | undefined;
   readonly pendingPage: string;
 }) {
@@ -75,6 +75,16 @@ export function DashboardNavigation({
           pendingPage={pendingPage}
         />
       ))}
+      {organization?.role !== undefined &&
+        organization.role !== "member" &&
+        adminItems.map((item) => (
+          <NavigationItem
+            key={item.to}
+            item={item}
+            organizationSlug={organization.slug}
+            pendingPage={pendingPage}
+          />
+        ))}
       {children}
     </>
   );

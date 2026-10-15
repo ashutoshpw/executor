@@ -35,6 +35,7 @@ import { Route as OrgOrganizationSlugAppsIndexRouteImport } from './routes/org.$
 import { Route as OrgOrganizationSlugAppsAppIdRouteImport } from './routes/org.$organizationSlug.apps.$appId'
 import { Route as OrgOrganizationSlugConnectionsConnectionIdRouteImport } from './routes/org.$organizationSlug.connections.$connectionId'
 import { Route as OrgOrganizationSlugFilesIndexRouteImport } from './routes/org.$organizationSlug.files.index'
+import { Route as OrgOrganizationSlugTasksIndexRouteImport } from './routes/org.$organizationSlug.tasks.index'
 import { Route as OrgOrganizationSlugGroupsIndexRouteImport } from './routes/org.$organizationSlug.groups.index'
 import { Route as OrgOrganizationSlugGroupsGroupIdRouteImport } from './routes/org.$organizationSlug.groups.$groupId'
 import { Route as OrgOrganizationSlugAppsAppIdSetupRouteImport } from './routes/org.$organizationSlug.apps.$appId_.setup'
@@ -183,6 +184,12 @@ const OrgOrganizationSlugFilesIndexRoute =
     path: '/files/',
     getParentRoute: () => OrgOrganizationSlugRoute,
   } as any)
+const OrgOrganizationSlugTasksIndexRoute =
+  OrgOrganizationSlugTasksIndexRouteImport.update({
+    id: '/tasks/',
+    path: '/tasks/',
+    getParentRoute: () => OrgOrganizationSlugRoute,
+  } as any)
 const OrgOrganizationSlugGroupsIndexRoute =
   OrgOrganizationSlugGroupsIndexRouteImport.update({
     id: '/groups/',
@@ -248,6 +255,7 @@ export interface FileRoutesByFullPath {
   '/org/$organizationSlug/approvals/': typeof OrgOrganizationSlugApprovalsIndexRoute
   '/org/$organizationSlug/apps/': typeof OrgOrganizationSlugAppsIndexRoute
   '/org/$organizationSlug/files/': typeof OrgOrganizationSlugFilesIndexRoute
+  '/org/$organizationSlug/tasks/': typeof OrgOrganizationSlugTasksIndexRoute
   '/org/$organizationSlug/groups/': typeof OrgOrganizationSlugGroupsIndexRoute
   '/org/$organizationSlug/apps/$appId/setup': typeof OrgOrganizationSlugAppsAppIdSetupRoute
   '/org/$organizationSlug/apps/add/custom': typeof OrgOrganizationSlugAppsAddCustomRoute
@@ -280,6 +288,7 @@ export interface FileRoutesByTo {
   '/org/$organizationSlug/approvals': typeof OrgOrganizationSlugApprovalsIndexRoute
   '/org/$organizationSlug/apps': typeof OrgOrganizationSlugAppsIndexRoute
   '/org/$organizationSlug/files': typeof OrgOrganizationSlugFilesIndexRoute
+  '/org/$organizationSlug/tasks': typeof OrgOrganizationSlugTasksIndexRoute
   '/org/$organizationSlug/groups': typeof OrgOrganizationSlugGroupsIndexRoute
   '/org/$organizationSlug/apps/$appId/setup': typeof OrgOrganizationSlugAppsAppIdSetupRoute
   '/org/$organizationSlug/apps/add/custom': typeof OrgOrganizationSlugAppsAddCustomRoute
@@ -315,6 +324,7 @@ export interface FileRoutesById {
   '/org/$organizationSlug/approvals/': typeof OrgOrganizationSlugApprovalsIndexRoute
   '/org/$organizationSlug/apps/': typeof OrgOrganizationSlugAppsIndexRoute
   '/org/$organizationSlug/files/': typeof OrgOrganizationSlugFilesIndexRoute
+  '/org/$organizationSlug/tasks/': typeof OrgOrganizationSlugTasksIndexRoute
   '/org/$organizationSlug/groups/': typeof OrgOrganizationSlugGroupsIndexRoute
   '/org/$organizationSlug/apps/$appId_/setup': typeof OrgOrganizationSlugAppsAppIdSetupRoute
   '/org/$organizationSlug/apps/add/custom': typeof OrgOrganizationSlugAppsAddCustomRoute
@@ -351,6 +361,7 @@ export interface FileRouteTypes {
     | '/org/$organizationSlug/approvals/'
     | '/org/$organizationSlug/apps/'
     | '/org/$organizationSlug/files/'
+    | '/org/$organizationSlug/tasks/'
     | '/org/$organizationSlug/groups/'
     | '/org/$organizationSlug/apps/$appId/setup'
     | '/org/$organizationSlug/apps/add/custom'
@@ -383,6 +394,7 @@ export interface FileRouteTypes {
     | '/org/$organizationSlug/approvals'
     | '/org/$organizationSlug/apps'
     | '/org/$organizationSlug/files'
+    | '/org/$organizationSlug/tasks'
     | '/org/$organizationSlug/groups'
     | '/org/$organizationSlug/apps/$appId/setup'
     | '/org/$organizationSlug/apps/add/custom'
@@ -417,6 +429,7 @@ export interface FileRouteTypes {
     | '/org/$organizationSlug/approvals/'
     | '/org/$organizationSlug/apps/'
     | '/org/$organizationSlug/files/'
+    | '/org/$organizationSlug/tasks/'
     | '/org/$organizationSlug/groups/'
     | '/org/$organizationSlug/apps/$appId_/setup'
     | '/org/$organizationSlug/apps/add/custom'
@@ -622,6 +635,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OrgOrganizationSlugFilesIndexRouteImport
       parentRoute: typeof OrgOrganizationSlugRoute
     }
+    '/org/$organizationSlug/tasks/': {
+      id: '/org/$organizationSlug/tasks/'
+      path: '/tasks'
+      fullPath: '/org/$organizationSlug/tasks/'
+      preLoaderRoute: typeof OrgOrganizationSlugTasksIndexRouteImport
+      parentRoute: typeof OrgOrganizationSlugRoute
+    }
     '/org/$organizationSlug/groups/': {
       id: '/org/$organizationSlug/groups/'
       path: '/groups'
@@ -697,6 +717,7 @@ interface OrgOrganizationSlugRouteChildren {
   OrgOrganizationSlugApprovalsIndexRoute: typeof OrgOrganizationSlugApprovalsIndexRoute
   OrgOrganizationSlugAppsIndexRoute: typeof OrgOrganizationSlugAppsIndexRoute
   OrgOrganizationSlugFilesIndexRoute: typeof OrgOrganizationSlugFilesIndexRoute
+  OrgOrganizationSlugTasksIndexRoute: typeof OrgOrganizationSlugTasksIndexRoute
   OrgOrganizationSlugGroupsIndexRoute: typeof OrgOrganizationSlugGroupsIndexRoute
   OrgOrganizationSlugAppsAppIdSetupRoute: typeof OrgOrganizationSlugAppsAppIdSetupRoute
   OrgOrganizationSlugAppsAddCustomRoute: typeof OrgOrganizationSlugAppsAddCustomRoute
@@ -720,6 +741,7 @@ const OrgOrganizationSlugRouteChildren: OrgOrganizationSlugRouteChildren = {
     OrgOrganizationSlugApprovalsIndexRoute,
   OrgOrganizationSlugAppsIndexRoute: OrgOrganizationSlugAppsIndexRoute,
   OrgOrganizationSlugFilesIndexRoute: OrgOrganizationSlugFilesIndexRoute,
+  OrgOrganizationSlugTasksIndexRoute: OrgOrganizationSlugTasksIndexRoute,
   OrgOrganizationSlugGroupsIndexRoute: OrgOrganizationSlugGroupsIndexRoute,
   OrgOrganizationSlugAppsAppIdSetupRoute:
     OrgOrganizationSlugAppsAppIdSetupRoute,
