@@ -281,12 +281,17 @@ layer(HostedLive, { excludeTestServices: true })("File transfer", (it) => {
           [`bytes=${mebibyte - 5}-${mebibyte + 5}`, mebibyte - 5, mebibyte + 5],
           [`bytes=${size - 300}-`, size - 300, size - 1],
           ["bytes=-500", size - 500, size - 1],
+          // The largest answer the host sends with a fixed length.
+          ["bytes=0-4194303", 0, 4 * mebibyte - 1],
           [`bytes=${size - 10}-${size + 1_000_000}`, size - 10, size - 1],
         ] as const) {
           const part = yield* range(header);
           expect(part.status, header).toBe(206);
           expect(part.headers["content-range"], header).toBe(`bytes ${start}-${end}/${size}`);
           same(part.bytes, large.slice(start, end + 1));
+          // The length is declared, so a client can show progress and tell a truncated download.
+          expect(part.headers["content-length"], header).toBe(String(end - start + 1));
+          expect(part.headers["transfer-encoding"], header).toBeUndefined();
         }
         // The app's link serves the same ranges.
         same((yield* range("bytes=1000-1999", viaApp)).bytes, large.slice(1000, 2000));
@@ -381,6 +386,9 @@ layer(HostedLive, { excludeTestServices: true })("File transfer", (it) => {
         expect(hostileRead.status).toBe(200);
         expect(hostileRead.headers["content-type"]).toBe("application/octet-stream");
         expect(hostileRead.headers["x-evil"]).toBeUndefined();
+        // A whole small file declares its length too, and is not framed in chunks.
+        expect(hostileRead.headers["content-length"]).toBe(String(hostileRead.bytes.length));
+        expect(hostileRead.headers["transfer-encoding"]).toBeUndefined();
 
         // An empty file has no byte to range over, from either end.
         const nothing = yield* app.capture("captureText", { text: "" });

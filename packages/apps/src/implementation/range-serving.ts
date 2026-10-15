@@ -4,7 +4,7 @@
  * from the store without touching the rest of the file. App assets and user-content files share
  * this one implementation.
  */
-import { Effect, type Stream } from "effect";
+import { Effect, Stream } from "effect";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
 
 /** A file as the host stores it, readable by byte window. */
@@ -18,6 +18,14 @@ export interface RangedFile<E> {
     range: { readonly offset: number; readonly length: number } | undefined,
   ) => Effect.Effect<Stream.Stream<Uint8Array, unknown>, E>;
 }
+
+/**
+ * Answers up to this many bytes are read into memory and sent with a fixed `Content-Length`.
+ * Bun's HTTP server frames any streamed body as chunked and drops a declared length, so a
+ * client could not size the download or tell a truncated one. A byte array keeps the header. A
+ * larger answer streams, so memory stays bounded, and is chunked on Bun hosts.
+ */
+export const bufferedAnswerLimit = 4 * 1024 * 1024;
 
 /** Whether an `If-None-Match` value names `etag`, weakly as RFC 9110 compares it. */
 export const etagMatches = (header: string | undefined, etag: string) =>
@@ -96,6 +104,24 @@ export const serveRangedFile = <E>(
     const body = yield* file.read(
       range === undefined ? undefined : { offset: range.start, length },
     );
+    if (length <= bufferedAnswerLimit) {
+      const bytes = new Uint8Array(length);
+      let filled = 0;
+      yield* Stream.runForEach(body, (chunk) =>
+        Effect.sync(() => {
+          const room = Math.min(chunk.byteLength, length - filled);
+          bytes.set(room === chunk.byteLength ? chunk : chunk.subarray(0, room), filled);
+          filled += room;
+        }),
+      ).pipe(Effect.orDie);
+      if (filled !== length)
+        return yield* Effect.die(`A stored file read ${filled} bytes where ${length} were stored`);
+      return HttpServerResponse.uint8Array(bytes, {
+        status,
+        contentType: file.contentType,
+        headers: answer,
+      });
+    }
     return HttpServerResponse.stream(body, {
       status,
       contentType: file.contentType,
