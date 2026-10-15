@@ -69,18 +69,23 @@ export const collectFileHandles = (
   const { depth: maxDepth, nodes: maxNodes, links: maxLinks } = { ...scanLimits, ...limits };
   const found = new Map<string, BlobHandle>();
   let visited = 0;
+  // Walk by index: `shift()` is linear in V8 for a long array, which made a wide result quadratic.
   const queue: Array<readonly [unknown, number]> = [[value, 0]];
-  for (let next = queue.shift(); next !== undefined; next = queue.shift()) {
-    const [node, depth] = next;
-    if (typeof node !== "object" || node === null) continue;
+  for (let head = 0; head < queue.length; head++) {
+    const [node, depth] = queue[head]!;
+    // Every value counts, primitives included, so a wide array of numbers is bounded too.
     if (++visited > maxNodes || found.size >= maxLinks) break;
+    if (typeof node !== "object" || node === null) continue;
     if (isHandle(node)) {
       if (!found.has(node.id)) found.set(node.id, node);
       continue;
     }
     if (depth >= maxDepth) continue;
-    for (const child of Array.isArray(node) ? node : Object.values(node))
+    for (const child of Array.isArray(node) ? node : Object.values(node)) {
+      // Nothing past the node limit is ever visited, so it need not be queued.
+      if (queue.length >= maxNodes) break;
       queue.push([child, depth + 1]);
+    }
   }
   return [...found.values()];
 };
@@ -152,9 +157,40 @@ export const toolkitWithFileLinks =
       Layer.provide(McpServer.McpServer.layer),
     );
 
+/** A handle always carries a `sha256` field, so a value without that text holds none. */
+const mayHoldHandle = (value: unknown): boolean => {
+  if (value === undefined) return false;
+  try {
+    return JSON.stringify(value)?.includes("sha256") ?? false;
+  } catch {
+    // Not serializable (a cycle, a bigint): let the bounded scan decide.
+    return true;
+  }
+};
+
+/**
+ * Recover from a failure or defect with `fallback`, logging every cause that is not an ordinary
+ * "no such file" answer. Interruption is never swallowed.
+ */
+const recoverLogged =
+  <A>(fallback: A) =>
+  (cause: Cause.Cause<unknown>): Effect.Effect<A> => {
+    if (Cause.hasInterrupts(cause)) return Effect.failCause(cause as Cause.Cause<never>);
+    const failure = Cause.findFail(cause);
+    const tag: unknown = Result.isSuccess(failure)
+      ? (failure.success.error as { readonly _tag?: unknown } | undefined)?._tag
+      : undefined;
+    const expected = !Cause.hasDies(cause) && (tag === "FileNotFound" || tag === "FileForbidden");
+    return expected
+      ? Effect.succeed(fallback)
+      : Effect.logWarning("MCP file link skipped", cause).pipe(Effect.as(fallback));
+  };
+
 const linked = (backend: McpBackend<Error>, result: McpSchema.CallToolResult) =>
   Effect.gen(function* () {
-    const candidates = collectFileHandles(returnedValue(result.structuredContent));
+    const value = returnedValue(result.structuredContent);
+    if (!mayHoldHandle(value)) return result;
+    const candidates = collectFileHandles(value);
     if (candidates.length === 0) return result;
     const organization = yield* backend.files.organization;
     // A handle the caller cannot stat is forged, expired or someone else's: it gets no link.
@@ -163,7 +199,7 @@ const linked = (backend: McpBackend<Error>, result: McpSchema.CallToolResult) =>
       (candidate) =>
         backend.files.stat({ id: candidate.id }).pipe(
           Effect.map(({ handle }) => handle),
-          Effect.catchCause(() => Effect.succeed(undefined)),
+          Effect.catchCause(recoverLogged(undefined)),
         ),
       { concurrency: 4 },
     );
@@ -191,7 +227,7 @@ const linked = (backend: McpBackend<Error>, result: McpSchema.CallToolResult) =>
     return links.length === 0
       ? result
       : new McpSchema.CallToolResult({ ...result, content: [...result.content, ...links] });
-  }).pipe(Effect.catchCause(() => Effect.succeed(result)));
+  }).pipe(Effect.catchCause(recoverLogged(result)));
 
 /** MCP's "resource not found" code. Missing, expired, forged and other-organization files share it. */
 const resourceNotFoundCode = -32002;
