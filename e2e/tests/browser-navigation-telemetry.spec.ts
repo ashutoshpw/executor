@@ -68,14 +68,16 @@ layer(HostedLive, { excludeTestServices: true })("Browser navigation telemetry",
               ).pipe(Effect.retry({ schedule: Schedule.spaced("100 millis"), times: 100 })),
             };
           });
-        const settingsCode = yield* hold("settings", SETTINGS_CHUNK);
-        const groupsCode = yield* hold("groups", GROUPS_CHUNK);
 
         yield* browser.login(actors.owner);
         yield* browser.use("Load the apps page as a document", (page) => page.goto(apps));
         yield* browser.use("Confirm the apps page is rendered", (page) =>
           page.getByRole("link", { name: "Settings", exact: true }).waitFor(),
         );
+        // The route's search handling ships a small loader chunk with the same name prefix as its
+        // code, and the first page imports it, so the hold starts only once the page is up.
+        const settingsCode = yield* hold("settings", SETTINGS_CHUNK);
+        const groupsCode = yield* hold("groups", GROUPS_CHUNK);
         // A span covering the document's first route would last at least this long.
         yield* browser.use("Stay on the first page", (page) => page.waitForTimeout(STAY_MS));
 

@@ -34,7 +34,7 @@ layer(HostedLive, { excludeTestServices: true })("Settings page loading", (it) =
                 return Promise.resolve();
               });
               const response = yield* browser.use("Open settings", (page) =>
-                page.goto(`/org/${actors.organization.slug}/organization`),
+                page.goto(`/org/${actors.organization.slug}/organization?tab=members`),
               );
               if (response === null) throw new Error("Settings did not return a document");
               const html = yield* browser.use("Read the settings document", () => response.text());
@@ -53,31 +53,14 @@ layer(HostedLive, { excludeTestServices: true })("Settings page loading", (it) =
               );
               yield* openThroughBrowser(
                 "Open settings while members are held",
-                `/org/${actors.organization.slug}/organization`,
+                `/org/${actors.organization.slug}/organization?tab=members`,
               );
               yield* members.requested;
-              for (const name of [
-                "Organization name",
-                "Organization icon",
-                "Organization URL",
-                "Members",
-              ]) {
-                expect(
-                  yield* browser.use(`Static ${name} heading is visible`, (page) =>
-                    page.getByRole("heading", { name, exact: true }).isVisible(),
-                  ),
-                ).toBe(true);
-              }
               expect(
-                yield* browser.use("The organization name is already known", (page) =>
-                  page
-                    .getByRole("textbox", {
-                      name: "Organization name",
-                      exact: true,
-                    })
-                    .inputValue(),
+                yield* browser.use("Static Members heading is visible", (page) =>
+                  page.getByRole("heading", { name: "Members", exact: true }).isVisible(),
                 ),
-              ).toMatch(/\S/);
+              ).toBe(true);
               expect(
                 yield* browser.use("Only member rows are pending", (page) =>
                   page
@@ -112,13 +95,32 @@ layer(HostedLive, { excludeTestServices: true })("Settings page loading", (it) =
                 ),
               );
               expect(after.length).toBe(before.length);
-              for (const heading of before) {
+              // The Members heading gains the member count once the list arrives.
+              for (const heading of before.filter((item) => !item.text?.startsWith("Members"))) {
                 const loaded = after.find((item) => item.text === heading.text);
                 expect(loaded).toBeDefined();
                 if (loaded === undefined) throw new Error("A static settings heading disappeared");
                 expect(Math.abs(loaded.y - heading.y)).toBeLessThanOrEqual(2);
               }
               yield* browser.checkpoint(`${viewport.width} settings loaded`);
+              // General holds the name, icon and URL; their values are known without a read.
+              yield* browser.use("Open the General tab", (page) =>
+                page.getByRole("tab", { name: "General", exact: true }).click(),
+              );
+              for (const name of ["Organization name", "Organization icon", "Organization URL"]) {
+                expect(
+                  yield* browser.use(`${name} heading is visible`, (page) =>
+                    page.getByRole("heading", { name, exact: true }).isVisible(),
+                  ),
+                ).toBe(true);
+              }
+              expect(
+                yield* browser.use("The organization name is known", (page) =>
+                  page
+                    .getByRole("textbox", { name: "Organization name", exact: true })
+                    .inputValue(),
+                ),
+              ).toMatch(/\S/);
             }),
           );
         }

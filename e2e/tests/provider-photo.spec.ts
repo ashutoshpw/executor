@@ -68,7 +68,7 @@ layer(TestLive, { excludeTestServices: true })("Provider photos", (it) => {
         yield* browser.checkpoint("Account menu shows the linked provider photo");
 
         yield* browser.use("Open organization members", (page) =>
-          page.goto(`/org/${team.slug}/organization`),
+          page.goto(`/org/${team.slug}/organization?tab=members`),
         );
         const memberPhoto = yield* browser.use(
           "The members list shows the provider photo",

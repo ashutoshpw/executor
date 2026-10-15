@@ -4,7 +4,11 @@ import { OrganizationSettingsPending } from "./organization-settings-pending.tsx
 import { Skeleton } from "@executor-js/ui/components/skeleton";
 import { AppDetailPending } from "@executor-js/ui/dashboard/app-loading";
 import { PageFrame, PageHeader } from "@executor-js/ui/dashboard/page";
-import { parseAppSearch } from "../../contracts/navigation.ts";
+import {
+  parseAppSearch,
+  parseOrganizationSearch,
+  type OrganizationTab,
+} from "../../contracts/navigation.ts";
 import { Link, useLocation } from "@tanstack/react-router";
 import {
   ApprovalCardPending,
@@ -132,8 +136,15 @@ export function UnknownPagePending({ fullScreen = false }: { readonly fullScreen
  */
 export function PagePending({
   pathname: destination,
-  organizationSettings,
-}: { readonly pathname?: string; readonly organizationSettings?: ReactNode } = {}) {
+  organizationExtraTabs,
+}: {
+  readonly pathname?: string;
+  readonly organizationExtraTabs?: ReadonlyArray<{
+    readonly id: OrganizationTab;
+    readonly label: string;
+    readonly content: ReactNode;
+  }>;
+} = {}) {
   const location = useLocation();
   const pathname = destination ?? location.pathname;
   const search = location.search;
@@ -169,7 +180,12 @@ export function PagePending({
     );
   if (page === "accounts" && item === undefined) return <InventoryPageSkeleton kind="accounts" />;
   if (page === "organization")
-    return <OrganizationSettingsPending>{organizationSettings}</OrganizationSettingsPending>;
+    return (
+      <OrganizationSettingsPending
+        tab={parseOrganizationSearch(search).tab}
+        extraTabs={organizationExtraTabs}
+      />
+    );
   if (page === "approvals")
     return item === undefined ? (
       <ApprovalsPending />

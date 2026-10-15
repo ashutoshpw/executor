@@ -60,7 +60,7 @@ layer(HostedLive, { excludeTestServices: true })("Invitation privacy", (it) => {
           return Promise.resolve();
         });
         yield* browser.use("Open member settings", (page) =>
-          page.goto(`/org/${actors.organization.slug}/organization`),
+          page.goto(`/org/${actors.organization.slug}/organization?tab=members`),
         );
         yield* browser.use("Member roster remains available", (page) =>
           page.getByRole("table", { name: "Members", exact: true }).waitFor(),
@@ -74,7 +74,7 @@ layer(HostedLive, { excludeTestServices: true })("Invitation privacy", (it) => {
         yield* browser.checkpoint("Member settings without invitation secrets");
         yield* browser.login(actors.admin);
         yield* browser.use("Open administrator settings", (page) =>
-          page.goto(`/org/${actors.organization.slug}/organization`),
+          page.goto(`/org/${actors.organization.slug}/organization?tab=members`),
         );
         yield* browser.use("Administrator sees the pending invitation", (page) =>
           page.getByRole("cell", { name: invitation.email, exact: true }).waitFor(),

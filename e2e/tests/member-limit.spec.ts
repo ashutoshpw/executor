@@ -62,7 +62,7 @@ layer(HostedLive, { excludeTestServices: true })("Member limit", (it) => {
             .first();
         yield* browser.login(actors.owner);
         yield* browser.use("Open organization settings", (page) =>
-          page.goto(`/org/${actors.organization.slug}/organization`),
+          page.goto(`/org/${actors.organization.slug}/organization?tab=members`),
         );
         yield* browser.use("The heading shows the limit", (page) =>
           count(page)
@@ -113,7 +113,7 @@ layer(HostedLive, { excludeTestServices: true })("Member limit", (it) => {
 
         // Removing a member frees a seat; the same dialog returns to the invitation form.
         yield* browser.use("Return to organization settings", (page) =>
-          page.goto(`/org/${actors.organization.slug}/organization`),
+          page.goto(`/org/${actors.organization.slug}/organization?tab=members`),
         );
         yield* browser.use("The members list is full", (page) =>
           count(page)

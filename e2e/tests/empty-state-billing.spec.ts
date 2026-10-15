@@ -32,6 +32,9 @@ layer(HostedLive, { excludeTestServices: true })("Billing empty state", (it) => 
         yield* browser.use("Open organization settings", (page) =>
           page.getByRole("link", { name: "Settings", exact: true }).click(),
         );
+        yield* browser.use("Open the Billing tab", (page) =>
+          page.getByRole("tab", { name: "Billing", exact: true }).click(),
+        );
         yield* browser.use("Open billing", (page) =>
           page.getByRole("link", { name: "Open billing", exact: true }).click(),
         );
