@@ -32,6 +32,10 @@ as above. Return only the data you need. For depth, read the `code-mode` skill.
 When `call` or `execute` pauses for approval or input, show the request to the
 user and resume it; never repeat the call or run the program again.
 
+A result with a `resource_link` is a file. Read it with `resources/read` if your
+client supports that, else open the signed link a too-large read names or run
+`executor files get <id>`. Never ask a tool for file bytes in its result.
+
 ## Build an app
 
 Build an app when no existing app provides the tools, data, UI or automation

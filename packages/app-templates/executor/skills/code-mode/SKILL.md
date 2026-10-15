@@ -167,7 +167,9 @@ These are the defaults. The source limit is fixed; a host can change the others.
   a shell, deploy large apps with the `executor apps` CLI instead.
 - Output: 100,000 bytes for the returned value, warnings and logs together. A
   larger value comes back as a truncated string that says so. Return fewer
-  fields, a count, or one page.
+  fields, a count, or one page. A tool that returns a file handle keeps its
+  handle through `execute`: return the handle, never the file's bytes. The result
+  then carries a `resource_link` for it (see the executor skill).
 - Tool calls: 100 per execution.
 - Time: 5 minutes per execution, including discovery. Time spent waiting for
   the user does not count. Execute returns when the program ends or pauses for
