@@ -90,8 +90,13 @@ layer(HostedLive, { excludeTestServices: true })("Theme toggle", (it) => {
         );
         expect(yield* browser.use("System follows a dark system", isDark)).toBe(true);
         expect(yield* browser.use("System clears the stored choice", stored)).toBeNull();
+        // The browser delivers the media change event after emulation resolves.
         yield* browser.use("Switch the system to light", (page) =>
-          page.emulateMedia({ colorScheme: "light" }),
+          page
+            .emulateMedia({ colorScheme: "light" })
+            .then(() =>
+              page.waitForFunction(() => !document.documentElement.classList.contains("dark")),
+            ),
         );
         expect(yield* browser.use("System follows the change live", isDark)).toBe(false);
 
