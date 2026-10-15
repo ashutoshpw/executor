@@ -17,6 +17,7 @@ import {
   SelectValue,
 } from "../components/select.tsx";
 import { Skeleton } from "../components/skeleton.tsx";
+import { Textarea } from "../components/textarea.tsx";
 import { CopyButton } from "./code.tsx";
 import { AsyncResult } from "effect/reactivity";
 import type { UserFacingError } from "@executor-js/utils/user-facing-error";
@@ -80,7 +81,8 @@ const choiceKey = (choice: ClientChoice) =>
 /**
  * The clients this connection can use, in order of preference: the account's own on a reconnect,
  * then clients registered for the provider, the automatic client, and entered details last.
- * Client credentials are each account's own, so only the current ones or new ones apply.
+ * Client credentials and service account keys are each account's own, so only the current ones
+ * or new ones apply.
  */
 const clientChoices = (
   options: OAuthConnectOptions | "unresolved",
@@ -88,7 +90,8 @@ const clientChoices = (
 ): ReadonlyArray<ClientChoice> => {
   if (options === "unresolved") return [];
   const current: ReadonlyArray<ClientChoice> = reconnect ? [{ kind: "current" }] : [];
-  if (options.grant === "client_credentials") return [...current, { kind: "manual" }];
+  if (options.grant === "client_credentials" || options.grant === "jwt_bearer")
+    return [...current, { kind: "manual" }];
   return [
     ...current,
     ...options.clients.map((client) => ({ kind: "registered" as const, id: client.id })),
@@ -147,7 +150,10 @@ export function OAuthFields<A, E>({
       ? undefined
       : choices.find((offered) => choiceKey(offered) === choiceKey(picked))) ?? choices[0];
   const setup = options;
-  const machine = setup !== "unresolved" && setup.grant === "client_credentials";
+  const serviceAccount = setup !== "unresolved" && setup.grant === "jwt_bearer";
+  const machine =
+    setup !== "unresolved" &&
+    (setup.grant === "client_credentials" || setup.grant === "jwt_bearer");
   // Without a client to sign in with, entering one is a deliberate choice rather than the default.
   const missing =
     missingClient !== undefined &&
@@ -158,7 +164,8 @@ export function OAuthFields<A, E>({
   const userScopes =
     setup !== "unresolved" && setup.grant === "authorization_code" ? (setup.userScopes ?? []) : [];
   const requested = setup === "unresolved" ? 0 : setup.scopes.length + userScopes.length;
-  const method = setup === "unresolved" ? "none" : setup.tokenEndpointAuthMethod;
+  const method =
+    setup === "unresolved" || setup.grant === "jwt_bearer" ? "none" : setup.tokenEndpointAuthMethod;
   // An undeclared method accepts either a public client or one with a secret.
   const acceptsSecret = method !== "none";
   const needsSecret = method !== undefined && method !== "none";
@@ -168,13 +175,19 @@ export function OAuthFields<A, E>({
       ? "client ID (and secret, if it has one)"
       : "client ID";
   // Client entry's one line of help; a failure, which carries its own recovery, replaces it.
-  const guidance = machine
-    ? `Create an OAuth client in ${providerName}’s developer settings${setup.scopes.length > 0 ? " with the permissions under Advanced" : ""}, then enter its ${details}.`
-    : setup !== "unresolved" && setup.mode === "client-required"
-      ? `Executor can’t set up sign-in for ${providerName} automatically. Create an OAuth app there with this redirect URL, then enter its ${details}.`
-      : `Use an OAuth app in ${providerName} that allows this redirect URL, and enter its ${details}.`;
+  const guidance = serviceAccount
+    ? `Create a service account in ${providerName}’s console and download its JSON key. Paste the whole file; Executor stores it encrypted and never shows it to apps.`
+    : machine
+      ? `Create an OAuth client in ${providerName}’s developer settings${setup.scopes.length > 0 ? " with the permissions under Advanced" : ""}, then enter its ${details}.`
+      : setup !== "unresolved" && setup.mode === "client-required"
+        ? `Executor can’t set up sign-in for ${providerName} automatically. Create an OAuth app there with this redirect URL, then enter its ${details}.`
+        : `Use an OAuth app in ${providerName} that allows this redirect URL, and enter its ${details}.`;
   const [clientId, setClientId] = useState("");
   const [clientSecret, setClientSecret] = useState("");
+  const [serviceKey, setServiceKey] = useState("");
+  const [subject, setSubject] = useState("");
+  const subjectRequired =
+    setup !== "unresolved" && setup.grant === "jwt_bearer" && setup.subject === "required";
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<Cause.Cause<E>>();
   const blocked =
@@ -183,11 +196,18 @@ export function OAuthFields<A, E>({
     choice === undefined ||
     (missing && !manual) ||
     pending ||
-    (manual && (!clientId.trim() || (needsSecret && !clientSecret.trim())));
+    (manual &&
+      (serviceAccount
+        ? !serviceKey.trim() || (subjectRequired && !subject.trim())
+        : !clientId.trim() || (needsSecret && !clientSecret.trim())));
   const label = (offered: ClientChoice): ReactNode => {
     switch (offered.kind) {
       case "current":
-        return machine ? "Current client credentials" : "Current client";
+        return serviceAccount
+          ? "Current service account key"
+          : machine
+            ? "Current client credentials"
+            : "Current client";
       case "registered": {
         // Registered clients are unnamed; the form is for one service, so its client ID identifies
         // one, unless another client shares it.
@@ -211,7 +231,11 @@ export function OAuthFields<A, E>({
       case "automatic":
         return "Automatic";
       case "manual":
-        return machine ? "New client credentials" : "Enter client details";
+        return serviceAccount
+          ? "New service account key"
+          : machine
+            ? "New client credentials"
+            : "Enter client details";
     }
   };
   const connect = () => {
@@ -220,24 +244,32 @@ export function OAuthFields<A, E>({
     onPendingChange?.(true);
     setError(undefined);
     const submission: OAuthSubmission =
-      choice.kind === "manual"
+      choice.kind === "manual" && serviceAccount
         ? {
             client: {
-              clientId: clientId.trim(),
-              ...(acceptsSecret && clientSecret.trim()
-                ? { clientSecret: Redacted.make(clientSecret.trim()) }
-                : {}),
+              serviceAccountKey: Redacted.make(serviceKey.trim()),
+              ...(subject.trim() ? { subject: subject.trim() } : {}),
             },
           }
-        : choice.kind === "registered"
-          ? { client: { id: choice.id } }
-          : choice.kind === "automatic"
-            ? { client: { automatic: true } }
-            : {};
+        : choice.kind === "manual"
+          ? {
+              client: {
+                clientId: clientId.trim(),
+                ...(acceptsSecret && clientSecret.trim()
+                  ? { clientSecret: Redacted.make(clientSecret.trim()) }
+                  : {}),
+              },
+            }
+          : choice.kind === "registered"
+            ? { client: { id: choice.id } }
+            : choice.kind === "automatic"
+              ? { client: { automatic: true } }
+              : {};
     const operation = start(submission);
     void operation.then((exit) => {
       if (Exit.isSuccess(exit)) {
         setClientSecret("");
+        setServiceKey("");
         if (onAuthorized(exit.value) === "navigating") return;
       } else {
         if (requiresClient(exit.cause)) setPicked({ kind: "manual" });
@@ -335,7 +367,35 @@ export function OAuthFields<A, E>({
           </div>
         </div>
       )}
-      {manual && (
+      {manual && serviceAccount && (
+        <>
+          <label className="field-label flex flex-col gap-2.25 text-[13px] font-medium">
+            Service account key (JSON)
+            <Textarea
+              value={serviceKey}
+              onChange={(event) => setServiceKey(event.target.value)}
+              disabled={pending || disabled}
+              autoComplete="off"
+              spellCheck={false}
+              rows={5}
+              className="font-mono text-xs [-webkit-text-security:disc]"
+            />
+          </label>
+          <label className="field-label flex flex-col gap-2.25 text-[13px] font-medium">
+            {subjectRequired
+              ? "User to impersonate (email)"
+              : "User to impersonate (email, optional)"}
+            <Input
+              type="email"
+              value={subject}
+              onChange={(event) => setSubject(event.target.value)}
+              disabled={pending || disabled}
+              autoComplete="off"
+            />
+          </label>
+        </>
+      )}
+      {manual && !serviceAccount && (
         <>
           <label className="field-label flex flex-col gap-2.25 text-[13px] font-medium [&_[data-slot='select-trigger']]:w-full">
             Client ID

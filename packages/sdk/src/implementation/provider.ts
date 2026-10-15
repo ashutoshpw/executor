@@ -1,7 +1,7 @@
 /** Deterministic provider identity and validation of serialized field declarations. */
 import { type Crypto, Effect, JsonSchema, Redacted, Schema, SchemaRepresentation } from "effect";
 import { Hex } from "effect/encoding";
-import type { HostAccount } from "apps/contracts";
+import { sentProvider, type HostAccount } from "apps/contracts";
 import { AccountFieldsInvalid } from "../contracts/account.ts";
 import type {
   FirstPartyOAuthClient,
@@ -148,10 +148,15 @@ export const invocationAccount = (
     fields: Redacted.value(credential.fields),
   };
   if (credential.firstParty === undefined)
-    return { ...bound, provider: grantedDefinition(definition, account.allowedHosts) };
+    return {
+      ...bound,
+      provider: sentProvider(grantedDefinition(definition, account.allowedHosts)),
+    };
   return {
     ...bound,
-    provider: managedDefinition(definition, account, clients.get(credential.firstParty)),
+    provider: sentProvider(
+      managedDefinition(definition, account, clients.get(credential.firstParty)),
+    ),
     managed: true,
   };
 };

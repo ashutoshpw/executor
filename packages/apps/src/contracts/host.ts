@@ -128,6 +128,8 @@ export { McpError, SkillLoadFailed } from "./protocols/current.ts";
 export {
   DeclaredAuthMethod,
   DeclaredProvider,
+  SentProvider,
+  sentProvider,
   DeclaredAccountSlot,
   DeclaredAccountSlots,
   ResolvedAccount,

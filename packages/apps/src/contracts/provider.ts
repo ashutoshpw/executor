@@ -185,6 +185,34 @@ export const OAuth2Config = Schema.Union([
     discover: Schema.optionalKey(Schema.Never),
     authorizationServerMetadataUrl: Schema.optionalKey(Schema.Never),
   }),
+  /**
+   * RFC 7523 JWT bearer grant with a service account key, such as a Google service account. The
+   * person connecting pastes the key; the host signs an assertion with it and exchanges it at
+   * `tokenUrl` for an access token. The key stays with the host, never reaching app code.
+   */
+  Schema.Struct({
+    grant: Schema.Literal("jwt_bearer"),
+    /**
+     * The token endpoint, also the assertion's audience. The pasted key's `token_uri` must be
+     * this URL, so a key can never send its assertion anywhere the provider did not declare.
+     */
+    tokenUrl: HttpUrl,
+    /** Put in the assertion's `scope` claim, joined with a space unless `scopeSeparator` says otherwise. */
+    scopes: Schema.Array(Schema.String),
+    /**
+     * Whether the connect form asks for a user to impersonate (domain-wide delegation). The user
+     * is entered per connection. Defaults to `"optional"`.
+     */
+    subject: Schema.optionalKey(Schema.Literals(["optional", "required"])),
+    scopeSeparator: Schema.optionalKey(Schema.String.check(Schema.isMinLength(1))),
+    authorizationUrl: Schema.optionalKey(Schema.Never),
+    discover: Schema.optionalKey(Schema.Never),
+    authorizationServerMetadataUrl: Schema.optionalKey(Schema.Never),
+    revocationUrl: Schema.optionalKey(Schema.Never),
+    resource: Schema.optionalKey(Schema.Never),
+    tokenEndpointAuthMethod: Schema.optionalKey(Schema.Never),
+    tokenRequestFormat: Schema.optionalKey(Schema.Never),
+  }),
 ]);
 export type OAuth2Config = typeof OAuth2Config.Type;
 
