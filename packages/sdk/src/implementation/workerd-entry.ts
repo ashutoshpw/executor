@@ -42,7 +42,7 @@ import {
   makeAppWorkerResidency,
   type AppWorkerResidency,
 } from "./app-worker-residency.ts";
-import { compileWorkerApp } from "../workerd-build.ts";
+import { compileWorkerApp, type WorkerHost } from "../workerd-build.ts";
 import { assembleWorkerBundle } from "./worker-build-storage.ts";
 import { declarationFailed } from "./worker-source-map.ts";
 import {
@@ -123,6 +123,10 @@ interface Environment {
   readonly SELF?: HttpService;
   /** The npm registry builds resolve packages from, or empty for the public registry. */
   readonly NPM_REGISTRY: string;
+  /** The `apps` release this host ships, or empty when it supplies none and every release installs. */
+  readonly APPS_FRAMEWORK_VERSION: string;
+  /** Serves that release's package files as `framework.json`. */
+  readonly APPS_FRAMEWORK: HttpService;
   readonly LOADER: WorkerLoader;
   /** Most app Workers this process keeps loaded, or null for the default. */
   readonly APP_WORKERS?: number | null;
@@ -142,6 +146,37 @@ const buildFailed = (stage: RuntimeBuildFailed["stage"], cause: unknown) =>
 /** What the runner binds to one app's outbound network. App code cannot set it. */
 const OutboundProps = Schema.Struct({ app: Schema.NonEmptyString });
 type OutboundProps = typeof OutboundProps.Type;
+const FrameworkFiles = Schema.fromJsonString(Schema.Record(Schema.String, Schema.String));
+/** The framework files this isolate already read, by environment. */
+const frameworkFiles = new WeakMap<Environment, Readonly<Record<string, string>>>();
+/** What this host contributes to a build: its registry, and its own `apps` release when it ships one. */
+const compileHost = (env: Environment): WorkerHost => ({
+  ...(env.NPM_REGISTRY === "" ? {} : { registry: env.NPM_REGISTRY }),
+  ...(env.APPS_FRAMEWORK_VERSION === ""
+    ? {}
+    : {
+        apps: {
+          version: env.APPS_FRAMEWORK_VERSION,
+          files: Effect.gen(function* () {
+            const kept = frameworkFiles.get(env);
+            if (kept !== undefined) return kept;
+            const response = yield* Effect.tryPromise(() =>
+              env.APPS_FRAMEWORK.fetch(new Request("https://framework.invalid/framework.json")),
+            );
+            if (!response.ok) return yield* Effect.fail("unavailable");
+            const files = yield* Schema.decodeUnknownEffect(FrameworkFiles)(
+              yield* Effect.tryPromise(() => response.text()),
+            );
+            frameworkFiles.set(env, files);
+            return files;
+          }).pipe(
+            Effect.mapError(
+              () => new RuntimeBuildFailed({ stage: "dependencies", dependency: "apps" }),
+            ),
+          ),
+        },
+      }),
+});
 /** Handles are sealed with a key derived from the secret only this host and its runner share. */
 const credentials = (env: Environment) => credentialKey(env.CREDENTIAL_SECRET);
 /**
@@ -289,7 +324,7 @@ class AppApi extends RpcTarget {
         ).pipe(Effect.mapError((cause) => buildFailed("source", cause)));
         const compiled = yield* compileWorkerApp(
           request.files,
-          this.#env.NPM_REGISTRY === "" ? {} : { registry: this.#env.NPM_REGISTRY },
+          compileHost(this.#env),
           request.public ?? [],
         );
         const { bundle, framework, ui, sourceMap } = compiled;

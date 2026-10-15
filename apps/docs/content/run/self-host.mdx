@@ -27,6 +27,7 @@ These settings override the defaults:
 | `EXECUTOR_ENVIRONMENT`               | no       | Label for this deployment. The default is `self-host`.                   |
 | `EXECUTOR_APP_UI_BASE_URL`           | no       | HTTPS origin that serves app web pages. See below.                       |
 | `EXECUTOR_APPS_ALLOW_PRIVATE_FETCH`  | no       | Let app code reach your private network. See below.                      |
+| `EXECUTOR_APPS_FRAMEWORK_DISABLED` | no | Install every `apps` release from npm, including the version this image ships. See below. |
 | `EXECUTOR_APP_WORKERS` | no | Most app and data Workers kept loaded at once. The default is `64`. See below. |
 | `EXECUTOR_APP_WORKER_IDLE_SECONDS` | no | Unload an app or data Worker not called for this long; `0` keeps idle Workers loaded up to the limit. The default is `300`. See below. |
 | `EXECUTOR_OAUTH_CLIENT_METADATA_URL` | no       | Identify Executor to OAuth services by a client metadata document instead of registering a client. Off by default. See below. |
@@ -49,6 +50,12 @@ that origin resolves to a private address, such as a Tailscale name. To let app
 code reach other private addresses, set `EXECUTOR_APPS_ALLOW_PRIVATE_FETCH=true`.
 The default is `false`. Every app in the instance shares that network position,
 so grant it deliberately.
+
+The image ships the `apps` framework it was built with, and an app that
+declares exactly that version in its `package.json` builds from the image's own
+files instead of installing the version from npm. Every other version installs
+from the npm registry as before. Set `EXECUTOR_APPS_FRAMEWORK_DISABLED=true` to
+install every version from npm.
 
 Each app runs in its own Worker for each set of accounts it is called with, and
 each loaded Worker holds its own memory. The server keeps at most
