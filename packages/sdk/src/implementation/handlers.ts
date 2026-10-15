@@ -130,6 +130,7 @@ export const executorHandlers = (executor: Executor) =>
         .handle("publish", ({ params, payload }) =>
           executor.publications.publish({ ...params, ...payload }),
         )
+        .handle("catalog", ({ query }) => executor.publications.catalog(query))
         .handle("owned", ({ query }) => executor.publications.owned(query))
         .handle("unpublish", ({ payload }) => executor.publications.unpublish(payload)),
     ),

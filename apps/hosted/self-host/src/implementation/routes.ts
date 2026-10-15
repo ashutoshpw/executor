@@ -11,7 +11,7 @@ import {
   defaultScheduleWorkerOptions,
   ScheduleObservation,
 } from "@executor-js/sdk/scheduling";
-import { frameworkDocumentation, gitRoutes } from "@executor-js/app-management";
+import { frameworkDocumentation, gitRoutes, registryRoutes } from "@executor-js/app-management";
 import { hostedAppGitAccess } from "@executor-js/hosted-server/app-management";
 /** The route map is shared by native development and the packaged Worker. */
 import {
@@ -36,13 +36,14 @@ import {
   lazyHostedApiDocument,
   ProductAnalytics,
   UsageStore,
+  PublishingDomain,
 } from "@executor-js/hosted-server";
 import { recordRequestRejections, requestTiming } from "@executor-js/telemetry/http";
 import { appAddresses, hostedAppUi } from "@executor-js/hosted-server/app-ui";
 import { appSignInCallbackPath } from "apps/ui/auth";
 import { AppUiApi } from "apps/ui/contracts";
 import { HttpApiBuilder } from "effect/http-api";
-import { appUiBaseUrl, catalogFeedUrl } from "../contracts/config.ts";
+import { appUiBaseUrl, catalogFeedUrl, publishingDomain } from "../contracts/config.ts";
 import { type HostEgress } from "@executor-js/utils/url-policy";
 import { Config, Effect, Layer, Option } from "effect";
 import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from "effect/http";
@@ -152,8 +153,18 @@ export const selfHostRouteMap = <DashboardE, DashboardR>(options: {
       HttpRouter.provideRequest(executorServices),
       HttpRouter.provideRequest(auth.mcpIdentity),
     );
-    const authoring = gitRoutes.pipe(
-      HttpRouter.provideRequest(hostedAppGitAccess),
+    // Git builds namespaces from the same publishing domain as the API; it is provided here, not
+    // inherited, so a route group added later cannot silently fall back to the default.
+    const authoring = Layer.mergeAll(
+      gitRoutes.pipe(
+        HttpRouter.provideRequest(
+          hostedAppGitAccess.pipe(Layer.provide(Layer.effect(PublishingDomain, publishingDomain))),
+        ),
+      ),
+      // This server's own public catalog, readable by other servers and the CLI. It lists only apps
+      // published here, never the upstream catalog Add app also shows.
+      registryRoutes,
+    ).pipe(
       HttpRouter.provideRequest(executorServices),
       Layer.provide(auth.identity),
       Layer.provide(auth.apiIdentity),

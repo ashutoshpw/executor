@@ -26,6 +26,16 @@ export const PublicationsGroup = HttpApiGroup.make("publications")
     ),
   )
   .add(
+    HttpApiEndpoint.get("catalog", "/v1/publications/catalog", {
+      query: { name: RegistryInputs.list.fields.name },
+      success: Schema.Array(Publication),
+      error: [RegistryError],
+    }).annotate(
+      OpenApi.Description,
+      "Listings an authenticated caller can browse and install: this executor's own, and its upstream catalog's when it has one. The public registry reads serve only the executor's own.",
+    ),
+  )
+  .add(
     HttpApiEndpoint.post("preview", "/v1/apps/:app/publication-preview", {
       params: { app: PublicationInputs.preview.fields.app },
       payload: Schema.Struct({
