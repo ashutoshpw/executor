@@ -4,6 +4,7 @@ import { filesystemBlobStore, nodeSha256, workerdApps } from "@executor-js/sdk/n
 import type { HostEgress } from "@executor-js/utils/url-policy";
 import { Config, Effect, Option, Path } from "effect";
 import { allowPrivateAppFetch, dataDirectory, npmRegistry } from "./contracts/config.ts";
+import { selfHostAppsFramework } from "./implementation/apps-framework.ts";
 import { selfHostExecutorServices } from "./implementation/executor-services.ts";
 
 /** Acquire the native app process and files in the product server's Effect scope. */
@@ -37,6 +38,10 @@ export const selfHostExecutor = (egress: HostEgress) =>
         ...Option.match(yield* npmRegistry, {
           onNone: () => ({}),
           onSome: (registry) => ({ npmRegistry: registry }),
+        }),
+        ...Option.match(Option.fromNullishOr(yield* selfHostAppsFramework), {
+          onNone: () => ({}),
+          onSome: (framework) => ({ appsFramework: framework }),
         }),
         selfOrigin: {
           origin,

@@ -31,7 +31,7 @@ import {
   type Scope,
 } from "effect";
 import { Hex } from "effect/encoding";
-import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/http";
+import { FetchHttpClient, HttpClient, HttpClientRequest, HttpServerResponse } from "effect/http";
 
 import { WorkflowFailure, WorkflowRunId } from "apps/contracts";
 import { WorkflowBackendState, type WorkflowRuntime } from "../contracts/workflow-runtime.ts";
@@ -163,6 +163,16 @@ export const workerdApps = (options: {
   /** The npm registry app builds resolve packages from. Defaults to the public registry. */
   readonly npmRegistry?: string;
   /**
+   * The `apps` framework this host ships, as the files of its npm package. An app that declares
+   * exactly this version builds from these files, not from the registry, so a release the registry
+   * does not hold (or holds with other content) still builds. Every other declared version installs
+   * from the registry as before.
+   */
+  readonly appsFramework?: {
+    readonly version: string;
+    readonly files: Readonly<Record<string, string>>;
+  };
+  /**
    * The instance's encryption key. The apps Worker seals credential handles with a secret derived
    * from it, so handles keep working across restarts with the same key and the key itself never
    * reaches workerd. Handles sealed before an instance upgraded to this derivation are refused.
@@ -186,6 +196,10 @@ export const workerdApps = (options: {
         return yield* new WorkerdMigrationRequired({ directory });
     }
     const handler = yield* workerdHostHandler(options);
+    const frameworkResponse = HttpServerResponse.text(
+      JSON.stringify(options.appsFramework?.files ?? {}),
+      { contentType: "application/json" },
+    );
     // The runtime reads extra V8 flags for the workerd it starts from this variable. `gc` lets each
     // app bridge collect its isolate's garbage after a call; see worker-bridge.ts. Without
     // `--no-flush-liftoff-code`, each new isolate drops and recompiles the build's WebAssembly code
@@ -250,6 +264,13 @@ export const workerdApps = (options: {
           publicEgressBinding,
           JsonBinding.local("SELF_ORIGIN", options.selfOrigin?.origin ?? ""),
           JsonBinding.local("NPM_REGISTRY", options.npmRegistry ?? ""),
+          JsonBinding.local("APPS_FRAMEWORK_VERSION", options.appsFramework?.version ?? ""),
+          // The package files, served as `framework.json` as the packaged host's disk service does.
+          Loopback.local({
+            binding: "APPS_FRAMEWORK",
+            name: "executor-apps-framework",
+            handler: Effect.succeed(frameworkResponse),
+          }),
           ...(options.selfOrigin === undefined ? [] : [selfOriginBinding]),
           Loopback.local({ binding: "HOST", name: "executor-workflow-host", handler }),
         ],
