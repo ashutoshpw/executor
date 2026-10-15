@@ -26,6 +26,20 @@ import {
   type StoredFileHandle,
 } from "../contracts/file-handles.ts";
 
+const fallbackContentType = "application/octet-stream";
+const mediaType =
+  /^[A-Za-z0-9!#$&^_.+-]+\/[A-Za-z0-9!#$&^_.+-]+(?:\s*;\s*[A-Za-z0-9!#$&^_.+-]+=(?:[A-Za-z0-9!#$&^_.+-]+|"[\x20\x21\x23-\x5b\x5d-\x7e]*"))*$/u;
+
+/**
+ * A content type that is safe to store and to send back as `Content-Type`: a parseable media type
+ * in printable ASCII, at most 255 characters. Anything else, including a value with CR or LF, is
+ * `application/octet-stream`, so one file's metadata can never make it unservable.
+ */
+export const safeContentType = (value: string | undefined | null): string =>
+  value !== undefined && value !== null && value.length <= 255 && mediaType.test(value.trim())
+    ? value.trim()
+    : fallbackContentType;
+
 const Row = Schema.Struct({
   id: Schema.String,
   sha256: Schema.NullOr(Schema.String),
@@ -51,7 +65,7 @@ const stored = (row: Row): StoredFileHandle => ({
     id: row.id,
     sha256: row.sha256 ?? "",
     size: Number(row.size ?? 0),
-    contentType: row.content_type,
+    contentType: safeContentType(row.content_type),
     expiresAt: row.expires_at,
   }),
   key: keyOf(row.owner, row.id),
@@ -132,7 +146,7 @@ export const makeFileHandleStore = (options: {
         yield* exec(
           "begin",
           sql`insert into ${table} (id, owner, state, content_type, expires_at, creator_app_id)
-            values (${id}, ${input.owner}, 'pending', ${input.contentType},
+            values (${id}, ${input.owner}, 'pending', ${safeContentType(input.contentType)},
               ${at}::timestamptz + (${input.pendingSeconds} * interval '1 second'), ${input.appId ?? null})`,
         );
         return { id, key: keyOf(input.owner, id) };

@@ -13,6 +13,7 @@
  */
 import { Clock, Effect, Redacted, Schema } from "effect";
 import { Base64Url, Hex } from "effect/encoding";
+import { safeContentType } from "./file-handles.ts";
 
 /** The shortest, default and longest lifetime of a link. Requests outside the range are clamped. */
 export const minFileLinkSeconds = 60;
@@ -99,8 +100,16 @@ export interface FileLinks {
 /** Where a host serves link redemptions, under its product origin. */
 export const fileLinkPath = "/api/file-links/";
 
-const clamp = (seconds: number | undefined) =>
-  Math.min(maxFileLinkSeconds, Math.max(minFileLinkSeconds, seconds ?? defaultFileLinkSeconds));
+/** Upload links are shorter lived than download links: each redemption can store a whole file. */
+export const maxUploadLinkSeconds = 60 * 60;
+/** A longer filename claim would make a URL that proxies refuse. */
+const maxFilenameLength = 200;
+
+const clamp = (operation: "get" | "put", seconds: number | undefined) =>
+  Math.min(
+    operation === "put" ? maxUploadLinkSeconds : maxFileLinkSeconds,
+    Math.max(minFileLinkSeconds, seconds ?? defaultFileLinkSeconds),
+  );
 
 /** The HMAC key for links, derived from the executor's 32-byte secret. */
 const deriveKey = (secret: Redacted.Redacted<string>) =>
@@ -144,7 +153,7 @@ export const makeFileLinks = (options: {
     ) =>
       Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis;
-        const expiresAt = now + clamp(expiresInSeconds) * 1000;
+        const expiresAt = now + clamp(operation, expiresInSeconds) * 1000;
         const token = yield* sign([
           label,
           version,
@@ -172,7 +181,7 @@ export const makeFileLinks = (options: {
             id: input.id,
             sha256: input.sha256,
             subject: input.subject,
-            filename: input.filename,
+            filename: input.filename?.slice(0, maxFilenameLength),
             contentType: undefined,
             maxBytes: undefined,
           },
@@ -187,7 +196,8 @@ export const makeFileLinks = (options: {
             sha256: undefined,
             subject: input.subject,
             filename: undefined,
-            contentType: input.contentType,
+            contentType:
+              input.contentType === undefined ? undefined : safeContentType(input.contentType),
             maxBytes: input.maxBytes,
           },
           input.expiresInSeconds,

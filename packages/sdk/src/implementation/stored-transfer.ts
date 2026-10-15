@@ -17,10 +17,17 @@ import {
   BlobNotFound,
   BlobTooLarge,
   BlobUnavailable,
+  BlobUpstreamFailed,
   type BlobHandle,
 } from "apps/contracts";
 import type { BlobKey, BlobStorage } from "../contracts/blobs.ts";
 import type { BlobBegun, StreamingSha256 } from "../contracts/file-handles.ts";
+
+/** The longest a sender may pause between chunks before the transfer is abandoned. */
+const idleChunkSeconds = 30;
+/** The slowest sustained rate a transfer may run at: its overall deadline scales with its limit. */
+const slowestBytesPerSecond = 32 * 1024;
+const minimumTransferSeconds = 60;
 
 /** What the transfer asks of the product, however it reaches it. */
 export interface TransferPorts {
@@ -83,6 +90,12 @@ export const storeTransfer = (transfer: StoredTransfer): Effect.Effect<BlobHandl
       .putStream(
         key,
         transfer.source.pipe(
+          // A sender that trickles bytes cannot hold the request, the object stream and the
+          // reservation open: a pause longer than this ends the transfer.
+          Stream.timeoutOrElse({
+            duration: `${idleChunkSeconds} seconds`,
+            orElse: () => Stream.fail(new BlobUpstreamFailed({ reason: "transport" })),
+          }),
           Stream.mapEffect((chunk) =>
             Effect.suspend((): Effect.Effect<Uint8Array, BlobError> => {
               counted += chunk.byteLength;
@@ -132,7 +145,14 @@ export const storeTransfer = (transfer: StoredTransfer): Effect.Effect<BlobHandl
   const renewal = ports
     .touch(begun.id)
     .pipe(Effect.ignore, Effect.delay(`${begun.renewSeconds} seconds`), Effect.forever);
-  return Effect.raceFirst(run, renewal).pipe(
+  const deadline = Math.max(minimumTransferSeconds, Math.ceil(limit / slowestBytesPerSecond));
+  const bounded = run.pipe(
+    Effect.timeoutOrElse({
+      duration: `${deadline} seconds`,
+      orElse: () => Effect.fail(new BlobUpstreamFailed({ reason: "transport" })),
+    }),
+  );
+  return Effect.raceFirst(bounded, renewal).pipe(
     Effect.onExit((exit) =>
       Exit.isSuccess(exit)
         ? Effect.void
