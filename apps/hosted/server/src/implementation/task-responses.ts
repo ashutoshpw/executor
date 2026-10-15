@@ -13,7 +13,7 @@ import type { FileTransfer } from "@executor-js/sdk/blobs";
 import { storeBytes } from "@executor-js/sdk/file-transfer";
 import { Effect, Option, Result, Schema, Semaphore } from "effect";
 import { Base64 } from "effect/encoding";
-import { maskArguments, truncateUtf8, type MaskIntercept } from "./task-arguments.ts";
+import { maskArguments, maskText, truncateUtf8, type MaskIntercept } from "./task-arguments.ts";
 
 /** The most bytes of response JSON kept for one call, marker included. */
 export const maxStoredResponseBytes = 16_384;
@@ -80,13 +80,31 @@ const signatureType = (bytes: Uint8Array): string | undefined => {
 const pureBase64 = /^[A-Za-z0-9+/]+={0,2}$/u;
 const dataUriPrefix = /^data:([A-Za-z0-9!#$&^_.+-]+\/[A-Za-z0-9!#$&^_.+-]+)(?:;[^;,]*)*;base64,/u;
 
-/** The media type of a long base64 string that holds a known kind of file, else undefined. */
-const base64FileType = (text: string): string | undefined => {
-  if (text.length < minBase64Length || text.length % 4 !== 0 || !pureBase64.test(text))
-    return undefined;
+/** The media type of the file bytes a base64 string starts with, else undefined. */
+const base64Signature = (text: string): string | undefined => {
+  if (text.length < 16 || text.length % 4 !== 0 || !pureBase64.test(text)) return undefined;
   // 16 characters decode to the 12 bytes every signature fits in.
   const head = Base64.decode(text.slice(0, 16));
   return Result.isSuccess(head) ? signatureType(head.success) : undefined;
+};
+
+/** The media type of a long base64 string that holds a known kind of file, else undefined. */
+const base64FileType = (text: string): string | undefined =>
+  text.length < minBase64Length ? undefined : base64Signature(text);
+
+const savableDeclared = /^(?:image|audio|video)\/|^application\/pdf$/iu;
+
+/**
+ * The type to save a string next to a declared mimeType under, or undefined when it is not media:
+ * the string must be valid base64 whose first bytes match a known media signature. The declared
+ * type is kept when it is image, audio, video or PDF of the same kind as the bytes; otherwise the
+ * bytes decide.
+ */
+const declaredMediaType = (text: string, declared: string): string | undefined => {
+  const detected = base64Signature(text);
+  if (detected === undefined) return undefined;
+  const kind = (type: string) => type.toLowerCase().split("/", 1)[0];
+  return savableDeclared.test(declared) && kind(declared) === kind(detected) ? declared : detected;
 };
 
 /**
@@ -112,20 +130,30 @@ export const prepareResponse = (
     media.push({ base64, contentType, size });
     return mark(media.length - 1);
   };
+  // A string that masking would change is never saved as a file; it stays text and is masked.
+  const unchanged = (text: string) => maskText(text) === text;
   const intercept: MaskIntercept = (node, at) => {
     if (typeof node === "string") {
       if (node.length === 0) return undefined;
       const uri = dataUriPrefix.exec(node);
-      if (uri !== null) return take(node.slice(uri[0].length), uri[1] ?? "");
-      const mimeType = at.parent?.mimeType;
-      if (typeof mimeType === "string") {
-        const block = at.parent?.type;
-        if (at.key === "data" && (block === "image" || block === "audio"))
-          return take(node, mimeType);
-        if (at.key === "blob") return take(node, mimeType);
+      if (uri !== null) {
+        const payload = node.slice(uri[0].length);
+        // Oversized media becomes a placeholder without scanning it.
+        if (decodedLength(payload) <= limit && !unchanged(payload)) return undefined;
+        return take(payload, uri[1] ?? "");
       }
-      const detected = base64FileType(node);
-      return detected === undefined ? undefined : take(node, detected);
+      const mimeType = at.parent?.mimeType;
+      const block = at.parent?.type;
+      const declared =
+        typeof mimeType === "string" &&
+        ((at.key === "data" && (block === "image" || block === "audio")) || at.key === "blob");
+      const type =
+        declared && typeof mimeType === "string"
+          ? declaredMediaType(node, mimeType)
+          : base64FileType(node);
+      if (type === undefined) return undefined;
+      if (decodedLength(node) <= limit && !unchanged(node)) return undefined;
+      return take(node, type);
     }
     if (
       typeof node === "object" &&

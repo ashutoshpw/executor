@@ -1,6 +1,7 @@
 /**
  * The organization's task insights setting: stored per organization, with arguments and responses
- * off by default.
+ * on by default for an organization that never saved one. A database that cannot be read means
+ * nothing is recorded.
  * The recorder reads it for every tool call through a short cache; a save replaces the cached value
  * at once, so a change reaches new calls immediately on this server.
  */
@@ -37,6 +38,13 @@ const RetentionRow = Schema.Struct({
 
 const decodeKeys = (text: string) =>
   Schema.decodeUnknownEffect(ExtraKeys)(text).pipe(Effect.orElseSucceed(() => []));
+
+/** What the recorder applies when the setting cannot be read: nothing is recorded. */
+const recordingOff: TaskInsightsSettingsFields = {
+  ...defaultTaskInsightsSettings,
+  recordArguments: false,
+  recordResponses: false,
+};
 
 /**
  * The setting for an organization. An organization that never chose one gets the defaults.
@@ -126,7 +134,7 @@ export const readableRecordingSettings = (organizationId: string) =>
 /** The setting the recorder applies to a call; a database that cannot be read means not recording. */
 export const recordingSettings = (organizationId: string) =>
   readableRecordingSettings(organizationId).pipe(
-    Effect.map((settings) => settings ?? defaultTaskInsightsSettings),
+    Effect.map((settings) => settings ?? recordingOff),
   );
 
 /** Trim, drop empty and repeated names (in any case), and check the bounds. */

@@ -835,7 +835,7 @@ export const scenarios = plan({
     fixtures: "actors",
     file: "task-insights.spec.ts",
     title:
-      "Task insights keep no tool arguments until the organization turns recording on and then keep them with credentials masked and the size capped",
+      "Task insights keep tool arguments by default with credentials masked and the size capped, and delete them when the organization turns recording off",
     targets: {
       "self-host": scheduled,
       cloud: na("Usage is recorded by the self-host store; Cloud reports it unavailable"),
@@ -846,7 +846,7 @@ export const scenarios = plan({
     fixtures: "actors",
     file: "task-insights.spec.ts",
     title:
-      "Task insights keep no tool responses until the organization turns response recording on and then keep them masked and capped, with media saved as organization files",
+      "Task insights keep tool responses by default masked and capped, with real media saved as organization files and other text left as text, and delete them when the organization turns response recording off",
     targets: {
       "self-host": scheduled,
       cloud: na("Usage is recorded by the self-host store; Cloud reports it unavailable"),

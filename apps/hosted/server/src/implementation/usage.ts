@@ -84,7 +84,7 @@ export const recordToolCall = (call: {
         ? storedArguments(call.arguments, settings.extraMaskedKeys)
         : undefined;
     const organizationId = organization.value.organization;
-    const record = (response: string | undefined) =>
+    const record = (response: string | undefined, args: string | undefined = kept) =>
       // A record that cannot be kept never reaches the tool call.
       Effect.try(() =>
         store.record({
@@ -102,7 +102,7 @@ export const recordToolCall = (call: {
           ...(task?.taskId === undefined ? {} : { taskId: task.taskId }),
           ...(task?.sessionId == null ? {} : { mcpSessionId: task.sessionId }),
           ...(task === undefined ? {} : { runId: task.runId }),
-          ...(kept === undefined ? {} : { arguments: kept }),
+          ...(args === undefined ? {} : { arguments: args }),
           ...(response === undefined ? {} : { response }),
         }),
       ).pipe(Effect.ignore);
@@ -139,7 +139,20 @@ export const recordToolCall = (call: {
       appId,
       media,
     }).pipe(
-      Effect.flatMap((replacements) => record(finish(replacements))),
+      Effect.flatMap((replacements) =>
+        // Saving can take a while, so the choice is read again: an administrator who turned
+        // recording off meanwhile must not get this call recorded. Files already saved stay;
+        // they expire with the organization's file lifetime. A setting that cannot be read
+        // counts as off.
+        recordingSettings(organizationId).pipe(
+          Effect.flatMap((current) =>
+            record(
+              current.recordResponses ? finish(replacements) : undefined,
+              current.recordArguments ? kept : undefined,
+            ),
+          ),
+        ),
+      ),
       Effect.catchCause(() => Effect.logWarning("A tool response could not be recorded")),
       Effect.forkDetach,
     );

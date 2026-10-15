@@ -150,7 +150,7 @@ function TaskInsightsSettingsForm({
                   Record tool arguments
                 </label>
                 <p id={`${id}-record-hint`} className="text-[12px] text-muted-foreground">
-                  Off by default. Credentials are masked before anything is stored. Turning this off
+                  On by default. Credentials are masked before anything is stored. Turning this off
                   also deletes the arguments already stored.
                 </p>
               </div>
@@ -171,7 +171,7 @@ function TaskInsightsSettingsForm({
                   Record tool responses
                 </label>
                 <p id={`${id}-responses-hint`} className="text-[12px] text-muted-foreground">
-                  Off by default. Responses can contain customer data. They use the same retention
+                  On by default. Responses can contain customer data. They use the same retention
                   and masked names as arguments. Images and other inline media are saved as an
                   organization file, kept for the organization's file lifetime. Turning this off
                   also deletes the responses already stored.

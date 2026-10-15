@@ -32,6 +32,14 @@ export default defineApp({}, async (ctx) => ({ tools: router({
     async () => ({ content: [{ type: "image", data: ${JSON.stringify(png)}, mimeType: "image/png" }] })),
   inline: query({ input: object({}), description: "Return a data URI image" },
     async () => ({ preview: "data:image/png;base64,${png}" })),
+  lookalike: query({ input: object({}), description: "Return base64 looking text that is not media" },
+    async () => {
+      const text = btoa("this is plain text and not media ".repeat(40));
+      return { content: [
+        { type: "image", data: text, mimeType: "image/png" },
+        { type: "resource", resource: { uri: "memo://x", blob: text, mimeType: "application/pdf" } },
+      ] };
+    }),
   huge: query({ input: object({}), description: "Return a very long string" },
     async () => ({ text: "y".repeat(40000) })),
   stored: query({ input: object({}), description: "Return a stored file handle" },
@@ -284,8 +292,8 @@ layer(HostedLive, { excludeTestServices: true })("Task insights", (it) => {
           expect(item.appId).toBe(app.id);
           expect(item.appName).toBe(app.name);
           expect(item.durationMs).toBeGreaterThanOrEqual(0);
-          // Arguments are not recorded unless the organization turned that on.
-          expect(item.arguments).toBeNull();
+          // Arguments are recorded unless the organization turned that off.
+          expect(item.arguments).not.toBeNull();
         }
         const times = task.calls.map((item) => Date.parse(item.at));
         expect(times).toEqual([...times].sort((a, b) => a - b));
@@ -361,9 +369,9 @@ layer(HostedLive, { excludeTestServices: true })("Task insights", (it) => {
         const save = (payload: Record<string, unknown>) =>
           api.request(actors.owner, "PUT", settingsPath, payload);
         const sink = `tools[${JSON.stringify(app.slug)}].sink`;
-        // Recording is off for everyone else again once the scenario ends.
+        // The organization's recording goes back to its defaults once the scenario ends.
         yield* Effect.addFinalizer(() =>
-          save({ recordArguments: false, retentionDays: 30, extraMaskedKeys: [] }).pipe(
+          save({ recordArguments: true, retentionDays: 30, extraMaskedKeys: [] }).pipe(
             Effect.orDie,
           ),
         );
@@ -374,16 +382,31 @@ layer(HostedLive, { excludeTestServices: true })("Task insights", (it) => {
             _meta: { [taskIdKey]: task },
           });
 
-        // By default nothing about the arguments is stored.
+        // An organization that never saved the setting records arguments and responses.
         expect(
           yield* body(Settings, yield* api.request(actors.owner, "GET", settingsPath)),
         ).toEqual({
-          recordArguments: false,
-          recordResponses: false,
+          recordArguments: true,
+          recordResponses: true,
           retentionDays: 30,
           extraMaskedKeys: [],
           available: true,
         });
+        yield* run("ARGS-DEFAULT", { text: "visible by default", password: "hunter2-default" });
+        const byDefault = yield* reader.detail(
+          actors.owner,
+          "ARGS-DEFAULT",
+          (calls) => calls === 1,
+        );
+        expect(JSON.parse(byDefault.calls[0]?.arguments ?? "null")).toEqual({
+          text: "visible by default",
+          password: "[masked]",
+        });
+
+        // Turning arguments off stores nothing about new calls.
+        expect(
+          (yield* save({ recordArguments: false, retentionDays: 30, extraMaskedKeys: [] })).status,
+        ).toBe(200);
         yield* run("ARGS-OFF", { text: "visible while off", password: "hunter2-off" });
         const off = yield* reader.detail(actors.owner, "ARGS-OFF", (calls) => calls === 1);
         expect(off.calls[0]?.arguments).toBeNull();
@@ -527,8 +550,8 @@ return await ${sink}({ text: "n2", password: "nested-secret-2" });`,
         const tool = (name: string) => `tools[${JSON.stringify(app.slug)}].${name}`;
         yield* Effect.addFinalizer(() =>
           save({
-            recordArguments: false,
-            recordResponses: false,
+            recordArguments: true,
+            recordResponses: true,
             retentionDays: 30,
             extraMaskedKeys: [],
           }).pipe(Effect.orDie),
@@ -544,16 +567,36 @@ return await ${sink}({ text: "n2", password: "nested-secret-2" });`,
             .detail(actors.owner, task, (calls) => calls === 1)
             .pipe(Effect.map((detail) => detail.calls[0]!));
 
-        // Responses are not stored while only arguments are recorded.
+        // An organization that never saved the setting records responses.
+        yield* run("RESP-DEFAULT", "secretive");
+        const byDefault = yield* single("RESP-DEFAULT");
+        expect(JSON.parse(byDefault.response ?? "null")).toEqual({
+          apiKey: "[masked]",
+          region: "eu",
+          note: "kept",
+        });
+
+        // Responses are not stored while only arguments are recorded. A save without
+        // recordResponses keeps the stored choice, off here.
         expect(
-          (yield* save({ recordArguments: true, retentionDays: 7, extraMaskedKeys: [] })).status,
+          (yield* save({
+            recordArguments: true,
+            recordResponses: false,
+            retentionDays: 7,
+            extraMaskedKeys: [],
+          })).status,
         ).toBe(200);
+        const keptOff = yield* body(
+          Settings,
+          yield* save({ recordArguments: true, retentionDays: 7, extraMaskedKeys: [] }),
+        );
+        expect(keptOff.recordResponses).toBe(false);
         yield* run("RESP-OFF", "secretive");
         const off = yield* single("RESP-OFF");
         expect(off.response).toBeNull();
         expect(off.files).toEqual([]);
 
-        // A save without recordResponses keeps it as it was, and turning it on records responses.
+        // Turning responses on records them, and a save without recordResponses keeps that.
         const on = yield* body(
           Settings,
           yield* save({
@@ -616,6 +659,42 @@ return await ${sink}({ text: "n2", password: "nested-secret-2" });`,
           expect(entry?.contentType).toBe(index === 2 ? "text/plain" : "image/png");
           expect(file.contentType).toBe(entry?.contentType);
         }
+
+        // Base64 looking text next to a media type is saved only when its bytes are media. This
+        // text decodes to plain words, so it stays text and no file is made.
+        const lookalikeText = Buffer.from("this is plain text and not media ".repeat(40)).toString(
+          "base64",
+        );
+        yield* run("RESP-LOOKALIKE", "lookalike");
+        const lookalike = yield* single("RESP-LOOKALIKE");
+        expect(lookalike.files).toEqual([]);
+        expect(lookalike.response).not.toContain("not saved");
+        expect(lookalike.response).not.toContain("@@media");
+        expect(JSON.parse(lookalike.response ?? "null")).toEqual({
+          content: [
+            { type: "image", data: lookalikeText, mimeType: "image/png" },
+            {
+              type: "resource",
+              resource: { uri: "memo://x", blob: lookalikeText, mimeType: "application/pdf" },
+            },
+          ],
+        });
+
+        // Calls that name the same file both report it, though it is looked up once.
+        const shared = media[2]!.files[0]!;
+        yield* run("RESP-SAME", "echo", { text: shared.uri });
+        yield* run("RESP-SAME", "echo", { text: shared.uri });
+        const same = yield* reader.detail(actors.owner, "RESP-SAME", (calls) => calls === 2);
+        for (const item of same.calls)
+          expect(item.files).toEqual([
+            {
+              id: shared.id,
+              uri: shared.uri,
+              contentType: "text/plain",
+              size: 10,
+              available: true,
+            },
+          ]);
 
         // A long response is cut and says how large it was.
         yield* run("RESP-BIG", "huge");
@@ -684,7 +763,7 @@ return await ${sink}({ text: "n2", password: "nested-secret-2" });`,
         expect(
           (yield* body(Settings, yield* api.request(actors.admin, "GET", settingsPath)))
             .recordArguments,
-        ).toBe(false);
+        ).toBe(true);
 
         // Someone who belongs to another organization only is refused this organization's tasks.
         const outsiderEmail = `outsider-${randomUUID().slice(0, 8)}@example.test`;

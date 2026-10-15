@@ -169,6 +169,12 @@ layer(HostedLive, { excludeTestServices: true })("Organization file previews", (
         yield* browser.use("The address drops the file", (page) =>
           page.waitForURL((url) => url.searchParams.get("file") === null),
         );
+        // Closing replaces the history entry the open added, so Back does not reopen the drawer.
+        yield* browser.use("Go back after closing", (page) => page.goBack());
+        yield* browser.use("The drawer stays closed", (page) =>
+          drawerOf(page).waitFor({ state: "hidden" }),
+        );
+        expect(yield* browser.use("Read the address", (page) => fileParam(page))).toBeNull();
         yield* browser.use("Visit the address of a file", (page) =>
           page.goto(`/org/${actors.organization.slug}/files?file=${pngId}`),
         );

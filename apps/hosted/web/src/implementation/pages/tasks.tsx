@@ -400,9 +400,11 @@ function CallsTable({ calls }: { readonly calls: ReadonlyArray<TaskCall> }) {
                     <p className="mt-3 text-xs text-muted-foreground">Response (masked)</p>
                     {call.response === null ? (
                       <p className="mt-1 text-xs text-muted-foreground">
-                        {call.outcome === "success"
-                          ? "Not recorded. Turn on response recording in organization settings."
-                          : "The call failed and has no response."}
+                        {call.outcome === "failure"
+                          ? "The call failed and returned no response."
+                          : call.outcome === "cancelled"
+                            ? "The call was cancelled before it returned a response."
+                            : "Not recorded. Turn on response recording in organization settings."}
                       </p>
                     ) : (
                       <pre className="mt-1 max-h-72 overflow-auto rounded-md border bg-background p-3 font-mono text-xs whitespace-pre-wrap break-words">

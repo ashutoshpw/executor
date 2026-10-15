@@ -1,5 +1,5 @@
 /**
- * Additive hosted storage for task insights: each organization's argument recording setting and a
+ * Additive hosted storage for task insights: each organization's argument and response recording setting and a
  * trail of changes to organization settings. Both tables are new and empty, so the running server
  * never reads them and nothing is rewritten. Argument values themselves live with the usage records.
  */
@@ -35,4 +35,29 @@ export const migrateTaskInsightsResponses = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`alter table hosted_organization_task_settings
     add column if not exists record_responses boolean not null default false`;
+});
+
+/**
+ * Recording is on by default, so a new row (and an organization with no row) records. Only the
+ * column defaults and rows that opted into recording before responses existed change. Those
+ * organizations got record_responses = false from step 13 only through its column default, so they
+ * move to true unless an administrator has since changed that choice (the audit trail names it).
+ * The running server always writes both columns explicitly, so it works before and after this.
+ * The journal runs it once; it is an update of few rows, not a rebuild.
+ */
+export const migrateTaskInsightsDefaultOn = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`alter table hosted_organization_task_settings
+    alter column record_arguments set default true`;
+  yield* sql`alter table hosted_organization_task_settings
+    alter column record_responses set default true`;
+  yield* sql`update hosted_organization_task_settings as settings
+    set record_responses = true
+    where settings.record_arguments = true and settings.record_responses = false
+      and not exists (
+        select 1 from hosted_organization_setting_audit as audit
+        where audit.organization_id = settings.organization_id
+          and audit.setting = 'task_insights'
+          and audit.change like '%"recordResponses"%'
+      )`;
 });
