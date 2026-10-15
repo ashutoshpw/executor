@@ -89,6 +89,23 @@ const raw = (
     }),
   ).pipe(Effect.provideService(HttpClient.TracerPropagationEnabled, false));
 
+/** A GET of a link with the answer's headers, for the checks on how a download is served. */
+const fetchWithHeaders = (url: string) =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const client = yield* HttpClient.HttpClient;
+      const target = yield* Target;
+      const response = yield* client.execute(
+        HttpClientRequest.get(new URL(url, target.metadata.origin)),
+      );
+      return {
+        status: response.status,
+        headers: response.headers,
+        bytes: new Uint8Array(yield* response.arrayBuffer),
+      };
+    }),
+  ).pipe(Effect.provideService(HttpClient.TracerPropagationEnabled, false));
+
 const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
 const tagOf = (response: { readonly body: unknown }) =>
   Effect.map(body(Failure, response as never), (failure) => failure._tag);
@@ -401,6 +418,63 @@ layer(HostedLive, { excludeTestServices: true })("Organization files", (it) => {
         // bearer secret the minting caller was entitled to.
         const early = yield* body(Link, yield* mint(actors.owner, b.id));
         expect(text((yield* raw("GET", early.url)).bytes)).toBe(content.b);
+
+        // The Files page previews a PDF and a Markdown file from a minted link, so a link must
+        // return exactly the stored bytes, kept an inert download whatever the type says.
+        const pdfBytes = new Uint8Array([
+          ...new TextEncoder().encode("%PDF-1.4\n"),
+          0xff,
+          0xfe,
+          0x00,
+          0x80,
+          ...new TextEncoder().encode(`\n%%EOF ${unique}\n`),
+        ]);
+        const markdownBytes = new TextEncoder().encode(
+          `# Preview ${unique}\n\n<script>alert(1)</script>\n\n![remote](https://example.invalid/x.png)\n`,
+        );
+        const previewed = [
+          { bytes: pdfBytes, contentType: "application/pdf" },
+          { bytes: markdownBytes, contentType: "text/markdown" },
+        ];
+        const ids: string[] = [];
+        for (const file of previewed) {
+          const put = yield* raw("PUT", `${prefix}/files`, {
+            headers: {
+              authorization: `Bearer ${ownerKey}`,
+              "x-executor-content-type": file.contentType,
+            },
+            body: file.bytes,
+          });
+          expect(put.status).toBe(201);
+          ids.push(
+            (yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Stored))(text(put.bytes))).id,
+          );
+        }
+        const listed = new Map(
+          (yield* body(
+            Page,
+            yield* api.request(actors.owner, "GET", `${prefix}/files?limit=100`),
+          )).files.map((entry) => [entry.id, entry]),
+        );
+        for (const [index, file] of previewed.entries()) {
+          const id = ids[index]!;
+          // The listing carries the type and size the drawer decides on before it fetches.
+          expect(listed.get(id)).toMatchObject({
+            contentType: file.contentType,
+            size: file.bytes.length,
+          });
+          const link = yield* body(Link, yield* mint(actors.owner, id));
+          const served = yield* fetchWithHeaders(link.url);
+          expect(served.status).toBe(200);
+          expect(Buffer.from(served.bytes).equals(Buffer.from(file.bytes))).toBe(true);
+          expect(served.headers["content-disposition"]).toMatch(/^attachment/u);
+          expect(served.headers["x-content-type-options"]).toBe("nosniff");
+          expect(served.headers["content-security-policy"]).toContain("sandbox");
+          // These files have no creator app, so a member cannot link them, as for a missing file.
+          const refused = yield* mint(actors.member, id);
+          expect(refused.status).toBe(absent.status);
+          expect(refused.body).toEqual(absent.body);
+        }
       }),
     ),
   );
