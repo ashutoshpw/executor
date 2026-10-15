@@ -824,7 +824,7 @@ export const mcpFailurePresentation = ({
  */
 export const AppEvaluationFailed = UserFacingError.define({
   tag: "AppEvaluationFailed",
-  status: 502,
+  status: 422,
   fields: {
     app: AppId,
     version: VersionId,
@@ -1015,7 +1015,7 @@ const renewalRecovery = (
 /** Recognized provider failure, enriched only with trusted selected-account metadata. */
 export const AppProviderFailed = UserFacingError.define({
   tag: "AppProviderFailed",
-  status: 502,
+  status: 422,
   fields: {
     app: AppId,
     version: VersionId,
@@ -1340,7 +1340,7 @@ const failureName = ({ errorName, code }: AppFailure) =>
  */
 export const ToolCallFailed = UserFacingError.define({
   tag: "ToolCallFailed",
-  status: 502,
+  status: 422,
   fields: {
     app: AppId,
     version: VersionId,

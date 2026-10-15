@@ -165,7 +165,7 @@ layer(HostedLive, { excludeTestServices: true })("App data limits", (it) => {
         ) =>
           Effect.gen(function* () {
             const response = yield* call(tool, input, id);
-            expect(response.status, JSON.stringify(response.body)).toBe(502);
+            expect(response.status, JSON.stringify(response.body)).toBe(422);
             return (yield* body(CallFailed, response)).reason;
           });
 

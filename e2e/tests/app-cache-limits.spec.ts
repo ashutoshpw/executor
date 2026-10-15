@@ -67,7 +67,7 @@ layer(HostedLive, { excludeTestServices: true })("App caching", (it) => {
 
         // A value past the entry size fails with the limit named, and without the value.
         const failed = yield* call("oversized");
-        expect(failed.status, JSON.stringify(failed.body).slice(0, 500)).toBe(502);
+        expect(failed.status, JSON.stringify(failed.body).slice(0, 500)).toBe(422);
         expect(JSON.stringify(failed.body)).not.toContain(privateMarker);
         expect((yield* body(CallFailed, failed)).reason).toContain(
           "App cache failed (capacity): A cache value exceeded the app cache's limit of 2,000,000 bytes per entry.",

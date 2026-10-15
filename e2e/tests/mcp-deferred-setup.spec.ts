@@ -136,7 +136,7 @@ layer(HostedLive, { excludeTestServices: true })("Deferred MCP setup", (it) => {
         const path = `${prefix}/apps/${publicApp.id}`;
         yield* upstream.configure({ status: 520, accounts: "all" });
         const tools = yield* api.request(actors.owner, "GET", `${path}/tools`);
-        expect(tools.status).toBe(502);
+        expect(tools.status).toBe(422);
         expect(tools.body).toMatchObject({
           _tag: "AppProviderFailed",
           reason: "unavailable",

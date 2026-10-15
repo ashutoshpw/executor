@@ -48,7 +48,7 @@ export default defineApp({}, async () => {
           api.request(actors.owner, "DELETE", `${prefix}/apps/${app.id}`).pipe(Effect.orDie),
         );
         const failed = yield* api.request(actors.owner, "GET", `${prefix}/apps/${app.id}/tools`);
-        expect(failed.status).toBe(502);
+        expect(failed.status).toBe(422);
         // The app's own factory error explains the failure to its caller.
         expect((yield* body(EvaluationFailure, failed)).failure).toEqual({
           source: "app",

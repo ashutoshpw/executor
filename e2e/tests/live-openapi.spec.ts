@@ -46,7 +46,7 @@ layer(HostedLive, { excludeTestServices: true })("Live OpenAPI", (it) => {
         expect((yield* callTool("echoes_new", "new")).status).toBe(404);
         // An operation on another origin is left out; calling its tool says why.
         const evil = yield* callTool("evil.getEvil", "new");
-        expect(evil.status, JSON.stringify(evil.body)).toBe(502);
+        expect(evil.status, JSON.stringify(evil.body)).toBe(422);
         expect((yield* body(LeftOut, evil)).failure).toEqual({
           errorName: "OpenapiCompileError",
           code: "multiple_hosts",
@@ -101,7 +101,7 @@ layer(HostedLive, { excludeTestServices: true })("Live OpenAPI", (it) => {
         // An operation the document still has keeps the upstream's failure, which names its
         // status but never its body. The recent recheck is not repeated.
         const missing = yield* invoke("items.get", {});
-        expect(missing.status, JSON.stringify(missing.body)).toBe(502);
+        expect(missing.status, JSON.stringify(missing.body)).toBe(422);
         const failed = yield* body(Failed, missing);
         expect(failed.failure.errorName).toBe("OpenapiError");
         expect(failed.reason).toContain("GET /missing responded with HTTP 404");

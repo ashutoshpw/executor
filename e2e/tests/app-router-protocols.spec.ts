@@ -704,7 +704,7 @@ layer(HostedLive, { excludeTestServices: true })(
           // Protocol 8 carries the thrown error's code and scalar fields to the caller.
           for (const kind of [undefined, "query"] as const) {
             const failed = yield* call8("fail", {}, kind);
-            expect(failed.status, JSON.stringify(failed.body)).toBe(502);
+            expect(failed.status, JSON.stringify(failed.body)).toBe(422);
             const detail = yield* body(ToolFailed, failed);
             expect(detail.failure).toEqual({
               source: "app",
@@ -719,7 +719,7 @@ layer(HostedLive, { excludeTestServices: true })(
           }
           // And the error a service stated, with the phase the app named.
           const stated = yield* call8("stated", {}, "query");
-          expect(stated.status, JSON.stringify(stated.body)).toBe(502);
+          expect(stated.status, JSON.stringify(stated.body)).toBe(422);
           expect(yield* body(ProviderFailed, stated)).toMatchObject({
             reason: "rejected",
             status: 403,

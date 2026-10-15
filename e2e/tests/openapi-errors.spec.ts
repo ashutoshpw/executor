@@ -234,7 +234,7 @@ layer(HostedLive, { excludeTestServices: true })("OpenAPI errors", (it) => {
         const limited403 = (yield* Schema.decodeUnknownEffect(Failure)(
           (yield* invoke("declared-limited")).structuredContent,
         )).execution.error;
-        expect(limited403.response).toMatchObject({ code: "AppProviderFailed", status: 502 });
+        expect(limited403.response).toMatchObject({ code: "AppProviderFailed", status: 422 });
         expect(limited403.message).toContain("limiting requests");
         // Input validation names the failing field and expected type without echoing the value.
         const invalidInput = yield* client.use(
@@ -421,7 +421,7 @@ layer(HostedLive, { excludeTestServices: true })("OpenAPI errors", (it) => {
             // stops instead of repeating the call in a loop. It does not claim who caused it.
             expect(failure.response).toMatchObject({
               code: "AppProviderFailed",
-              status: 502,
+              status: 422,
               retryable: true,
               message:
                 "The connected service returned a server error (HTTP 502) while calling a tool.",
@@ -440,7 +440,7 @@ layer(HostedLive, { excludeTestServices: true })("OpenAPI errors", (it) => {
           if (["unauthorized", "forbidden", "limited"].includes(mode)) {
             expect(failure.response).toMatchObject({
               code: "AppProviderFailed",
-              status: 502,
+              status: 422,
               message: expect.stringContaining(
                 mode === "unauthorized"
                   ? "rejected the credentials"
@@ -486,7 +486,7 @@ layer(HostedLive, { excludeTestServices: true })("OpenAPI errors", (it) => {
             // do not claim whether the request, the service or Executor caused them.
             expect(failure.response).toMatchObject({
               code: "ToolCallFailed",
-              status: 502,
+              status: 422,
               retryable: false,
               recovery: {
                 instructions: expect.stringContaining(
@@ -495,7 +495,7 @@ layer(HostedLive, { excludeTestServices: true })("OpenAPI errors", (it) => {
               },
             });
             expect(failure.message).toMatch(
-              /^ToolCallFailed \(HTTP 502\): The app's API call failed: GET \/failure responded with HTTP \d+ \((application\/json|text\/html)(, \d+ bytes)?\), which matches no error with a message in the API's OpenAPI document\./,
+              /^ToolCallFailed \(HTTP 422\): The app's API call failed: GET \/failure responded with HTTP \d+ \((application\/json|text\/html)(, \d+ bytes)?\), which matches no error with a message in the API's OpenAPI document\./,
             );
             expect(failure.message).toContain(
               "Recovery: Read the reported error and check the corresponding request or configuration. Retryable (unchanged call): no.",
@@ -523,7 +523,7 @@ layer(HostedLive, { excludeTestServices: true })("OpenAPI errors", (it) => {
           (yield* Schema.decodeUnknownEffect(Failure)(missing.structuredContent)).execution.error
             .message,
         ).toBe(
-          `ToolCallFailed (HTTP 502): The app's API call failed: GET /items/{item} responded with HTTP 404 (text/plain, ${openapiSecretMarker.length} bytes), which matches no error with a message in the API's OpenAPI document. Recovery: Read the reported error and check the corresponding request or configuration. Retryable (unchanged call): no.`,
+          `ToolCallFailed (HTTP 422): The app's API call failed: GET /items/{item} responded with HTTP 404 (text/plain, ${openapiSecretMarker.length} bytes), which matches no error with a message in the API's OpenAPI document. Recovery: Read the reported error and check the corresponding request or configuration. Retryable (unchanged call): no.`,
         );
         expect(JSON.stringify(missing)).not.toContain(openapiSecretMarker);
         // The service saves the record, then fails with a server error. The call may have
@@ -548,7 +548,7 @@ layer(HostedLive, { excludeTestServices: true })("OpenAPI errors", (it) => {
           .execution.error;
         expect(write.response).toMatchObject({
           code: "AppProviderFailed",
-          status: 502,
+          status: 422,
           retryable: false,
           message: "The connected service returned a server error (HTTP 502) while calling a tool.",
         });
@@ -559,7 +559,7 @@ layer(HostedLive, { excludeTestServices: true })("OpenAPI errors", (it) => {
           "For a call that only reads, the advice for this failure is: “Wait at least 30 seconds before trying again, at most twice.",
         );
         expect(write.message).toBe(
-          `AppProviderFailed (HTTP 502): ${write.response?.message} Recovery: ${unknownOutcomeAction} Retryable (unchanged call): no.`,
+          `AppProviderFailed (HTTP 422): ${write.response?.message} Recovery: ${unknownOutcomeAction} Retryable (unchanged call): no.`,
         );
         expect(JSON.stringify(created)).not.toContain(openapiSecretMarker);
         // The HTTP API records that this call may have written; the same failure of a call named a
@@ -570,7 +570,7 @@ layer(HostedLive, { excludeTestServices: true })("OpenAPI errors", (it) => {
           `${prefix}/${app.id}/tools/call`,
           { tool: "records.createRecord", input: { body: { name: "second" } } },
         );
-        expect(writeOverHttp.status, JSON.stringify(writeOverHttp.body)).toBe(502);
+        expect(writeOverHttp.status, JSON.stringify(writeOverHttp.body)).toBe(422);
         expect(writeOverHttp.body).toMatchObject({
           _tag: "AppProviderFailed",
           reason: "unavailable",
@@ -584,7 +584,7 @@ layer(HostedLive, { excludeTestServices: true })("OpenAPI errors", (it) => {
           `${prefix}/${app.id}/tools/call`,
           { tool: "failures.fail", kind: "query", input: { query: { mode: "bad-gateway" } } },
         );
-        expect(readOverHttp.status, JSON.stringify(readOverHttp.body)).toBe(502);
+        expect(readOverHttp.status, JSON.stringify(readOverHttp.body)).toBe(422);
         expect(readOverHttp.body).toMatchObject({
           _tag: "AppProviderFailed",
           reason: "unavailable",
@@ -656,7 +656,7 @@ export default defineApp({}, async () => {
         // The factory's own error explains why the tools could not load.
         expect(detail).toMatchObject({
           code: "AppEvaluationFailed",
-          status: 502,
+          status: 422,
           message:
             "Executor could not load this app’s tool definitions. The app threw Error: Synthetic factory failure",
           recovery: {
@@ -789,7 +789,7 @@ export default defineApp({}, async () => {
             input: { body: { names: ["delta", ""] } },
           },
         );
-        expect(overHttp.status, JSON.stringify(overHttp.body)).toBe(502);
+        expect(overHttp.status, JSON.stringify(overHttp.body)).toBe(422);
         expect(overHttp.body).toMatchObject({
           _tag: "ToolCallFailed",
           response: { code: "InvalidRecord", status: 422 },
