@@ -77,9 +77,11 @@ export const makeSchedules = (
     setting: ScheduleSettings,
     tool: string,
     work: Effect.Effect<A, E, R>,
+    runId: string,
   ) =>
     observeAutomationTool(
       {
+        runId,
         source: "schedule",
         app: setting.app,
         owner: setting.owner,
@@ -758,7 +760,7 @@ export const makeSchedules = (
                     })
                     .pipe(Effect.provideService(CurrentActor, settings.actor ?? undefined));
                   const response = yield* Option.isSome(tool)
-                    ? observed(settings, tool.value, resumed)
+                    ? observed(settings, tool.value, resumed, claim.id)
                     : resumed;
                   yield* complete(claim, response);
                 }).pipe(
@@ -923,6 +925,7 @@ export const makeSchedules = (
                       kind: "mutation",
                       input: declared.input,
                     }),
+                    claim.id,
                   );
                   if (response.status === "completed") {
                     yield* response.toolError === true
@@ -942,6 +945,7 @@ export const makeSchedules = (
                           owner: setting.owner,
                           response: { action: "accept" },
                         }),
+                        claim.id,
                       ),
                     );
                   } else {
