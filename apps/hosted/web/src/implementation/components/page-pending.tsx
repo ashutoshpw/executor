@@ -40,6 +40,31 @@ export function GroupsLoading() {
   );
 }
 
+export const filesTitle = "Files";
+export const filesDescription = "Files your apps keep for this organization.";
+
+/** The files list loads inside the same frame the page fills. */
+export function FilesFrame({ children }: { readonly children: ReactNode }) {
+  return (
+    <PageFrame>
+      <PageHeader title={filesTitle} description={filesDescription} />
+      {children}
+    </PageFrame>
+  );
+}
+
+export function FilesLoading() {
+  return (
+    <div
+      role="status"
+      aria-label="Loading files"
+      className="min-h-48 rounded-lg border bg-muted/30 p-5 text-sm text-muted-foreground"
+    >
+      Loading files…
+    </div>
+  );
+}
+
 /** A scheduled run's review: the way back to the list above the request's card. */
 export function ScheduledApprovalFrame({
   organizationSlug,

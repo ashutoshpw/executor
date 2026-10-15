@@ -34,6 +34,7 @@ import { Route as OrgOrganizationSlugApprovalsRunIdRouteImport } from './routes/
 import { Route as OrgOrganizationSlugAppsIndexRouteImport } from './routes/org.$organizationSlug.apps.index'
 import { Route as OrgOrganizationSlugAppsAppIdRouteImport } from './routes/org.$organizationSlug.apps.$appId'
 import { Route as OrgOrganizationSlugConnectionsConnectionIdRouteImport } from './routes/org.$organizationSlug.connections.$connectionId'
+import { Route as OrgOrganizationSlugFilesIndexRouteImport } from './routes/org.$organizationSlug.files.index'
 import { Route as OrgOrganizationSlugGroupsIndexRouteImport } from './routes/org.$organizationSlug.groups.index'
 import { Route as OrgOrganizationSlugGroupsGroupIdRouteImport } from './routes/org.$organizationSlug.groups.$groupId'
 import { Route as OrgOrganizationSlugAppsAppIdSetupRouteImport } from './routes/org.$organizationSlug.apps.$appId_.setup'
@@ -176,6 +177,12 @@ const OrgOrganizationSlugConnectionsConnectionIdRoute =
     path: '/connections/$connectionId',
     getParentRoute: () => OrgOrganizationSlugRoute,
   } as any)
+const OrgOrganizationSlugFilesIndexRoute =
+  OrgOrganizationSlugFilesIndexRouteImport.update({
+    id: '/files/',
+    path: '/files/',
+    getParentRoute: () => OrgOrganizationSlugRoute,
+  } as any)
 const OrgOrganizationSlugGroupsIndexRoute =
   OrgOrganizationSlugGroupsIndexRouteImport.update({
     id: '/groups/',
@@ -240,6 +247,7 @@ export interface FileRoutesByFullPath {
   '/org/$organizationSlug/accounts/': typeof OrgOrganizationSlugAccountsIndexRoute
   '/org/$organizationSlug/approvals/': typeof OrgOrganizationSlugApprovalsIndexRoute
   '/org/$organizationSlug/apps/': typeof OrgOrganizationSlugAppsIndexRoute
+  '/org/$organizationSlug/files/': typeof OrgOrganizationSlugFilesIndexRoute
   '/org/$organizationSlug/groups/': typeof OrgOrganizationSlugGroupsIndexRoute
   '/org/$organizationSlug/apps/$appId/setup': typeof OrgOrganizationSlugAppsAppIdSetupRoute
   '/org/$organizationSlug/apps/add/custom': typeof OrgOrganizationSlugAppsAddCustomRoute
@@ -271,6 +279,7 @@ export interface FileRoutesByTo {
   '/org/$organizationSlug/accounts': typeof OrgOrganizationSlugAccountsIndexRoute
   '/org/$organizationSlug/approvals': typeof OrgOrganizationSlugApprovalsIndexRoute
   '/org/$organizationSlug/apps': typeof OrgOrganizationSlugAppsIndexRoute
+  '/org/$organizationSlug/files': typeof OrgOrganizationSlugFilesIndexRoute
   '/org/$organizationSlug/groups': typeof OrgOrganizationSlugGroupsIndexRoute
   '/org/$organizationSlug/apps/$appId/setup': typeof OrgOrganizationSlugAppsAppIdSetupRoute
   '/org/$organizationSlug/apps/add/custom': typeof OrgOrganizationSlugAppsAddCustomRoute
@@ -305,6 +314,7 @@ export interface FileRoutesById {
   '/org/$organizationSlug/accounts/': typeof OrgOrganizationSlugAccountsIndexRoute
   '/org/$organizationSlug/approvals/': typeof OrgOrganizationSlugApprovalsIndexRoute
   '/org/$organizationSlug/apps/': typeof OrgOrganizationSlugAppsIndexRoute
+  '/org/$organizationSlug/files/': typeof OrgOrganizationSlugFilesIndexRoute
   '/org/$organizationSlug/groups/': typeof OrgOrganizationSlugGroupsIndexRoute
   '/org/$organizationSlug/apps/$appId_/setup': typeof OrgOrganizationSlugAppsAppIdSetupRoute
   '/org/$organizationSlug/apps/add/custom': typeof OrgOrganizationSlugAppsAddCustomRoute
@@ -340,6 +350,7 @@ export interface FileRouteTypes {
     | '/org/$organizationSlug/accounts/'
     | '/org/$organizationSlug/approvals/'
     | '/org/$organizationSlug/apps/'
+    | '/org/$organizationSlug/files/'
     | '/org/$organizationSlug/groups/'
     | '/org/$organizationSlug/apps/$appId/setup'
     | '/org/$organizationSlug/apps/add/custom'
@@ -371,6 +382,7 @@ export interface FileRouteTypes {
     | '/org/$organizationSlug/accounts'
     | '/org/$organizationSlug/approvals'
     | '/org/$organizationSlug/apps'
+    | '/org/$organizationSlug/files'
     | '/org/$organizationSlug/groups'
     | '/org/$organizationSlug/apps/$appId/setup'
     | '/org/$organizationSlug/apps/add/custom'
@@ -404,6 +416,7 @@ export interface FileRouteTypes {
     | '/org/$organizationSlug/accounts/'
     | '/org/$organizationSlug/approvals/'
     | '/org/$organizationSlug/apps/'
+    | '/org/$organizationSlug/files/'
     | '/org/$organizationSlug/groups/'
     | '/org/$organizationSlug/apps/$appId_/setup'
     | '/org/$organizationSlug/apps/add/custom'
@@ -602,6 +615,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof OrgOrganizationSlugConnectionsConnectionIdRouteImport
       parentRoute: typeof OrgOrganizationSlugRoute
     }
+    '/org/$organizationSlug/files/': {
+      id: '/org/$organizationSlug/files/'
+      path: '/files'
+      fullPath: '/org/$organizationSlug/files/'
+      preLoaderRoute: typeof OrgOrganizationSlugFilesIndexRouteImport
+      parentRoute: typeof OrgOrganizationSlugRoute
+    }
     '/org/$organizationSlug/groups/': {
       id: '/org/$organizationSlug/groups/'
       path: '/groups'
@@ -676,6 +696,7 @@ interface OrgOrganizationSlugRouteChildren {
   OrgOrganizationSlugAccountsIndexRoute: typeof OrgOrganizationSlugAccountsIndexRoute
   OrgOrganizationSlugApprovalsIndexRoute: typeof OrgOrganizationSlugApprovalsIndexRoute
   OrgOrganizationSlugAppsIndexRoute: typeof OrgOrganizationSlugAppsIndexRoute
+  OrgOrganizationSlugFilesIndexRoute: typeof OrgOrganizationSlugFilesIndexRoute
   OrgOrganizationSlugGroupsIndexRoute: typeof OrgOrganizationSlugGroupsIndexRoute
   OrgOrganizationSlugAppsAppIdSetupRoute: typeof OrgOrganizationSlugAppsAppIdSetupRoute
   OrgOrganizationSlugAppsAddCustomRoute: typeof OrgOrganizationSlugAppsAddCustomRoute
@@ -698,6 +719,7 @@ const OrgOrganizationSlugRouteChildren: OrgOrganizationSlugRouteChildren = {
   OrgOrganizationSlugApprovalsIndexRoute:
     OrgOrganizationSlugApprovalsIndexRoute,
   OrgOrganizationSlugAppsIndexRoute: OrgOrganizationSlugAppsIndexRoute,
+  OrgOrganizationSlugFilesIndexRoute: OrgOrganizationSlugFilesIndexRoute,
   OrgOrganizationSlugGroupsIndexRoute: OrgOrganizationSlugGroupsIndexRoute,
   OrgOrganizationSlugAppsAppIdSetupRoute:
     OrgOrganizationSlugAppsAppIdSetupRoute,
