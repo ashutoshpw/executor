@@ -173,32 +173,27 @@ const declaredLength = (request: HttpServerRequest.HttpServerRequest) => {
 };
 
 /**
- * Store the current request's body as a new file of `owner`, streaming it into the store while it
- * hashes and counts it. A declared size above the limit is refused before the body is read; a body
- * that outgrows the limit while it streams is cut off. Nothing is left behind on failure, and
- * bytes the owner already holds become that file's handle.
+ * Stream `source` into the store as a new file of `owner`, hashing and counting it on the way.
+ * `declared` is the byte count the sender promised, if it knows. Uploads and in-memory bytes share
+ * this: reservation, limits, commit with the owner's lifetime, and cleanup are one path.
  */
-export const uploadHandle = (options: {
+const storeSource = (options: {
   readonly userContent: UserContentOptions;
   readonly owner: string;
   readonly appId?: string | undefined;
   readonly contentType: string;
-  /** A limit lower than the host's, such as one a link carries. */
   readonly maxBytes?: number | undefined;
-}): Effect.Effect<
-  BlobHandle,
-  BlobError | FileLengthRequired,
-  HttpServerRequest.HttpServerRequest
-> => {
+  readonly source: Stream.Stream<Uint8Array, BlobError>;
+  readonly declared: number | undefined;
+}): Effect.Effect<BlobHandle, BlobError | FileLengthRequired> => {
   const { store, handles, policy, hasher } = options.userContent;
   const pendingSeconds = policy.pendingSeconds ?? pendingBlobSeconds;
   const limit = Math.min(policy.maxFileBytes, options.maxBytes ?? policy.maxFileBytes);
   return Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const declared = declaredLength(request);
-    if (declared !== undefined && declared > limit)
-      return yield* new BlobTooLarge({ maximum: limit, requested: declared });
-    if (declared === undefined && policy.requiresSize) return yield* new FileLengthRequired();
+    if (options.declared !== undefined && options.declared > limit)
+      return yield* new BlobTooLarge({ maximum: limit, requested: options.declared });
+    if (options.declared === undefined && policy.requiresSize)
+      return yield* new FileLengthRequired();
     const pending = yield* handles.begin({
       owner: options.owner,
       appId: options.appId,
@@ -218,14 +213,8 @@ export const uploadHandle = (options: {
       store,
       hasher,
       limit,
-      // A request that declares no bytes has no body to read; its stream would fail.
-      source:
-        declared === 0
-          ? Stream.empty
-          : request.stream.pipe(
-              Stream.mapError((): BlobError => new BlobUpstreamFailed({ reason: "transport" })),
-            ),
-      declare: Effect.succeed(declared),
+      source: options.source,
+      declare: Effect.succeed(options.declared),
       ports: {
         commit: (input) =>
           Effect.flatMap(policy.ttlSeconds(options.owner), (ttlSeconds) =>
@@ -242,6 +231,58 @@ export const uploadHandle = (options: {
     });
   });
 };
+
+/**
+ * Store the current request's body as a new file of `owner`, streaming it into the store while it
+ * hashes and counts it. A declared size above the limit is refused before the body is read; a body
+ * that outgrows the limit while it streams is cut off. Nothing is left behind on failure, and
+ * bytes the owner already holds become that file's handle.
+ */
+export const uploadHandle = (options: {
+  readonly userContent: UserContentOptions;
+  readonly owner: string;
+  readonly appId?: string | undefined;
+  readonly contentType: string;
+  /** A limit lower than the host's, such as one a link carries. */
+  readonly maxBytes?: number | undefined;
+}): Effect.Effect<
+  BlobHandle,
+  BlobError | FileLengthRequired,
+  HttpServerRequest.HttpServerRequest
+> =>
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest;
+    const declared = declaredLength(request);
+    return yield* storeSource({
+      ...options,
+      declared,
+      // A request that declares no bytes has no body to read; its stream would fail.
+      source:
+        declared === 0
+          ? Stream.empty
+          : request.stream.pipe(
+              Stream.mapError((): BlobError => new BlobUpstreamFailed({ reason: "transport" })),
+            ),
+    });
+  });
+
+/**
+ * Store bytes the host already holds as a new file of `owner`, the way an upload would: the same
+ * limits, lifetime and cleanup. For host code with no request body, such as a recorded response.
+ */
+export const storeBytes = (options: {
+  readonly userContent: UserContentOptions;
+  readonly owner: string;
+  readonly appId?: string | undefined;
+  readonly contentType: string;
+  readonly bytes: Uint8Array;
+  readonly maxBytes?: number | undefined;
+}): Effect.Effect<BlobHandle, BlobError | FileLengthRequired> =>
+  storeSource({
+    ...options,
+    declared: options.bytes.byteLength,
+    source: options.bytes.byteLength === 0 ? Stream.empty : Stream.make(options.bytes),
+  });
 
 /** The content type an upload names: the product's header, else `Content-Type`, else bytes. */
 export const uploadContentType = (request: HttpServerRequest.HttpServerRequest) =>

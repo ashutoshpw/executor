@@ -7,6 +7,7 @@ export {
   fileTransferError,
   readHandleBytes,
   redeemFileLink,
+  storeBytes,
   uploadContentType,
   uploadHandle,
   uploadResponse,
