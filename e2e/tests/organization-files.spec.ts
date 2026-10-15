@@ -90,13 +90,13 @@ const raw = (
   ).pipe(Effect.provideService(HttpClient.TracerPropagationEnabled, false));
 
 /** A GET of a link with the answer's headers, for the checks on how a download is served. */
-const fetchWithHeaders = (url: string) =>
+const fetchWithHeaders = (url: string, headers: Record<string, string> = {}) =>
   Effect.scoped(
     Effect.gen(function* () {
       const client = yield* HttpClient.HttpClient;
       const target = yield* Target;
       const response = yield* client.execute(
-        HttpClientRequest.get(new URL(url, target.metadata.origin)),
+        HttpClientRequest.get(new URL(url, target.metadata.origin), { headers }),
       );
       return {
         status: response.status,
@@ -522,6 +522,88 @@ layer(HostedLive, { excludeTestServices: true })("Organization files", (it) => {
             expect(asMember.status, `a member links ${file.via} ${id}`).toBe(absent.status);
             expect(asMember.body).toEqual(absent.body);
           }
+        }
+
+        // The Files page plays video and audio straight from a minted link, so the link must
+        // answer a range with 206 and the stored media type, and the whole file with 200. The
+        // dashboard asks for four hours; the host honors it and clamps nothing below the maximum.
+        const box = (type: string, payload: Uint8Array) => {
+          const out = new Uint8Array(8 + payload.length);
+          new DataView(out.buffer).setUint32(0, out.length);
+          out.set(new TextEncoder().encode(type), 4);
+          out.set(payload, 8);
+          return out;
+        };
+        const filler = (length: number, seed: number) =>
+          Uint8Array.from({ length }, (_, index) => (index * 7 + seed) % 256);
+        const mp4Bytes = new Uint8Array([
+          ...box("ftyp", new TextEncoder().encode("isom\u0000\u0000\u0002\u0000isomiso2mp41")),
+          ...box("mdat", filler(600, unique.charCodeAt(0))),
+        ]);
+        const wavBytes = new Uint8Array([
+          ...new TextEncoder().encode("RIFF"),
+          ...new Uint8Array(new Uint32Array([36 + 600]).buffer),
+          ...new TextEncoder().encode("WAVEfmt "),
+          ...new Uint8Array(new Uint32Array([16]).buffer),
+          ...new Uint8Array(new Uint16Array([1, 1]).buffer),
+          ...new Uint8Array(new Uint32Array([8000, 8000]).buffer),
+          ...new Uint8Array(new Uint16Array([1, 8]).buffer),
+          ...new TextEncoder().encode("data"),
+          ...new Uint8Array(new Uint32Array([600]).buffer),
+          ...filler(600, unique.charCodeAt(1)),
+        ]);
+        const media = [
+          { bytes: mp4Bytes, contentType: "video/mp4" },
+          { bytes: wavBytes, contentType: "audio/wav" },
+        ] as const;
+        for (const file of media) {
+          const put = yield* raw("PUT", `${prefix}/files`, {
+            headers: {
+              authorization: `Bearer ${ownerKey}`,
+              "x-executor-content-type": file.contentType,
+            },
+            body: file.bytes,
+          });
+          expect(put.status).toBe(201);
+          const id = (yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Stored))(
+            text(put.bytes),
+          )).id;
+          const longLived = yield* api.request(
+            actors.owner,
+            "POST",
+            `${prefix}/files/${id}/download-url`,
+            { expiresInSeconds: 4 * 60 * 60 },
+          );
+          expect(longLived.status).toBe(200);
+          const link = yield* body(Link, longLived);
+          const hours = (Date.parse(link.expiresAt) - Date.now()) / 3_600_000;
+          expect(hours).toBeGreaterThan(3.9);
+          expect(hours).toBeLessThanOrEqual(4);
+
+          const ranged = yield* fetchWithHeaders(link.url, { range: "bytes=0-99" });
+          expect(ranged.status).toBe(206);
+          expect(ranged.headers["content-range"]).toBe(`bytes 0-99/${file.bytes.length}`);
+          expect(ranged.headers["content-type"]).toBe(file.contentType);
+          expect(ranged.headers["accept-ranges"]).toBe("bytes");
+          expect(Buffer.from(ranged.bytes).equals(Buffer.from(file.bytes.slice(0, 100)))).toBe(
+            true,
+          );
+          const tail = yield* fetchWithHeaders(link.url, { range: "bytes=500-" });
+          expect(tail.status).toBe(206);
+          expect(Buffer.from(tail.bytes).equals(Buffer.from(file.bytes.slice(500)))).toBe(true);
+
+          const whole = yield* fetchWithHeaders(link.url);
+          expect(whole.status).toBe(200);
+          expect(whole.headers["content-type"]).toBe(file.contentType);
+          expect(Buffer.from(whole.bytes).equals(Buffer.from(file.bytes))).toBe(true);
+          // The dashboard mints by organization slug with its cookie session.
+          const bySlugMedia = yield* api.request(
+            actors.owner,
+            "POST",
+            `/api/organizations/${actors.organization.slug}/files/${id}/download-url`,
+            { expiresInSeconds: 4 * 60 * 60 },
+          );
+          expect(bySlugMedia.status).toBe(200);
         }
       }),
     ),

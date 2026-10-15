@@ -42,11 +42,18 @@ export const deleteFileAtom = Atom.family((organization: OrganizationReference) 
   ),
 );
 
-/** A short-lived download link for a file, from the route that applies the file's visibility. */
+/** A download link for a file (15 minutes unless `expiresInSeconds` asks for more), from the route that applies the file's visibility. */
 export const downloadLinkAtom = Atom.family((organization: OrganizationReference) =>
-  HostedClient.runtime.fn((handle: string) =>
-    Effect.flatMap(HostedClient, (client) =>
-      client.files.downloadUrl({ params: { organization, handle }, payload: {} }),
-    ),
+  HostedClient.runtime.fn(
+    (input: { readonly handle: string; readonly expiresInSeconds?: number }) =>
+      Effect.flatMap(HostedClient, (client) =>
+        client.files.downloadUrl({
+          params: { organization, handle: input.handle },
+          payload:
+            input.expiresInSeconds === undefined
+              ? {}
+              : { expiresInSeconds: input.expiresInSeconds },
+        }),
+      ),
   ),
 );

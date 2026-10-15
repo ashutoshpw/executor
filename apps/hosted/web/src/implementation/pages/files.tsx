@@ -167,7 +167,7 @@ function FilesTable({
     );
   const download = async (file: FileEntry) => {
     setDownloadFailure(undefined);
-    const result = await link(file.id);
+    const result = await link({ handle: file.id });
     if (Exit.isFailure(result)) {
       // Close the drawer so the failure is not rendered behind its modal overlay.
       setPreviewing(null);
@@ -184,8 +184,12 @@ function FilesTable({
         }
         onClose={() => setPreviewing(null)}
         onDownload={(file) => void download(file as FileEntry)}
-        mintLink={async (file) => {
-          const result = await link(file.id);
+        mintLink={async (file, expiresInSeconds) => {
+          const result = await link(
+            expiresInSeconds === undefined
+              ? { handle: file.id }
+              : { handle: file.id, expiresInSeconds },
+          );
           if (Exit.isFailure(result)) throw new Error(appError(result.cause));
           return result.value.url;
         }}

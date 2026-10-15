@@ -42,17 +42,34 @@ export const maxPdfPreviewBytes = 25 * 1024 * 1024;
 /** Markdown above this many bytes is downloaded, not previewed. */
 export const maxMarkdownPreviewBytes = 1024 * 1024;
 
-export type PreviewKind = "pdf" | "markdown";
+/** Media streams from its link, so nothing is buffered by the page and no size cap applies. */
+export type PreviewKind = "pdf" | "markdown" | "video" | "audio";
+type BufferedKind = "pdf" | "markdown";
+
+/** A media link outlives a long playback: four hours, where the default is fifteen minutes. */
+export const mediaLinkSeconds = 4 * 60 * 60;
 
 /** The previewable kind of a stored content type, or undefined. Files carry no name, so no extension. */
 export const previewKind = (contentType: string): PreviewKind | undefined => {
   const type = contentType.split(";")[0]?.trim().toLowerCase();
   if (type === "application/pdf" || type === "application/x-pdf") return "pdf";
   if (type === "text/markdown" || type === "text/x-markdown") return "markdown";
+  if (type === "video/mp4" || type === "video/webm" || type === "video/quicktime") return "video";
+  if (type === "video/ogg") return "video";
+  if (
+    type === "audio/mpeg" ||
+    type === "audio/mp4" ||
+    type === "audio/aac" ||
+    type === "audio/wav" ||
+    type === "audio/x-wav" ||
+    type === "audio/webm" ||
+    type === "audio/ogg"
+  )
+    return "audio";
   return undefined;
 };
 
-const limitOf = (kind: PreviewKind) =>
+const limitOf = (kind: BufferedKind) =>
   kind === "pdf" ? maxPdfPreviewBytes : maxMarkdownPreviewBytes;
 
 const megabytes = (bytes: number) => `${Math.round(bytes / (1024 * 1024))} MiB`;
@@ -486,6 +503,118 @@ function MarkdownViewer({ bytes }: { readonly bytes: ArrayBuffer }) {
   );
 }
 
+const unplayable = "This file can't be played in this browser.";
+
+/**
+ * Play media straight from its signed link with the browser's own element, which streams with
+ * range requests. If the link fails, for instance because it expired, one fresh link resumes from
+ * the current time; a second failure is reported. Closing the drawer stops the transfer.
+ */
+function MediaPlayer({
+  kind,
+  mintLink,
+  onDownload,
+}: {
+  readonly kind: "video" | "audio";
+  readonly mintLink: (expiresInSeconds: number) => Promise<string>;
+  readonly onDownload: () => void;
+}) {
+  const media = useRef<HTMLVideoElement & HTMLAudioElement>(null);
+  const retried = useRef(false);
+  const resume = useRef<{ readonly time: number; readonly playing: boolean }>(undefined);
+  const [url, setUrl] = useState<string>();
+  const [failure, setFailure] = useState<string>();
+
+  useEffect(() => {
+    let cancelled = false;
+    mintLink(mediaLinkSeconds).then(
+      (link) => {
+        if (!cancelled) setUrl(link);
+      },
+      (cause) => {
+        if (!cancelled)
+          setFailure(cause instanceof Error ? cause.message : "Could not create a link.");
+      },
+    );
+    const element = media.current;
+    return () => {
+      cancelled = true;
+      if (element === null) return;
+      // Stops the browser fetching bytes for a file nobody is watching.
+      element.pause();
+      element.removeAttribute("src");
+      element.load();
+    };
+    // The link is minted once per opened file; the caller's closure may change every render.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const onError = () => {
+    const element = media.current;
+    if (url === undefined || element === null) return;
+    if (retried.current) return setFailure(unplayable);
+    retried.current = true;
+    resume.current = { time: element.currentTime, playing: !element.paused };
+    mintLink(mediaLinkSeconds).then(setUrl, () => setFailure(unplayable));
+  };
+  const onLoadedMetadata = () => {
+    const element = media.current;
+    const saved = resume.current;
+    if (element === null || saved === undefined) return;
+    resume.current = undefined;
+    element.currentTime = saved.time;
+    // A browser may refuse to resume without a gesture; the controls are still there.
+    if (saved.playing) element.play().catch(() => undefined);
+  };
+
+  if (failure !== undefined)
+    return (
+      <Notice>
+        <span>
+          {failure}{" "}
+          {failure === unplayable && (
+            <button type="button" className="underline" onClick={onDownload}>
+              Download it to open it.
+            </button>
+          )}
+        </span>
+      </Notice>
+    );
+  return (
+    <div className="min-h-0 flex-1 overflow-auto">
+      {url === undefined && (
+        <Notice>
+          <Spinner /> <span className="ml-2">Loading preview…</span>
+        </Notice>
+      )}
+      {kind === "video" ? (
+        <video
+          ref={media}
+          src={url}
+          controls
+          preload="metadata"
+          playsInline
+          onError={onError}
+          onLoadedMetadata={onLoadedMetadata}
+          className={`max-h-[70vh] w-full bg-black object-contain ${url === undefined ? "hidden" : ""}`}
+        />
+      ) : (
+        <div className={`p-4 ${url === undefined ? "hidden" : ""}`}>
+          <audio
+            ref={media}
+            src={url}
+            controls
+            preload="metadata"
+            onError={onError}
+            onLoadedMetadata={onLoadedMetadata}
+            className="w-full"
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Bytes are fetched only for a previewable file within its size limit. */
 function PreviewBody({
   file,
@@ -493,7 +622,7 @@ function PreviewBody({
   mintLink,
 }: {
   readonly file: PreviewFile;
-  readonly kind: PreviewKind;
+  readonly kind: BufferedKind;
   readonly mintLink: () => Promise<string>;
 }) {
   const state = useFileBytes(file, limitOf(kind), mintLink);
@@ -515,7 +644,7 @@ function PreviewBody({
 }
 
 /**
- * A right-hand drawer previewing a PDF or Markdown file. It fetches through a short-lived link
+ * A right-hand drawer previewing a PDF, Markdown, video or audio file. It fetches through a short-lived link
  * the caller mints, never navigates to the link and never renders HTML from the file.
  */
 export function FilePreviewSheet({
@@ -530,7 +659,7 @@ export function FilePreviewSheet({
   readonly resourceUri: (file: PreviewFile) => string | undefined;
   readonly onClose: () => void;
   /** Mint a fresh download link for the file and return its URL; reject with a readable message. */
-  readonly mintLink: (file: PreviewFile) => Promise<string>;
+  readonly mintLink: (file: PreviewFile, expiresInSeconds?: number) => Promise<string>;
   readonly onDownload: (file: PreviewFile) => void;
 }) {
   // The last file stays rendered while the drawer slides out, then the content unmounts, which
@@ -562,11 +691,12 @@ function FilePreviewContent({
 }: {
   readonly file: PreviewFile;
   readonly uri: string | undefined;
-  readonly mintLink: (file: PreviewFile) => Promise<string>;
+  readonly mintLink: (file: PreviewFile, expiresInSeconds?: number) => Promise<string>;
   readonly onDownload: (file: PreviewFile) => void;
 }) {
   const kind = previewKind(file.contentType);
-  const tooLarge = kind !== undefined && file.size > limitOf(kind);
+  const buffered = kind === "pdf" || kind === "markdown" ? kind : undefined;
+  const tooLarge = buffered !== undefined && file.size > limitOf(buffered);
   return (
     <>
       <SheetHeader>
@@ -602,12 +732,19 @@ function FilePreviewContent({
       </SheetHeader>
       {kind === undefined ? (
         <Notice>This file type cannot be previewed. Download it to open it.</Notice>
-      ) : tooLarge ? (
+      ) : kind === "video" || kind === "audio" ? (
+        <MediaPlayer
+          key={file.id}
+          kind={kind}
+          mintLink={(seconds) => mintLink(file, seconds)}
+          onDownload={() => onDownload(file)}
+        />
+      ) : buffered === undefined ? null : tooLarge ? (
         <Notice>
-          Too large to preview (limit {megabytes(limitOf(kind))}). Download it to open it.
+          Too large to preview (limit {megabytes(limitOf(buffered))}). Download it to open it.
         </Notice>
       ) : (
-        <PreviewBody key={file.id} file={file} kind={kind} mintLink={() => mintLink(file)} />
+        <PreviewBody key={file.id} file={file} kind={buffered} mintLink={() => mintLink(file)} />
       )}
     </>
   );
