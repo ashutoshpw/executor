@@ -1,5 +1,6 @@
 /** Attribution for the local usage records; analytics opt-outs do not apply to this product feature. */
 import { Cause, Effect, Exit, Option, Predicate, Schema } from "effect";
+import { CurrentTask } from "@executor-js/mcp";
 import type { AutomationToolCall, AutomationToolObservation } from "@executor-js/sdk/scheduling";
 import { toolCompletion } from "@executor-js/telemetry/product-analytics";
 import { CurrentUserId, CurrentPrincipal } from "../contracts/auth.ts";
@@ -8,6 +9,8 @@ import { CurrentOrganization } from "../contracts/organization.ts";
 import { patGrantOf } from "./mcp-oauth.ts";
 import { CurrentUsage, usageFailure } from "../contracts/product-analytics.ts";
 import { CurrentApiKey, UsageStore, type UsageOutcome } from "../contracts/usage.ts";
+import { recordingSettings } from "./task-insights-settings.ts";
+import { storedArguments } from "./task-arguments.ts";
 
 const sourceLabels: Record<string, string> = {
   dashboard: "Dashboard",
@@ -28,6 +31,10 @@ export const recordToolCall = (call: {
   readonly outcome: UsageOutcome;
   readonly errorType?: string | undefined;
   readonly durationMs: number;
+  /** When the call started; the record is ordered by it. Defaults to now. */
+  readonly startedAt?: number | undefined;
+  /** The call's arguments. Kept, masked, only when the organization records them. */
+  readonly arguments?: unknown;
 }) =>
   Effect.gen(function* () {
     const store = yield* UsageStore;
@@ -57,10 +64,20 @@ export const recordToolCall = (call: {
                 ? principal.value.name
                 : fallback,
             ];
+    const task = yield* CurrentTask;
+    // The setting is read only for a call that has arguments, and a failed read means not recorded.
+    const settings =
+      call.arguments === undefined
+        ? undefined
+        : yield* recordingSettings(organization.value.organization);
+    const kept =
+      settings?.recordArguments === true
+        ? storedArguments(call.arguments, settings.extraMaskedKeys)
+        : undefined;
     // A record that cannot be kept never reaches the tool call.
     yield* Effect.try(() =>
       store.record({
-        at: new Date(),
+        at: new Date(call.startedAt ?? Date.now()),
         organizationId: organization.value.organization,
         userId,
         agentKey,
@@ -71,6 +88,10 @@ export const recordToolCall = (call: {
         outcome: call.outcome,
         ...(call.errorType === undefined ? {} : { errorType: call.errorType }),
         durationMs: call.durationMs,
+        ...(task?.taskId === undefined ? {} : { taskId: task.taskId }),
+        ...(task?.sessionId == null ? {} : { mcpSessionId: task.sessionId }),
+        ...(task === undefined ? {} : { runId: task.runId }),
+        ...(kept === undefined ? {} : { arguments: kept }),
       }),
     ).pipe(Effect.ignore);
   });
@@ -143,6 +164,7 @@ export const automationUsage = (
         outcome: result.outcome,
         ...(result.error_type === undefined ? {} : { errorType: result.error_type }),
         durationMs: call.durationMs,
+        ...(call.runId === undefined ? {} : { runId: call.runId }),
       });
     }).pipe(Effect.catchCause(() => Effect.void)),
 });

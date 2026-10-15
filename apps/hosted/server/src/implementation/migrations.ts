@@ -15,6 +15,7 @@ import { migrateApiKeyMemberships } from "./api-key-membership-schema.ts";
 import { queueExecutorAppUpgrades } from "./executor-app-upgrades.ts";
 import { migrateAppAccountLinks } from "./app-account-schema.ts";
 import { migrateFileHandleListing, migrateFileHandles } from "./file-handle-schema.ts";
+import { migrateTaskInsights } from "./task-insights-schema.ts";
 
 /**
  * Migration failures stop startup; callers must not log the driver's secret-bearing cause. The
@@ -115,6 +116,9 @@ const hostedProductMigrations = migrateProductSteps("private_hosted_migrations",
   "10_file_handles": migrateFileHandles,
   // Additive: an index for the Files page's newest-first listing; the running server never reads it.
   "11_file_handle_listing": migrateFileHandleListing,
+  // Additive: the organization's task insights setting and a settings change trail; the running
+  // server never reads them.
+  "12_task_insights": migrateTaskInsights,
 });
 
 /**
