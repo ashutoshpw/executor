@@ -108,7 +108,10 @@ export const makeFileHandleStore = (options: {
           yield* sql`update ${table}
             set expires_at = greatest(expires_at, ${at}::timestamptz + (${input.ttlSeconds} * interval '1 second'))
             where id = ${hit.id}`;
-          yield* sql`delete from ${table} where id = ${input.id}`;
+          // The runner already wrote this row's object. Retire the row instead of deleting it so
+          // the sweep, which owns cleanup, removes the object and then the row. A 'deleting' row
+          // is never served, and never a dedupe target, which both require 'complete'.
+          yield* sql`update ${table} set state = 'deleting' where id = ${input.id}`;
           const found = yield* sql`select ${columns(sql)} from ${table} where id = ${hit.id}`;
           return { row: yield* Schema.decodeUnknownEffect(Row)(found[0]), deduped: true };
         }
