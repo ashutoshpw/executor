@@ -2328,6 +2328,21 @@ export const scenarios = plan({
       ),
     },
   },
+  appHostFramework: {
+    fixtures: "actors",
+    file: "app-host-framework.spec.ts",
+    title:
+      "The self-host product builds an app pinned to its own apps version from files it serves, even when the registry lacks that version, while apps pinned to a published release still install from the registry",
+    targets: {
+      "self-host": scheduled,
+      cloud: na(
+        "Cloud's compiler already serves its checkout's framework to a test stage from EXECUTOR_APPS_VERSION; production installs published releases.",
+      ),
+      local: na(
+        "The local product does not serve its own framework yet; its apps install their declared version from the registry.",
+      ),
+    },
+  },
   appFrameworkUpgrade: {
     fixtures: "actors",
     file: "app-framework-upgrade.spec.ts",

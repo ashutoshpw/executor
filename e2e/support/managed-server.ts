@@ -52,6 +52,10 @@ export const OperatorSettings = Schema.Struct({
   EXECUTOR_URL_ALLOW_HTTP_ORIGINS: Schema.optionalKey(Schema.String),
   NODE_EXTRA_CA_CERTS: Schema.optionalKey(Schema.NonEmptyString),
   EXECUTOR_OAUTH_CLIENT_METADATA_URL: Schema.optionalKey(Schema.NonEmptyString),
+  /** The registry app builds install from; a scenario points it at one that lacks a version. */
+  EXECUTOR_NPM_REGISTRY: Schema.optionalKey(Schema.NonEmptyString),
+  /** Install every `apps` release from the registry, including the host's own version. */
+  EXECUTOR_APPS_FRAMEWORK_DISABLED: Schema.optionalKey(Schema.String),
   /** The build an upgrade installs. */
   EXECUTOR_BUILD_VERSION: Schema.optionalKey(Schema.NonEmptyString),
   /**
