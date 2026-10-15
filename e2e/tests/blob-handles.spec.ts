@@ -87,7 +87,7 @@ layer(HostedLive, { excludeTestServices: true })("File handles", (it) => {
           (yield* appA.call("limits")).value,
         );
         expect(limits.maxFileBytes).toBe(2 * 1024 * mebibyte);
-        expect(limits.methods).toEqual(["fromUrl", "create", "read"]);
+        expect(limits.methods).toEqual(["fromUrl", "create", "read", "url"]);
         expect(limits.ttlSeconds).toBe(7 * day);
 
         // The host fetches the file; the tool result is a small handle, never the bytes.

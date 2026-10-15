@@ -1055,6 +1055,62 @@ export const scenarios = plan({
       local: na("Hosted app API fixture; the Node adapter is exercised by self-host."),
     },
   },
+  fileDownloadRanges: {
+    fixtures: "actors",
+    file: "file-transfer.spec.ts",
+    title:
+      "A file link serves exact ranges and conditional requests without a credential, whether an API caller or an app minted it",
+    targets: {
+      "self-host": scheduled,
+      cloud: na(
+        "Cloud's runner writes a UserContent bucket that managed local Cloud does not provide; run `bun run e2e:deployed` against a stage to cover it.",
+      ),
+      local: na("Hosted app API fixture; the local routes are covered by the files CLI scenario."),
+    },
+  },
+  fileLinkRejection: {
+    fixtures: "actors",
+    file: "file-transfer.spec.ts",
+    title:
+      "Tampered and wrong-operation file links, other organizations, retired files, removed members and expired links are refused",
+    targets: {
+      "self-host": scheduled,
+      cloud: na("Advances the wall clock of a runner-owned product process."),
+      local: na("Hosted fixture: membership and organizations do not exist locally."),
+    },
+  },
+  fileUpload: {
+    fixtures: "actors",
+    file: "file-transfer.spec.ts",
+    title:
+      "An uploaded file becomes a deduped handle within the size limit, by credential or by upload link",
+    targets: {
+      "self-host": scheduled,
+      cloud: na("Needs a Cloud UserContent bucket and the runner's filesystem store."),
+      local: na("Hosted fixture; the local routes are covered by the files CLI scenario."),
+    },
+  },
+  fileCliRoundTrip: {
+    fixtures: "actors",
+    file: "file-transfer.spec.ts",
+    title:
+      "executor files put then get round-trips a file, resumes a partial download and refuses a corrupt one",
+    targets: {
+      "self-host": scheduled,
+      cloud: na("Needs a Cloud UserContent bucket and the runner's filesystem store."),
+      local: na("Hosted fixture; the CLI's local path is covered by the local files scenario."),
+    },
+  },
+  localFiles: {
+    file: "file-transfer.spec.ts",
+    title:
+      "The local server stores files from the files CLI and serves them to its API key and to signed links",
+    targets: {
+      local: scheduled,
+      "self-host": na("The hosted routes are covered by the organization scenarios."),
+      cloud: na("The hosted routes are covered by the organization scenarios."),
+    },
+  },
   toolsIndexCache: {
     fixtures: "actors",
     file: "tools-index-cache.spec.ts",
