@@ -1146,6 +1146,32 @@ export const scenarios = plan({
       local: na("Hosted fixture; the local routes are covered by the files CLI scenario."),
     },
   },
+  organizationFiles: {
+    fixtures: "actors",
+    file: "organization-files.spec.ts",
+    title:
+      "The Files page lists an organization's files by role and app use, pages them, and lets only owners and admins delete",
+    targets: {
+      "self-host": scheduled,
+      cloud: na(
+        "Cloud's runner writes a UserContent bucket that managed local Cloud does not provide; run `bun run e2e:deployed` against a stage to cover it.",
+      ),
+      local: na("Hosted organization API; local has no organizations or Files page."),
+    },
+  },
+  organizationFileDownloads: {
+    fixtures: "actors",
+    file: "organization-files.spec.ts",
+    title:
+      "A member downloads and links only files of apps they can use, as an owner or admin may any file of the organization",
+    targets: {
+      "self-host": scheduled,
+      cloud: na(
+        "Cloud's runner writes a UserContent bucket that managed local Cloud does not provide; run `bun run e2e:deployed` against a stage to cover it.",
+      ),
+      local: na("Hosted organization API; local has no organizations."),
+    },
+  },
   fileCliRoundTrip: {
     fixtures: "actors",
     file: "file-transfer.spec.ts",

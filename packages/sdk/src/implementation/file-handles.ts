@@ -23,6 +23,7 @@ import { BlobKey } from "../contracts/blobs.ts";
 import {
   userContentFolder,
   type FileHandleStore,
+  type ListedFileHandle,
   type StoredFileHandle,
 } from "../contracts/file-handles.ts";
 
@@ -57,6 +58,12 @@ const columns = (
 ) => sql`id, owner, sha256, size::text as size, content_type,
   to_char(expires_at at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as expires_at,
   creator_app_id`;
+
+const ListedRow = Schema.Struct({
+  ...Row.fields,
+  created_at: Schema.String,
+  created_at_exact: Schema.String,
+});
 
 const keyOf = (owner: string, id: string) => BlobKey.make(`${userContentFolder(owner)}/${id}`);
 
@@ -217,6 +224,54 @@ export const makeFileHandleStore = (options: {
               : Effect.succeed({ id: found[0].id, key: keyOf(found[0].owner, found[0].id) }),
           ),
         ),
+    retireAny: (input) =>
+      now
+        .pipe(
+          Effect.flatMap((at) =>
+            rows(
+              "retire-any",
+              sql`update ${table} set state = 'deleting'
+              where id = ${input.id} and owner = ${input.owner} and state = 'complete'
+                and expires_at > ${at}::timestamptz
+              returning ${columns(sql)}`,
+            ),
+          ),
+        )
+        .pipe(
+          Effect.flatMap((found) =>
+            found[0] === undefined
+              ? Effect.fail(new BlobNotFound({ id: input.id }))
+              : Effect.succeed({ id: found[0].id, key: keyOf(found[0].owner, found[0].id) }),
+          ),
+        ),
+    list: (input) =>
+      Effect.gen(function* () {
+        if (input.creators !== "any" && input.creators.length === 0) return [];
+        const at = yield* now;
+        const creators =
+          input.creators === "any" ? sql`` : sql` and ${sql.in("creator_app_id", input.creators)}`;
+        const app = input.app === undefined ? sql`` : sql` and creator_app_id = ${input.app}`;
+        const after =
+          input.after === undefined
+            ? sql``
+            : sql` and (created_at, id) < (${input.after.createdAtExact}::timestamptz, ${input.after.id})`;
+        const found = yield* sql`select ${columns(sql)},
+            to_char(created_at at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as created_at,
+            created_at::text as created_at_exact
+          from ${table}
+          where owner = ${input.owner} and state = 'complete'
+            and expires_at > ${at}::timestamptz${creators}${app}${after}
+          order by created_at desc, id desc limit ${input.limit}`.pipe(
+          Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(ListedRow))),
+          Effect.catch(unavailable("list")),
+        );
+        return found.map((row): ListedFileHandle => ({
+          handle: stored(row).handle,
+          creator: row.creator_app_id ?? undefined,
+          createdAt: row.created_at,
+          createdAtExact: row.created_at_exact,
+        }));
+      }),
     finish: (id) => exec("finish", sql`delete from ${table} where id = ${id}`),
     claimExpired: (input) =>
       now

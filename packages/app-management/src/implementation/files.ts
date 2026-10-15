@@ -16,7 +16,7 @@ import {
   uploadHandle,
   uploadResponse,
 } from "@executor-js/sdk/file-transfer";
-import { Effect, Layer, Schema } from "effect";
+import { Context, Effect, Layer, Schema } from "effect";
 import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import { HttpApi, HttpApiBuilder, type HttpApiMiddleware } from "effect/http-api";
 import { AppManagementHost } from "../http.ts";
@@ -63,9 +63,36 @@ const rawFailure = <R>(
     ),
   );
 
-export const fileTransferHandlers = <I extends HttpApiMiddleware.AnyId, S, Id extends string>(
+/**
+ * The apps whose files a caller may reach: `"any"`, or the ids of those apps. A host that supplies
+ * this hides every other file, including one with no creator app, as missing: the answer does not
+ * say whether the file exists. A host that supplies nothing lets the caller reach every file of
+ * the owner, as the local paired user does.
+ */
+export type FileCreators<R> = (
+  identity: Context.Service.Shape<typeof AppIdentity>,
+) => Effect.Effect<"any" | ReadonlyArray<string>, BlobUnavailable, R>;
+
+const creatorVisibility = <R>(
+  creators: FileCreators<R> | undefined,
+  identity: Context.Service.Shape<typeof AppIdentity>,
+) =>
+  (creators === undefined ? Effect.succeed("any" as const) : creators(identity)).pipe(
+    Effect.map(
+      (allowed) => (creator: string | undefined) =>
+        allowed === "any" || (creator !== undefined && allowed.includes(creator)),
+    ),
+  );
+
+export const fileTransferHandlers = <
+  I extends HttpApiMiddleware.AnyId,
+  S,
+  Id extends string,
+  R = never,
+>(
   api: ReturnType<typeof fileTransferApi<I, S>>,
   apiId: Id,
+  creators?: FileCreators<R>,
 ) =>
   HttpApiBuilder.group(HttpApi.make(apiId).addHttpApi(api), "files", (handlers) =>
     handlers
@@ -74,10 +101,12 @@ export const fileTransferHandlers = <I extends HttpApiMiddleware.AnyId, S, Id ex
           Effect.gen(function* () {
             const identity = yield* AppIdentity;
             const transfer = yield* transferOf;
+            const visible = yield* creatorVisibility(creators, identity);
             return yield* downloadHandle({
               userContent: transfer.userContent,
               owner: identity.owner,
               id: params.handle,
+              visible,
             });
           }),
         ),
@@ -107,6 +136,8 @@ export const fileTransferHandlers = <I extends HttpApiMiddleware.AnyId, S, Id ex
             owner: identity.owner,
             id: params.handle,
           });
+          if (!(yield* creatorVisibility(creators, identity))(found.creator))
+            return yield* new BlobNotFound({ id: params.handle });
           return yield* transfer.links.signGet({
             owner: identity.owner,
             id: found.handle.id,
