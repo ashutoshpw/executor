@@ -3,6 +3,7 @@ export * from "./contracts/backend.ts";
 export * from "./contracts/execute.ts";
 export * from "./contracts/elicitation.ts";
 export * from "./contracts/skills.ts";
+export * from "./contracts/task.ts";
 export * from "./contracts/tools.ts";
 export { mcp, makeMcp } from "./implementation/server.ts";
 export { skills } from "./implementation/skills.ts";

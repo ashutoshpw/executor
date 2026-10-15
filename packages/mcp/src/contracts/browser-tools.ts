@@ -12,6 +12,7 @@ import {
   ExecutionResultMeta,
 } from "./execute.ts";
 import { ElicitationResponseInvalid, InteractionId, ToolInputPending } from "./interactions.ts";
+import { TaskIdArgument } from "./task.ts";
 
 /** Browser pending results retain the standard interaction and add its authenticated review link. */
 export const BrowserExecutionResult = Schema.Union([
@@ -22,7 +23,10 @@ export const BrowserExecutionResult = Schema.Union([
 export type BrowserExecutionResult = typeof BrowserExecutionResult.Type;
 
 /** The agent can collect a browser answer, but cannot supply or replace it. */
-export const BrowserResumeInput = Schema.Struct({ requestId: InteractionId });
+export const BrowserResumeInput = Schema.Struct({
+  requestId: InteractionId,
+  taskId: TaskIdArgument,
+});
 /** Execute with browser-based delivery of every pending interaction. */
 export const BrowserExecuteTool = McpTool.make("execute", {
   description:
