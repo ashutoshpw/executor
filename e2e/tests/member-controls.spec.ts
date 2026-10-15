@@ -437,6 +437,9 @@ layer(HostedLive, { excludeTestServices: true })("Member controls", (it) => {
                 page.getByRole("textbox", { name: "Organization name", exact: true }).isDisabled(),
               ),
             ).toBe(true);
+            yield* browser.use("Open the Members tab", (page) =>
+              page.getByRole("tab", { name: "Members", exact: true }).click(),
+            );
             expect(
               yield* browser.use("Inviting members is disabled", (page) =>
                 page.getByRole("button", { name: "Add member", exact: true }).isDisabled(),

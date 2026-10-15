@@ -339,7 +339,7 @@ function Connection({
           onClick={async () => {
             const result = await signIn({
               providerId: connection.providerId,
-              redirect: `/org/${slug}/organization`,
+              redirect: `/org/${slug}/organization?tab=security`,
             });
             if (Exit.isFailure(result))
               setError("Unable to start SSO. Check the connection settings and try again.");

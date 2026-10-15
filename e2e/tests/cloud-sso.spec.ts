@@ -63,7 +63,7 @@ const enableEnterprise = (team: { readonly id: string; readonly slug: string }, 
         expect(current.enterprise).toBe(false);
         const held = yield* holdQuery(/\/api\/organizations\/[^/]+\/billing$/, "continue");
         yield* browser.use(`Open ${selection.name} settings before billing resolves`, (page) =>
-          page.goto(`/org/${team.slug}/organization`),
+          page.goto(`/org/${team.slug}/organization?tab=security`),
         );
         yield* held.requested;
         expect(
@@ -485,7 +485,7 @@ layer(HostedLive, { excludeTestServices: true })("Cloud customer SSO", (it) => {
         yield* browser.login(yield* freshOwnerSession);
         yield* enableEnterprise(team, true);
         yield* browser.use("Open team SSO settings", (page) =>
-          page.goto(`/org/${team.slug}/organization`),
+          page.goto(`/org/${team.slug}/organization?tab=security`),
         );
         yield* browser.use("Add an OIDC connection", (page) =>
           page.getByRole("button", { name: "Add SSO connection", exact: true }).click(),
@@ -756,7 +756,7 @@ layer(HostedLive, { excludeTestServices: true })("Cloud customer SSO", (it) => {
         yield* browser.login(yield* freshOwnerSession);
         yield* enableEnterprise(team);
         yield* browser.use("Open the SAML team's settings", (page) =>
-          page.goto(`/org/${team.slug}/organization`),
+          page.goto(`/org/${team.slug}/organization?tab=security`),
         );
         yield* browser.use("Add a SAML connection", (page) =>
           page.getByRole("button", { name: "Add SSO connection", exact: true }).click(),

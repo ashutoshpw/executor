@@ -20,7 +20,7 @@ layer(HostedLive, { excludeTestServices: true })("Invitation dialog", (it) => {
         yield* freeSeat;
         yield* browser.login(actors.owner);
         yield* browser.use("Open organization settings", (page) =>
-          page.goto(`/org/${actors.organization.slug}/organization`),
+          page.goto(`/org/${actors.organization.slug}/organization?tab=members`),
         );
         yield* browser.use("The membership list has loaded", (page) =>
           page.getByRole("table", { name: "Members", exact: true }).waitFor({ state: "visible" }),

@@ -4948,6 +4948,16 @@ export const scenarios = plan({
       local: na("Organization settings are hosted only."),
     },
   },
+  organizationSettingsTabs: {
+    fixtures: "actors",
+    file: "organization-settings-tabs.spec.ts",
+    title: "Organization settings group their cards in tabs that the address selects",
+    targets: {
+      "self-host": scheduled,
+      cloud: scheduled,
+      local: na("Organization settings are hosted only."),
+    },
+  },
   settingsLoading: {
     fixtures: "actors",
     file: "settings-loading.spec.ts",

@@ -75,6 +75,10 @@ const OrganizationRouteContext = createContext<{
   readonly metadataFailed: boolean;
   readonly retry: () => void;
 } | null>(null);
+/** The route's role when a route context exists; loading placeholders can render without one. */
+export function useOrganizationRouteRole(): OrganizationAccess["role"] | undefined {
+  return useContext(OrganizationRouteContext)?.role;
+}
 /** The URL target is immediately usable by page requests, independently of sidebar metadata. */
 export function useOrganizationRoute() {
   const value = useContext(OrganizationRouteContext);

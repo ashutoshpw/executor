@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import { Link, createFileRoute } from "@tanstack/react-router";
+import { parseOrganizationSearch } from "@executor-js/hosted-web/contracts/navigation";
 import { OrganizationPage, type MemberLimit } from "@executor-js/hosted-web/pages/organization";
 import { useOrganizationRoute } from "@executor-js/hosted-web/organization";
 import { Button } from "@executor-js/ui/components/button";
@@ -41,24 +42,36 @@ function useMemberLimit(): MemberLimit | undefined {
 }
 
 function CloudOrganizationPage() {
+  const { tab } = Route.useSearch();
+  const navigate = Route.useNavigate();
   return (
     <OrganizationPage
       emailInvitations
       memberLimit={useMemberLimit()}
-      footer={<DeleteOrganization />}
-    >
-      <BillingSettings />
-      {/* Only enterprise plans show this card, and its plan check calls the billing provider;
-          the rest of the page does not wait for it. */}
-      <Suspense fallback={null}>
-        <SsoSettings />
-      </Suspense>
-      <V1ImportSettings />
-    </OrganizationPage>
+      generalFooter={<DeleteOrganization />}
+      extraTabs={[
+        { id: "billing", label: "Billing", content: <BillingSettings /> },
+        {
+          id: "security",
+          label: "Security",
+          content: (
+            // Only enterprise plans show this card, and its plan check calls the billing provider;
+            // the rest of the page does not wait for it.
+            <Suspense fallback={null}>
+              <SsoSettings />
+            </Suspense>
+          ),
+        },
+        { id: "import", label: "Import", content: <V1ImportSettings /> },
+      ]}
+      tab={tab}
+      onTabChange={(next) => void navigate({ search: { tab: next }, replace: true })}
+    />
   );
 }
 
 /** Cloud adds billing settings, the member limit and owner-only removal to the shared organization page. */
 export const Route = createFileRoute("/org/$organizationSlug/organization")({
+  validateSearch: parseOrganizationSearch,
   component: CloudOrganizationPage,
 });

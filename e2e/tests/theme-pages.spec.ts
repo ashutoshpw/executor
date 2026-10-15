@@ -198,6 +198,7 @@ export default defineApp({}, { tools: router({
       ["Approvals", `${org}/approvals`],
       ["Groups", `${org}/groups`],
       ["Organization settings", `${org}/organization`],
+      ["Organization members", `${org}/organization?tab=members`],
       ["Account profile", `/account/profile?organization=${actors.organization.slug}`],
       ["Account security", `/account/security?organization=${actors.organization.slug}`],
       ["Account tokens", `/account/tokens?organization=${actors.organization.slug}`],
@@ -258,7 +259,7 @@ export default defineApp({}, { tools: router({
     yield* overlay(Theme, "Create token dialog", "/account/tokens", (page) =>
       page.getByRole("button", { name: "Create token" }).click(),
     );
-    yield* overlay(Theme, "Add member dialog", `${org}/organization`, (page) =>
+    yield* overlay(Theme, "Add member dialog", `${org}/organization?tab=members`, (page) =>
       page.getByRole("button", { name: "Add member" }).click(),
     );
     yield* overlay(Theme, "Account menu", `${org}/apps`, (page) =>

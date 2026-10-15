@@ -1,7 +1,9 @@
 import { usePageUrl } from "@executor-js/dashboard-start/page";
 import {
   OrganizationSettingsPending,
+  OrganizationTabs,
   organizationSettingClass,
+  organizationTabList,
 } from "../components/organization-settings-pending.tsx";
 import { PageFrame, PageHeader } from "@executor-js/ui/dashboard/page";
 import { useAtomSet, useAtomValue } from "@effect/atom-react";
@@ -37,46 +39,64 @@ import { OrganizationMembers, type MemberLimit } from "../components/organizatio
 import { OrganizationBlobSettings } from "../components/organization-blob-settings.tsx";
 import { OrganizationTaskInsightsSettings } from "../components/organization-task-insights-settings.tsx";
 import { productTitle, useDocumentTitle } from "@executor-js/ui/hooks/document-title";
+import type { OrganizationTab } from "../../contracts/navigation.ts";
 import { organizationSlugMaxLength } from "@executor-js/hosted-server/organization";
 
 export type { MemberLimit };
 
-/** Hosts may compose extra admin settings, a member limit and a footer below the members list. */
+/** A tab a host adds after the shared ones; its content keeps its own role checks. */
+export type OrganizationExtraTab = {
+  readonly id: OrganizationTab;
+  readonly label: string;
+  readonly content: ReactNode;
+};
+
+/** Settings are grouped in tabs; the active one lives in the address (`?tab=`). */
 export function OrganizationPage({
   emailInvitations = false,
   memberLimit,
-  children,
-  footer,
+  extraTabs = [],
+  generalFooter,
+  tab,
+  onTabChange,
 }: {
   readonly emailInvitations?: boolean;
   readonly memberLimit?: MemberLimit | undefined;
-  readonly children?: ReactNode;
-  readonly footer?: ReactNode;
+  readonly extraTabs?: ReadonlyArray<OrganizationExtraTab>;
+  /** Shown at the bottom of General, such as a danger zone. */
+  readonly generalFooter?: ReactNode;
+  readonly tab?: OrganizationTab | undefined;
+  readonly onTabChange?: ((tab: OrganizationTab) => void) | undefined;
 }) {
   return (
     <OrganizationDetailsBoundary
-      pending={<OrganizationSettingsPending>{children}</OrganizationSettingsPending>}
+      pending={<OrganizationSettingsPending tab={tab} extraTabs={extraTabs} />}
     >
       <OrganizationSettings
         emailInvitations={emailInvitations}
         memberLimit={memberLimit}
-        footer={footer}
-      >
-        {children}
-      </OrganizationSettings>
+        extraTabs={extraTabs}
+        generalFooter={generalFooter}
+        tab={tab}
+        onTabChange={onTabChange}
+      />
     </OrganizationDetailsBoundary>
   );
 }
 function OrganizationSettings({
   emailInvitations,
   memberLimit,
-  children,
-  footer,
+  extraTabs,
+  generalFooter,
+  tab,
+  onTabChange,
 }: {
   readonly emailInvitations: boolean;
   readonly memberLimit: MemberLimit | undefined;
-  readonly children?: ReactNode;
-  readonly footer?: ReactNode;
+  readonly extraTabs: ReadonlyArray<OrganizationExtraTab>;
+  readonly generalFooter?: ReactNode;
+  readonly tab: OrganizationTab | undefined;
+  readonly onTabChange: ((tab: OrganizationTab) => void) | undefined;
 }) {
   const organization = useOrganization();
   const renaming = useAtomValue(renameOrganizationAtom(organization.organization));
@@ -85,19 +105,42 @@ function OrganizationSettings({
   const pending =
     organization.checking || renaming.waiting || changingSlug.waiting || changingLogo.waiting;
   useDocumentTitle(productTitle(`${organization.name} settings`));
+  // Task insights are owner and admin only, so members never see the tab.
+  const administrator = organization.role === "owner" || organization.role === "admin";
+  const tabs = organizationTabList(administrator, extraTabs);
+  const active = tabs.find((item) => item.id === tab)?.id ?? "general";
+  const content = (id: OrganizationTab): ReactNode => {
+    switch (id) {
+      case "general":
+        return (
+          <>
+            <OrganizationName disabled={pending} />
+            <OrganizationIcon disabled={pending} />
+            <OrganizationUrl disabled={pending} />
+            {generalFooter && <div className="mt-3">{generalFooter}</div>}
+          </>
+        );
+      case "members":
+        return (
+          <OrganizationMembers emailInvitations={emailInvitations} memberLimit={memberLimit} />
+        );
+      case "files":
+        return <OrganizationBlobSettings disabled={pending} />;
+      case "task-insights":
+        return <OrganizationTaskInsightsSettings disabled={pending} />;
+      default:
+        return extraTabs.find((item) => item.id === id)?.content;
+    }
+  };
   return (
     <PageFrame>
       <PageHeader title={organization.name} />
-      <div className="organization-settings flex flex-col gap-3">
-        <OrganizationName disabled={pending} />
-        <OrganizationIcon disabled={pending} />
-        <OrganizationUrl disabled={pending} />
-        <OrganizationBlobSettings disabled={pending} />
-        <OrganizationTaskInsightsSettings disabled={pending} />
-        {children}
-      </div>
-      <OrganizationMembers emailInvitations={emailInvitations} memberLimit={memberLimit} />
-      {footer && <div className="mt-6">{footer}</div>}
+      <OrganizationTabs
+        tabs={tabs}
+        active={active}
+        onChange={(id) => onTabChange?.(id)}
+        content={content}
+      />
     </PageFrame>
   );
 }

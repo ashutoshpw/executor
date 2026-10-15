@@ -108,6 +108,25 @@ export function parseFilesSearch(search: Record<string, unknown>): {
   };
 }
 
+/** Tabs of the organization settings page; hosts add their own ids to this list. */
+export const organizationTabs = [
+  "general",
+  "members",
+  "files",
+  "task-insights",
+  "billing",
+  "security",
+  "import",
+] as const;
+export type OrganizationTab = (typeof organizationTabs)[number];
+
+/** Organization settings keep their active tab in the address; unknown or missing leaves it unset, which shows General. */
+export function parseOrganizationSearch(search: Record<string, unknown>): {
+  readonly tab?: OrganizationTab | undefined;
+} {
+  return { tab: organizationTabs.find((id) => id === search.tab) };
+}
+
 /** App tabs keep their view on refresh in both hosted products. */
 export function parseAppSearch(search: Record<string, unknown>): ReturnType<
   typeof parseConnectionSearch

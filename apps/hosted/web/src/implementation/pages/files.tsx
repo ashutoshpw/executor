@@ -130,6 +130,7 @@ export function FilesPage({
         <Link
           to="/org/$organizationSlug/organization"
           params={{ organizationSlug: slug }}
+          search={{ tab: "files" }}
           className="underline underline-offset-2"
         >
           organization settings

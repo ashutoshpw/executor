@@ -11,5 +11,13 @@ export function BillingPagePending() {
 export function CloudPagePending() {
   const { pathname } = useLocation();
   if (/^\/org\/[^/]+\/billing\/?$/.test(pathname)) return <BillingPagePending />;
-  return <PagePending organizationSettings={<BillingSettingsPending />} />;
+  return (
+    <PagePending
+      organizationExtraTabs={[
+        { id: "billing", label: "Billing", content: <BillingSettingsPending /> },
+        { id: "security", label: "Security", content: null },
+        { id: "import", label: "Import", content: null },
+      ]}
+    />
+  );
 }

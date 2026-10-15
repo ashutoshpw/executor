@@ -390,7 +390,7 @@ function CallsTable({ calls }: { readonly calls: ReadonlyArray<TaskCall> }) {
                     <p className="mt-3 text-xs text-muted-foreground">Arguments (masked)</p>
                     {call.arguments === null ? (
                       <p className="mt-1 text-xs text-muted-foreground">
-                        Not recorded. Turn on argument recording in organization settings.
+                        Not recorded. Turn on argument recording in <InsightsSettingsLink />.
                       </p>
                     ) : (
                       <pre className="mt-1 max-h-72 overflow-auto rounded-md border bg-background p-3 font-mono text-xs whitespace-pre-wrap break-words">
@@ -400,11 +400,15 @@ function CallsTable({ calls }: { readonly calls: ReadonlyArray<TaskCall> }) {
                     <p className="mt-3 text-xs text-muted-foreground">Response (masked)</p>
                     {call.response === null ? (
                       <p className="mt-1 text-xs text-muted-foreground">
-                        {call.outcome === "failure"
-                          ? "The call failed and returned no response."
-                          : call.outcome === "cancelled"
-                            ? "The call was cancelled before it returned a response."
-                            : "Not recorded. Turn on response recording in organization settings."}
+                        {call.outcome === "failure" ? (
+                          "The call failed and returned no response."
+                        ) : call.outcome === "cancelled" ? (
+                          "The call was cancelled before it returned a response."
+                        ) : (
+                          <>
+                            Not recorded. Turn on response recording in <InsightsSettingsLink />.
+                          </>
+                        )}
                       </p>
                     ) : (
                       <pre className="mt-1 max-h-72 overflow-auto rounded-md border bg-background p-3 font-mono text-xs whitespace-pre-wrap break-words">
@@ -442,6 +446,21 @@ const fileUri = /executor-file:\/\/[^\s"\\]+/g;
 const filesPath = "/org/$organizationSlug/files" as const;
 
 /** The file list link for one file: the Files page with its preview drawer open. */
+/** Task recording is switched on in the Task insights tab of organization settings. */
+function InsightsSettingsLink() {
+  const { slug } = useOrganizationRoute();
+  return (
+    <Link
+      to="/org/$organizationSlug/organization"
+      params={{ organizationSlug: slug }}
+      search={{ tab: "task-insights" }}
+      className="underline underline-offset-2"
+    >
+      organization settings
+    </Link>
+  );
+}
+
 function FileLink({
   file,
   children,
