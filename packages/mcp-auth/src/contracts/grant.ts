@@ -204,7 +204,7 @@ const pathOrganization = (pathname: string): OrganizationHandle | null | undefin
 /**
  * Missing URL mode retains the original model-mode default. A connection is optional;
  * duplicates and malformed values of either parameter are invalid, as is a malformed
- * organization in an `/org/<handle>/mcp` path.
+ * organization in an `/org/<handle>/mcp` path, or a connection on one.
  */
 export const requestedMcpAddress = (url: URL): McpAddress | undefined => {
   const modes = url.searchParams.getAll("elicitation_mode");
@@ -216,6 +216,8 @@ export const requestedMcpAddress = (url: URL): McpAddress | undefined => {
   if (organization === undefined) return undefined;
   const base = organization === null ? { mode } : { mode, organization };
   if (connections.length === 0) return base;
+  // A connection is already bound to its organization, so no URL names both.
+  if (organization !== null) return undefined;
   const connection = connections[0];
   return Schema.is(ConnectionId)(connection) ? { ...base, connection } : undefined;
 };
@@ -388,8 +390,6 @@ export const grantTarget = (
   if (origins.api.includes(url.origin) && resource === `${url.origin}/api`) return { kind: "api" };
   if (!origins.mcp.includes(url.origin)) return undefined;
   const address = requestedMcpAddress(url);
-  // An organization's URL is its own resource; a connection is already bound to its organization.
-  if (address?.organization !== undefined && address.connection !== undefined) return undefined;
   // Only the canonical spelling is a resource; other paths, reordered or extra parameters are not.
   return address !== undefined && mcpResource(url.origin, address) === resource
     ? { kind: "mcp", ...address }
