@@ -18,6 +18,7 @@ import {
   OAuthServer,
   OAuthTokenServer,
   type OAuthConfidentialRegistration,
+  type OAuthJwtBearerKey,
   OAuthRegistration,
   type OAuthOptions,
   type OAuthClientAuth,
@@ -40,6 +41,7 @@ import {
 } from "./oauth-diagnostics.ts";
 import { probeOAuthChallenge } from "./oauth-probe.ts";
 import { withExecutorUserAgent } from "./user-agent.ts";
+import { importSigningKey, signAssertion } from "./service-account-key.ts";
 
 const ProtocolCode = Schema.Literals([
   oauth.WWW_AUTHENTICATE_CHALLENGE,
@@ -491,6 +493,7 @@ const protocolStage =
       | "authorize"
       | "exchange"
       | "clientCredentials"
+      | "jwtBearer"
       | "refresh"
       | "revoke",
   ) =>
@@ -1435,6 +1438,25 @@ export const makeOAuthProtocol = (options: OAuthOptions) => {
   return {
     discover: (method: OAuthMethod) =>
       Effect.gen(function* () {
+        // A service account has no authorization server to discover: the declared token endpoint
+        // is the only address, and it is also the assertion's audience.
+        if (method.grant === "jwt_bearer") {
+          const tokenUrl = yield* secureUrl(method.tokenUrl);
+          return {
+            grant: "jwt_bearer" as const,
+            server: yield* decode(OAuthTokenServer, {
+              issuer: tokenUrl.origin,
+              issuer_derived: true,
+              token_endpoint: method.tokenUrl,
+            }),
+            tokenUrl: method.tokenUrl,
+            scopes: [...method.scopes],
+            subject: method.subject ?? ("optional" as const),
+            ...(method.scopeSeparator === undefined
+              ? {}
+              : { scopeSeparator: method.scopeSeparator }),
+          };
+        }
         const resolved = yield* Effect.gen(function* () {
           if (method.discover === undefined)
             return {
@@ -1736,6 +1758,62 @@ export const makeOAuthProtocol = (options: OAuthOptions) => {
         },
         { format: input.tokenRequestFormat, sent: clientSecrets(input.client) },
       ).pipe(protocolStage("clientCredentials")),
+    /**
+     * RFC 7523 JWT bearer grant: sign an assertion with a service account key and exchange it. The
+     * request carries only `grant_type` and `assertion`; the key authenticates through the
+     * signature, so no client ID or secret goes with it. A key that cannot sign fails as a
+     * rejected client.
+     */
+    jwtBearer: (input: {
+      tokenUrl: string;
+      key: OAuthJwtBearerKey;
+      subject?: string | undefined;
+      scopes: readonly string[];
+      scopeSeparator?: string | undefined;
+    }) =>
+      Effect.gen(function* () {
+        const unusable = () => new OAuthProtocolFailed({ reason: "invalid_client" });
+        const signing = yield* importSigningKey(input.key.privateKey).pipe(
+          Effect.mapError(unusable),
+        );
+        const now = yield* Clock.currentTimeMillis;
+        const assertion = yield* signAssertion({
+          key: signing,
+          clientEmail: input.key.clientEmail,
+          privateKeyId: input.key.privateKeyId,
+          subject: input.subject,
+          scope: input.scopes.join(input.scopeSeparator ?? " "),
+          audience: input.tokenUrl,
+          nowSeconds: Math.floor(now / 1000),
+        }).pipe(Effect.mapError(unusable));
+        return yield* request(
+          async (settings) => {
+            const server: oauth.AuthorizationServer = {
+              issuer: new URL(input.tokenUrl).origin,
+              token_endpoint: input.tokenUrl,
+            };
+            const response = await tokenResponse(
+              await settings[oauth.customFetch](input.tokenUrl, {
+                method: "POST",
+                body: new URLSearchParams({
+                  grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+                  assertion,
+                }),
+                headers: { accept: "application/json" },
+                redirect: "manual",
+                signal: settings.signal,
+              }),
+            );
+            return oauth.processClientCredentialsResponse(
+              server,
+              { client_id: input.key.clientEmail },
+              response,
+              { recognizedTokenTypes: await tokenTypes(response) },
+            );
+          },
+          { sent: [assertion, input.key.privateKey] },
+        );
+      }).pipe(protocolStage("jwtBearer")),
     refresh: (input: {
       server: OAuthServer;
       client: OAuthRegistration;

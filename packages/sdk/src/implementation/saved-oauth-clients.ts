@@ -147,7 +147,13 @@ export const makeSavedOAuthClients = (
       const account = accounts.get(AccountId.make(row.id));
       if (account === undefined) continue;
       const grant = yield* decrypt(account.id, row.encrypted, OAuthGrant).pipe(Effect.option);
-      if (Option.isNone(grant) || isFirstPartyGrant(grant.value)) continue;
+      // A service account key is no client's credentials, and a first-party grant holds none.
+      if (
+        Option.isNone(grant) ||
+        isFirstPartyGrant(grant.value) ||
+        grant.value.grant === "jwt_bearer"
+      )
+        continue;
       const { client, server, fields } = grant.value;
       const list = byClient.get(client.client_id) ?? [];
       list.push({
@@ -444,7 +450,9 @@ export const makeSavedOAuthClients = (
     provider === undefined
       ? []
       : Object.entries(provider.definition.auth).flatMap(([name, method]) =>
-          method.type === "oauth2" && method.grant !== "client_credentials"
+          method.type === "oauth2" &&
+          method.grant !== "client_credentials" &&
+          method.grant !== "jwt_bearer"
             ? [{ name, method }]
             : [],
         );
