@@ -47,7 +47,7 @@ import {
   fileHandleSweepLoop,
   makeFileHandleStore,
   maxLocalFileBytes,
-  maxLocalResourceReadBytes,
+  resourceReadBytesConfig,
   pendingBlobSeconds,
   type StreamingSha256,
   type UserContentOptions,
@@ -147,9 +147,7 @@ export const selfHostExecutorServices = <E, R>(
         Config.withDefault(pendingBlobSeconds),
       );
       // The most one MCP resources/read returns; a test host lowers it to see the typed refusal.
-      const maxResourceReadBytes = yield* Config.Number("EXECUTOR_FILE_RESOURCE_READ_BYTES").pipe(
-        Config.withDefault(maxLocalResourceReadBytes),
-      );
+      const maxResourceReadBytes = yield* resourceReadBytesConfig;
       const userContentOptions: UserContentOptions = {
         store: userContent,
         handles: makeFileHandleStore({ sql: database, table: "hosted_file_handles" }),

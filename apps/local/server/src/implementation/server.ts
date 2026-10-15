@@ -51,7 +51,7 @@ import {
   fileHandleSweepLoop,
   makeFileHandleStore,
   maxLocalFileBytes,
-  maxLocalResourceReadBytes,
+  resourceReadBytesConfig,
   type UserContentOptions,
 } from "@executor-js/sdk/blobs";
 import { officialCatalogUrl } from "@executor-js/catalog";
@@ -167,9 +167,7 @@ export const localApi = (
       );
       const repositories = nativeRepositories(path.join(directory, "repositories"));
       const server = yield* Scope.Scope;
-      const maxResourceReadBytes = yield* Config.Number("EXECUTOR_FILE_RESOURCE_READ_BYTES").pipe(
-        Config.withDefault(maxLocalResourceReadBytes),
-      );
+      const maxResourceReadBytes = yield* resourceReadBytesConfig;
       const userContentOptions: UserContentOptions = {
         store: userContent,
         handles: makeFileHandleStore({ sql, table: "local_file_handles" }),
