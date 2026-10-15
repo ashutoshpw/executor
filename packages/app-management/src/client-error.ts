@@ -72,3 +72,12 @@ export class LoginFailed extends Schema.TaggedError<LoginFailed>()("LoginFailed"
     "storage",
   ]),
 }) {}
+
+/**
+ * The files commands refused to start or finish, before or after the host answered: a download
+ * that would write bytes to a terminal, an output file that already exists, a path that is not a
+ * file, or bytes that do not hash to the file's own checksum. Carries no credential or content.
+ */
+export class FilesFailed extends Schema.TaggedError<FilesFailed>()("FilesFailed", {
+  reason: Schema.Literals(["terminal", "exists", "not-a-file", "checksum"]),
+}) {}
