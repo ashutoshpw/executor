@@ -8538,6 +8538,16 @@ export const scenarios = plan({
       local: na("Local's consent is covered by localMcpOAuthWithoutResource."),
     },
   },
+  mcpOrganizationOAuth: {
+    fixtures: "actors",
+    file: "mcp-organization-oauth.spec.ts",
+    title: "MCP OAuth for an organization's own MCP URL pins the grant to that organization",
+    targets: {
+      "self-host": scheduled,
+      cloud: scheduled,
+      local: na("Local has no organizations."),
+    },
+  },
   mcpSkills: {
     managementApps: ["owner"],
     fixtures: "actors",
