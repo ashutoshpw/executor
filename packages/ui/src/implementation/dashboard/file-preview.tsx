@@ -26,6 +26,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "../components/tooltip.tsx";
+import { CopyButton } from "./code.tsx";
 import { ToolMarkdown } from "./markdown.tsx";
 import { markdownDocument } from "./markdown-prose.ts";
 
@@ -522,8 +523,11 @@ export function FilePreviewSheet({
   onClose,
   mintLink,
   onDownload,
+  resourceUri,
 }: {
   readonly file: PreviewFile | null;
+  /** The address an MCP client reads a file from, or undefined while it is not known. */
+  readonly resourceUri: (file: PreviewFile) => string | undefined;
   readonly onClose: () => void;
   /** Mint a fresh download link for the file and return its URL; reject with a readable message. */
   readonly mintLink: (file: PreviewFile) => Promise<string>;
@@ -538,7 +542,12 @@ export function FilePreviewSheet({
     <Sheet open={file !== null} onOpenChange={(open) => !open && onClose()}>
       <SheetContent aria-describedby="file-preview-description">
         {shown !== null && (
-          <FilePreviewContent file={shown} mintLink={mintLink} onDownload={onDownload} />
+          <FilePreviewContent
+            file={shown}
+            mintLink={mintLink}
+            onDownload={onDownload}
+            uri={resourceUri(shown)}
+          />
         )}
       </SheetContent>
     </Sheet>
@@ -549,8 +558,10 @@ function FilePreviewContent({
   file,
   mintLink,
   onDownload,
+  uri,
 }: {
   readonly file: PreviewFile;
+  readonly uri: string | undefined;
   readonly mintLink: (file: PreviewFile) => Promise<string>;
   readonly onDownload: (file: PreviewFile) => void;
 }) {
@@ -563,6 +574,25 @@ function FilePreviewContent({
         <SheetDescription id="file-preview-description">
           {file.contentType} · {file.size.toLocaleString("en-US")} bytes
         </SheetDescription>
+        {uri !== undefined && (
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div className="flex min-w-0 items-center gap-2 pt-2">
+                  <span className="shrink-0 text-xs text-muted-foreground">Executor URI</span>
+                  <code className="min-w-0 flex-1 truncate font-mono text-[11px]" title={uri}>
+                    {uri}
+                  </code>
+                  <CopyButton code={uri} label="Copy Executor URI" />
+                </div>
+              </TooltipTrigger>
+              <TooltipContent className="max-w-xs">
+                An MCP client connected to Executor can read this file with resources/read. Scoped
+                connections cannot read files.
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )}
         <div className="pt-2">
           <Button variant="outline" size="sm" onClick={() => onDownload(file)}>
             <HugeiconsIcon icon={Download01Icon} size={15} aria-hidden />
