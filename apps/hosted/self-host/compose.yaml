@@ -34,8 +34,12 @@ services:
       # Off by default. <BETTER_AUTH_URL>/oauth/client-metadata.json serves a client metadata
       # document there, which authorization servers must be able to fetch over public HTTPS.
       EXECUTOR_OAUTH_CLIENT_METADATA_URL:
-      # Public app registry origin. The default is https://api.executor.sh.
+      # Upstream app registry that Add app lists beside this server's own apps (read-only).
+      # The default is https://api.executor.sh.
       EXECUTOR_REGISTRY_URL:
+      # Domain after an organization's slug in published package names. The default is
+      # executor.community.
+      EXECUTOR_PUBLISHING_DOMAIN:
       # Optional HTTPS app origin base. Localhost derives it from BETTER_AUTH_URL.
       EXECUTOR_APP_UI_BASE_URL:
       # Unset passthrough entries stay absent; the default is bundled Motel.

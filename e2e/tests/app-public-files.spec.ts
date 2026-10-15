@@ -588,8 +588,6 @@ layer(HostedLive, { excludeTestServices: true })("App public files", (it) => {
             object: blobId(added.bytes),
             size: added.bytes.length,
           });
-          // Self-host reads the hosted catalog and does not publish; Cloud keeps its own.
-          if ((yield* Target).metadata.target !== "cloud") return;
           const published = yield* api.request(
             actors.owner,
             "POST",
