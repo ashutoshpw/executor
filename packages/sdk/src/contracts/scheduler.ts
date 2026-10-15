@@ -38,6 +38,8 @@ export const ScheduleObservation = Context.Reference<{
 
 /** One tool call a schedule or a workflow step made on its own, without a caller waiting on it. */
 export interface AutomationToolCall {
+  /** The schedule run or workflow run the call belongs to. */
+  readonly runId?: string;
   readonly source: "schedule" | "workflow";
   readonly app: AppId;
   readonly owner: OwnerId;
