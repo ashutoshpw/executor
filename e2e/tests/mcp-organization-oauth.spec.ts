@@ -4,7 +4,7 @@ import { Effect, Exit, Layer, Redacted, Schema } from "effect";
 import { randomUUID } from "node:crypto";
 import { scenarios } from "../test-plan.ts";
 import { Api, body } from "../support/api.ts";
-import { Actors } from "../support/actors.ts";
+import { Actors, password } from "../support/actors.ts";
 import { Browser } from "../support/browser.ts";
 import { HostedLive, withHostedCase } from "../support/case.ts";
 import { Evidence } from "../support/evidence.ts";
@@ -12,8 +12,10 @@ import { McpOAuth } from "../support/mcp-oauth.ts";
 import { McpClient } from "../support/mcp-client.ts";
 import { Target } from "../support/platform.ts";
 import { rawRequest, targetHosts } from "../support/role-hosts.ts";
+import { FixtureActors, fixtureRequest } from "../sdk/fixtures.ts";
 
 const ProtectedResource = Schema.fromJsonString(Schema.Struct({ resource: Schema.String }));
+const Created = Schema.Struct({ id: Schema.String });
 const listTools = { jsonrpc: "2.0", id: 1, method: "tools/list" };
 const post = (token?: Redacted.Redacted<string>) => ({
   method: "POST",
@@ -103,6 +105,25 @@ layer(HostedLive, { excludeTestServices: true })("MCP organization OAuth", (it) 
         expect(listed.tools.map((tool) => tool.name)).toContain("execute");
 
         yield* evidence.step(
+          "A refreshed token keeps serving the organization URL",
+          Effect.gen(function* () {
+            const refreshed = yield* oauth.refresh(grant);
+            const rotated = Redacted.make(Redacted.value(refreshed.tokens).access_token);
+            expect(Redacted.value(rotated)).not.toBe(Redacted.value(token));
+            const refreshedClient = yield* mcp.connect(rotated, "organization-url-refreshed", {
+              origin: resourceOrigin,
+              path,
+            });
+            const tools = yield* refreshedClient.use(
+              "The organization URL accepts the refreshed token",
+              (client) => client.listTools(),
+            );
+            expect(tools.tools.map((tool) => tool.name)).toContain("execute");
+            expect((yield* rawRequest(`${resourceOrigin}/mcp`, post(rotated))).status).toBe(403);
+          }),
+        );
+
+        yield* evidence.step(
           "The grant serves no other organization's URL and not the bare URL",
           Effect.gen(function* () {
             const other = `other-${randomUUID().slice(0, 8)}`;
@@ -147,8 +168,8 @@ layer(HostedLive, { excludeTestServices: true })("MCP organization OAuth", (it) 
             yield* oauth.revoke(bare);
           }),
         );
-        yield* evidence.step(
-          "An organization that does not exist is not a resource",
+        // An authorization request for `resource`, as a client would start it.
+        const authorizationUrl = (resource: string) =>
           Effect.gen(function* () {
             const callback = "http://127.0.0.1:9/callback";
             const registered = yield* api.request(
@@ -174,13 +195,104 @@ layer(HostedLive, { excludeTestServices: true })("MCP organization OAuth", (it) 
               code_challenge: "x".repeat(43),
               code_challenge_method: "S256",
               scope: "mcp",
-              resource: `${resourceOrigin}/org/missing-${randomUUID().slice(0, 8)}/mcp`,
+              resource,
               state: "s",
             });
+            return `${targetHosts(target).browser}/api/auth/oauth2/authorize?${query}`;
+          });
+        yield* evidence.step(
+          "An organization that does not exist is not a resource",
+          Effect.gen(function* () {
             const refused = yield* rawRequest(
-              `${targetHosts(target).browser}/api/auth/oauth2/authorize?${query}`,
+              yield* authorizationUrl(
+                `${resourceOrigin}/org/missing-${randomUUID().slice(0, 8)}/mcp`,
+              ),
             );
             expect(refused.location ?? refused.text).toContain("invalid_target");
+          }),
+        );
+        yield* evidence.step(
+          "A connection is never named on an organization URL",
+          Effect.gen(function* () {
+            const url = `${resourceOrigin}${path}?connection=x`;
+            expect((yield* rawRequest(url, post())).status).toBe(400);
+            expect(
+              (yield* rawRequest(`${resourceOrigin}${wellKnown}${path}?connection=x`)).status,
+            ).toBe(400);
+            const refused = yield* rawRequest(yield* authorizationUrl(url));
+            expect(refused.location ?? refused.text).toContain("invalid_target");
+          }),
+        );
+        yield* evidence.step(
+          "A user outside the organization cannot consent to its URL",
+          Effect.gen(function* () {
+            // Cloud has a real second organization; self-host permits one, so a member is removed.
+            const outsider =
+              target.metadata.target === "cloud"
+                ? yield* Effect.gen(function* () {
+                    const fixtures = target.fixtures;
+                    if (fixtures === undefined)
+                      return yield* Effect.die("Cloud runs own a fixture control");
+                    const id = randomUUID().replaceAll("-", "");
+                    yield* Effect.addFinalizer(() =>
+                      fixtureRequest(fixtures, "/remove", { id }).pipe(Effect.orDie),
+                    );
+                    const outside = yield* fixtureRequest(fixtures, "/actors", {
+                      id,
+                      label: "Organization URL outsider",
+                    }).pipe(Effect.flatMap(Schema.decodeUnknownEffect(FixtureActors)));
+                    return yield* api.session(Redacted.make(outside.actors.owner.cookies));
+                  })
+                : yield* Effect.gen(function* () {
+                    const email = `former-${randomUUID()}@example.test`;
+                    const invitation = yield* body(
+                      Created,
+                      yield* api.request(
+                        actors.owner,
+                        "POST",
+                        "/api/auth/organization/invite-member",
+                        { email, role: "member", organizationId: actors.organization.id },
+                      ),
+                    );
+                    const former = yield* api.session();
+                    expect(
+                      (yield* api.request(former, "POST", "/api/auth/self-host/register", {
+                        invitation: invitation.id,
+                        email,
+                        password,
+                        name: "Former member",
+                      })).status,
+                    ).toBe(200);
+                    expect(
+                      (yield* api.request(
+                        actors.owner,
+                        "POST",
+                        "/api/auth/organization/remove-member",
+                        { organizationId: actors.organization.id, memberIdOrEmail: email },
+                      )).status,
+                    ).toBe(200);
+                    return former;
+                  });
+            yield* browser.login(outsider);
+            const url = yield* authorizationUrl(`${resourceOrigin}${path}`);
+            yield* browser.use("Open the organization URL's consent as a non-member", (page) =>
+              page.goto(url),
+            );
+            yield* browser.use("Consent refuses a non-member", (page) =>
+              page
+                .getByText("You are not a member of the organization this URL names.", {
+                  exact: true,
+                })
+                .waitFor(),
+            );
+            expect(
+              yield* browser.use("No usable Connect action", (page) =>
+                page
+                  .getByRole("button", { name: "Connect", exact: true })
+                  .and(page.locator(":enabled"))
+                  .count(),
+              ),
+            ).toBe(0);
           }),
         );
         yield* oauth.revoke(grant);
