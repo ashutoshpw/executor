@@ -2,7 +2,8 @@
  * Usage insights: one local record per finished tool call, and the aggregates the organization home
  * page reads. Recording is a product feature of the host's own storage, independent of product
  * analytics, so it ignores the analytics opt-out. Records hold identifiers and counts only, never
- * arguments, results, URLs, credentials, or messages.
+ * results, URLs, credentials, or messages. Tool-call arguments are kept only for organizations that
+ * turned that on, masked, and only in the host's own store: never in analytics or feedback.
  */
 import { AppId } from "@executor-js/sdk/core";
 import { Context, Effect, Schema } from "effect";
@@ -15,6 +16,14 @@ import {
 
 /** The API key a request authenticated with. Unset for sessions, OAuth bearers, and MCP requests. */
 export const CurrentApiKey = Context.Reference<string | undefined>("hosted/CurrentApiKey", {
+  defaultValue: () => undefined,
+});
+
+/**
+ * The saved arguments of an approved call that is being resumed. The resume request does not
+ * carry them, so the host names them here for the usage record. Never sent to analytics.
+ */
+export const CurrentToolArguments = Context.Reference<unknown>("hosted/CurrentToolArguments", {
   defaultValue: () => undefined,
 });
 
@@ -42,6 +51,14 @@ export interface UsageToolCall {
   readonly outcome: UsageOutcome;
   readonly errorType?: string;
   readonly durationMs: number;
+  /** Client-chosen, not unique: the calls an agent made for one task share it. */
+  readonly taskId?: string;
+  /** The MCP transport session; absent on a stateless connection. */
+  readonly mcpSessionId?: string;
+  /** One per top-level MCP call, or one per schedule or workflow run. */
+  readonly runId?: string;
+  /** Masked, size-capped JSON; present only when the organization records arguments. */
+  readonly arguments?: string;
 }
 
 export const UsageTotals = Schema.Struct({
@@ -102,6 +119,54 @@ export const UsageReport = Schema.Struct({
 });
 export type UsageReport = typeof UsageReport.Type;
 
+/** How long each organization keeps stored arguments; organizations not listed use `defaultDays`. */
+export interface ArgumentRetention {
+  /** Applied to every organization not in `byOrganization`; absent leaves them alone. */
+  readonly defaultDays?: number;
+  readonly byOrganization: ReadonlyMap<string, number>;
+}
+
+/** A task as the list shows it: all of one task ID, or the untagged calls of one session or run. */
+export interface TaskSummary {
+  /** `task:<id>`, `session:<id>` or `run:<id>`. */
+  readonly key: string;
+  /** Epoch milliseconds. */
+  readonly firstAt: number;
+  readonly lastAt: number;
+  readonly calls: number;
+  readonly failures: number;
+  readonly appIds: ReadonlyArray<string>;
+  readonly totalDurationMs: number;
+}
+
+export interface TaskListQuery {
+  readonly organization: string;
+  readonly range: UsageRange;
+  readonly limit: number;
+  /** Continue after this task in newest-first order. */
+  readonly after?: { readonly lastAt: number; readonly key: string };
+}
+
+export interface TaskCallRecord {
+  readonly at: number;
+  readonly appId: string;
+  readonly toolName: string;
+  readonly outcome: UsageOutcome;
+  readonly errorType: string | null;
+  readonly durationMs: number;
+  readonly taskId: string | null;
+  readonly sessionId: string | null;
+  readonly runId: string | null;
+  readonly arguments: string | null;
+}
+
+export interface TaskCallsQuery {
+  readonly organization: string;
+  readonly range: UsageRange;
+  readonly key: string;
+  readonly limit: number;
+}
+
 export interface UsageQuery {
   readonly organization: string;
   /** Restrict to one user's calls. */
@@ -118,11 +183,20 @@ export const UsageStore = Context.Reference<{
   readonly available: boolean;
   readonly record: (call: UsageToolCall) => void;
   readonly query: (query: UsageQuery) => Effect.Effect<UsageAggregates>;
+  /** Tasks newest first, one more than `limit` when more follow. Empty when it cannot read. */
+  readonly tasks: (query: TaskListQuery) => Effect.Effect<ReadonlyArray<TaskSummary>>;
+  /** The calls of one task in the order they were made, oldest first. */
+  readonly taskCalls: (query: TaskCallsQuery) => Effect.Effect<ReadonlyArray<TaskCallRecord>>;
+  /** Remove stored arguments older than each organization's retention, keeping the rest of the records. */
+  readonly scrubArguments: (retention: ArgumentRetention) => Effect.Effect<void>;
 }>("hosted/UsageStore", {
   defaultValue: () => ({
     available: false,
     record: () => {},
     query: () => Effect.succeed(emptyUsage),
+    tasks: () => Effect.succeed([]),
+    taskCalls: () => Effect.succeed([]),
+    scrubArguments: () => Effect.void,
   }),
 });
 

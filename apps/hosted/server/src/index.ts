@@ -34,6 +34,7 @@ export {
 } from "./contracts/executor.ts";
 export { OrganizationDefaults } from "./contracts/organization-defaults.ts";
 export { organizationBlobTtl } from "./implementation/blob-settings.ts";
+export { taskArgumentRetention } from "./implementation/task-insights-settings.ts";
 export { organizationDefaults } from "./implementation/organization-defaults.ts";
 export { executorDefaultRedeployed } from "./implementation/executor-app-upgrades.ts";
 export { hostedAppCopies } from "./implementation/profile-app-copies.ts";
