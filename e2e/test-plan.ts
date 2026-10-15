@@ -820,6 +820,39 @@ export const scenarios = plan({
       local: na("Hosted organization Home page"),
     },
   },
+  taskInsightsGrouping: {
+    fixtures: "actors",
+    file: "task-insights.spec.ts",
+    title:
+      "Task insights group tool calls that share a task ID from the request metadata or the taskId argument and list them in order with their apps, tools and outcomes",
+    targets: {
+      "self-host": scheduled,
+      cloud: na("Usage is recorded by the self-host store; Cloud reports it unavailable"),
+      local: na("Hosted deployment API scenario"),
+    },
+  },
+  taskInsightsArguments: {
+    fixtures: "actors",
+    file: "task-insights.spec.ts",
+    title:
+      "Task insights keep no tool arguments until the organization turns recording on and then keep them with credentials masked and the size capped",
+    targets: {
+      "self-host": scheduled,
+      cloud: na("Usage is recorded by the self-host store; Cloud reports it unavailable"),
+      local: na("Hosted deployment API scenario"),
+    },
+  },
+  taskInsightsAccess: {
+    fixtures: "actors",
+    file: "task-insights.spec.ts",
+    title:
+      "Members cannot read tasks or change the task insights setting and another organization sees none of this organization's tasks",
+    targets: {
+      "self-host": scheduled,
+      cloud: na("Usage is recorded by the self-host store; Cloud reports it unavailable"),
+      local: na("Hosted deployment API scenario"),
+    },
+  },
   mcpCatalogRefresh: {
     fixtures: "actors",
     file: "mcp-catalog.spec.ts",
