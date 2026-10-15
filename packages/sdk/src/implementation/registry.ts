@@ -146,12 +146,14 @@ export const resolvePublication = (
     // The source keeps the name it was published under; its owner may have changed scope since.
     if (packageLabel(manifest.name) !== packageLabel(input.package))
       return yield* new RegistryError({ reason: "invalid-source" });
+    const origin =
+      registry.originOf === undefined ? registry.origin : yield* registry.originOf(input.package);
     return {
       files: snapshot.files,
       origin: {
         reference: new URL(
           `/api/registry/source?name=${encodeURIComponent(input.package)}&commit=${encodeURIComponent(input.commit)}`,
-          registry.origin,
+          origin,
         ).href,
         name: input.package,
         commit: input.commit,
@@ -159,6 +161,58 @@ export const resolvePublication = (
       activation: "deploy",
     };
   });
+
+const byName = (left: Publication, right: Publication) =>
+  left.name < right.name ? -1 : left.name > right.name ? 1 : 0;
+
+/**
+ * This executor's own listings first, then an upstream catalog's. A name this executor lists is
+ * never shadowed by the upstream's. An upstream failure hides only the upstream's listings from the
+ * full list; reading a name or its source still reports it, because the caller asked for it.
+ */
+const layeredRegistry = (local: Registry, upstream: Registry): Registry => {
+  const missing = (error: RegistryError) => error.reason === "not-found";
+  const files = (name: string, commit: string) =>
+    local
+      .files(name, commit)
+      .pipe(
+        Effect.catchTag("RegistryError", (error) =>
+          missing(error) ? upstream.files(name, commit) : Effect.fail(error),
+        ),
+      );
+  return {
+    origin: local.origin,
+    originOf: (name) =>
+      local
+        .list(name)
+        .pipe(Effect.map((listings) => (listings.length > 0 ? local.origin : upstream.origin))),
+    list: (name) =>
+      Effect.gen(function* () {
+        const own = yield* local.list(name);
+        if (name !== undefined) return own.length > 0 ? own : yield* upstream.list(name);
+        const others = yield* upstream.list().pipe(
+          Effect.catchTag("RegistryError", (error) =>
+            Effect.logWarning("The upstream app catalog could not be read", {
+              reason: error.reason,
+            }).pipe(Effect.as([] as ReadonlyArray<Publication>)),
+          ),
+        );
+        const names = new Set(own.map((listing) => listing.name));
+        return [...own, ...others.filter((listing) => !names.has(listing.name))].sort(byName);
+      }),
+    snapshot: (name, commit) =>
+      local
+        .snapshot(name, commit)
+        .pipe(
+          Effect.catchTag("RegistryError", (error) =>
+            missing(error) ? upstream.snapshot(name, commit) : Effect.fail(error),
+          ),
+        ),
+    files,
+    // A listing found here answers for all of its paths; a missing path is not another listing's.
+    file: (name, commit, path) => files(name, commit).pipe(Effect.flatMap((read) => read(path))),
+  };
+};
 
 const unsupported = () => new RegistryError({ reason: "unsupported" });
 
@@ -175,19 +229,25 @@ export const makeRegistry = (
   readonly publications: Executor["publications"];
 } => {
   const stored = "storage" in options ? options.storage : undefined;
-  const reads: Registry =
+  const own: Registry =
     stored === undefined ? (options as Registry) : storedRegistry(stored, sources, origin);
+  const upstream = "storage" in options ? options.upstream : undefined;
+  // Public reads serve only this executor's listings; installation and the catalog that
+  // publishers browse also see the upstream's.
+  const reads = upstream === undefined ? own : layeredRegistry(own, upstream);
   const registry: Executor["registry"] = {
-    list: (input = {}) => reads.list(input.name),
-    snapshot: (input) => reads.snapshot(input.name, input.commit),
-    file: (input) => reads.file(input.name, input.commit, input.path),
+    list: (input = {}) => own.list(input.name),
+    snapshot: (input) => own.snapshot(input.name, input.commit),
+    file: (input) => own.file(input.name, input.commit, input.path),
   };
+  const catalog: Executor["publications"]["catalog"] = (input = {}) => reads.list(input.name);
   if (stored === undefined)
     return {
       reads,
       registry,
       publications: {
         status: () => Effect.succeed({ publishing: false, origin: reads.origin }),
+        catalog,
         preview: () => Effect.fail(unsupported()),
         publish: () => Effect.fail(unsupported()),
         owned: () => Effect.succeed([]),
@@ -222,6 +282,7 @@ export const makeRegistry = (
     registry,
     publications: {
       status: () => Effect.succeed({ publishing: true, origin: reads.origin }),
+      catalog,
       preview: (input) =>
         Effect.gen(function* () {
           const app = yield* storedApp(db, input);

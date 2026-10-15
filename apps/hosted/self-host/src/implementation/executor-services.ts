@@ -1,5 +1,8 @@
 import { hostedAppCapabilities } from "@executor-js/hosted-server/app-management";
 import { executorSelfHostApiDocument } from "../contracts/api.ts";
+import { makeRegistryStorage } from "@executor-js/app-registry";
+import { publishingDomain } from "../contracts/config.ts";
+import { selfHostPublishers } from "./publishers.ts";
 import { AppGitOrigins, AppManagementHost } from "@executor-js/app-management";
 import { expireIdleAgentGrants, runStartupDataSteps } from "@executor-js/app-management/data-steps";
 import { SelfHostAuth, selfHostAuth } from "../auth.ts";
@@ -41,6 +44,7 @@ import {
   executorDefaultRedeployed,
   hostedAppCopies,
   organizationBlobTtl,
+  PublishingDomain,
 } from "@executor-js/hosted-server";
 import {
   defaultBlobPolicy,
@@ -132,7 +136,10 @@ export const selfHostExecutorServices = <E, R>(
           ? (effect) => effect
           : Effect.provideService(AutomationToolObservation, automationObservation),
       );
-      const registry = remoteRegistry(
+      // This server publishes its own apps; the Executor registry stays a read-only catalog that
+      // Add app also lists, and is never served from this server's public registry reads.
+      const domain = yield* publishingDomain;
+      const upstream = remoteRegistry(
         yield* Config.String("EXECUTOR_REGISTRY_URL").pipe(
           Config.withDefault(hostedExecutorOrigin),
         ),
@@ -170,7 +177,10 @@ export const selfHostExecutorServices = <E, R>(
         userContent: userContentOptions,
         runtime,
         workflows,
-        registry,
+        registry: {
+          storage: yield* Effect.flatMap(selfHostPublishers(domain), makeRegistryStorage),
+          upstream,
+        },
         hooks: lifecycle.hooks,
         oauth: {
           httpClient: egress.client,
@@ -293,6 +303,7 @@ export const selfHostExecutorServices = <E, R>(
         ),
         Layer.succeed(HostedExecutor, Effect.succeed(hosted)),
         Layer.succeed(OrganizationDefaults, initialize),
+        Layer.succeed(PublishingDomain, domain),
         Layer.succeed(HostedAppRuntime, toEffectRuntime(runtime, blobs)),
         // Self-host cannot remove an organization.
         noOrganizationRemovals,

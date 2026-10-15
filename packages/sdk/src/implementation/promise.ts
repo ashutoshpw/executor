@@ -162,6 +162,7 @@ export const promiseExecutor = (executor: Executor): PromiseExecutor => {
     },
     publications: {
       status: () => Effect.runPromise(executor.publications.status()),
+      catalog: (input = {}) => run(RegistryInputs.list, input, executor.publications.catalog),
       preview: (input) => run(PublicationInputs.preview, input, executor.publications.preview),
       publish: (input) => run(PublicationInputs.publish, input, executor.publications.publish),
       owned: (input) => run(PublicationInputs.owned, input, executor.publications.owned),

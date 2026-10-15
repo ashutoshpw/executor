@@ -132,6 +132,11 @@ export type RegistryError = typeof RegistryError.Type;
 /** Public reads require a selected commit; a changed listing never silently selects newer code. */
 export interface Registry {
   readonly origin: string;
+  /**
+   * The origin that serves this listing's source, for a registry that layers several. Installed
+   * copies point back at it. Omitted, every listing is served from `origin`.
+   */
+  readonly originOf?: (name: string) => Effect.Effect<string, RegistryError>;
   readonly list: (name?: string) => Effect.Effect<ReadonlyArray<Publication>, RegistryError>;
   readonly snapshot: (
     name: string,
@@ -182,9 +187,13 @@ export interface RegistryStorage {
 }
 /**
  * Where this executor's public catalog lives. A remote registry only reads another host's
- * listings. A stored catalog is this executor's own, published at the executor's origin.
+ * listings. A stored catalog is this executor's own, published at the executor's origin. An
+ * `upstream` registry is read-only: it adds its listings to the catalog that publishers browse and
+ * install from, but this executor's public reads never serve or mirror it.
  */
-export type RegistryOptions = Registry | { readonly storage: RegistryStorage };
+export type RegistryOptions =
+  | Registry
+  | { readonly storage: RegistryStorage; readonly upstream?: Registry };
 
 /** Scope only freshly generated source, before Git retains it. Never rewrite an existing app. */
 export const scopeGeneratedPackage = (files: SourceFiles, namespace: string, name: string) =>
