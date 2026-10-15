@@ -29,7 +29,13 @@ import {
   type ConnectionPolicy,
 } from "@executor-js/mcp-auth/connections";
 import { ConnectedAgent, ConnectedAgentNotFound } from "@executor-js/mcp-auth/agents";
-import { OrganizationId, OrganizationRole, organizationOwner } from "../contracts/organization.ts";
+import {
+  OrganizationId,
+  OrganizationReference,
+  OrganizationRole,
+  organizationOwner,
+} from "../contracts/organization.ts";
+import { resolveOrganizationReference } from "./organization-reference.ts";
 const Member = Schema.Struct({ role: OrganizationRole });
 const membership = (
   context: GenericEndpointContext["context"],
@@ -107,30 +113,12 @@ const hostedGrantOAuth = ({
         return organization;
       }),
     organizationResource: (ctx, handle) =>
-      Effect.gen(function* () {
-        const find = (field: "id" | "slug") =>
-          authCall(() =>
-            ctx.context.adapter.findOne({
-              model: "organization",
-              where: [{ field, value: handle }],
-            }),
-          ).pipe(
-            Effect.flatMap((row) =>
-              row === null
-                ? Effect.succeed(undefined)
-                : Schema.decodeUnknownEffect(Schema.Struct({ id: OrganizationId }))(row).pipe(
-                    Effect.map((organization) => organization.id),
-                  ),
-            ),
-            Effect.mapError(() => new APIError("SERVICE_UNAVAILABLE")),
-          );
-        const byId = yield* find("id");
-        const bySlug = yield* find("slug");
-        // A handle matching two organizations is ambiguous, as in bearer authentication.
-        return byId !== undefined && bySlug !== undefined && byId !== bySlug
-          ? undefined
-          : (byId ?? bySlug);
-      }),
+      // Ambiguous or missing handles name no organization.
+      Schema.decodeUnknownEffect(OrganizationReference)(handle).pipe(
+        Effect.flatMap((reference) => resolveOrganizationReference(ctx.context.adapter, reference)),
+        Effect.catchTag("OrganizationForbidden", () => Effect.succeed(undefined)),
+        Effect.mapError(() => new APIError("SERVICE_UNAVAILABLE")),
+      ),
     checkResource: (ctx, userId, resource) =>
       Schema.decodeUnknownEffect(OrganizationId)(resource).pipe(
         Effect.mapError(() => new APIError("FORBIDDEN")),
