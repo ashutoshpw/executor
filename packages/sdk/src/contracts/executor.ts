@@ -8,6 +8,7 @@ import type { ExecutorApi } from "./http.ts";
 import type { LegacyVersionEndpoints } from "./apps.ts";
 import { StorageHost, type Credentials } from "./storage.ts";
 import { PrefetchHost } from "./tools.ts";
+import type { FileTransferHost } from "./file-handles.ts";
 import { SavedOAuthClientsHost } from "./oauth-clients.ts";
 import { OwnerMovesHost } from "./owner.ts";
 import { OAuthGrantImport } from "./oauth.ts";
@@ -406,6 +407,8 @@ export type Executor = Omit<FlatExecutor, "apps" | "appWorkflows" | "appWorkflow
   };
   readonly [WebhookSourceHost]: WebhookSourceDispatcher;
   readonly [WorkflowHost]: import("./workflow-runtime.ts").WorkflowHost;
+  /** Host-only: how this executor's files move over HTTP; products mount routes over it. */
+  readonly [FileTransferHost]: import("./file-handles.ts").FileTransfer | undefined;
   readonly [RepositoryHost]: RepositoryHost;
   readonly [StorageHost]: StorageHost;
   readonly [PrefetchHost]: PrefetchHost;
@@ -432,6 +435,7 @@ export type PromiseExecutor = Promisify<
   Omit<
     Executor,
     | typeof WorkflowHost
+    | typeof FileTransferHost
     | typeof WebhookSourceHost
     | typeof RepositoryHost
     | typeof StorageHost

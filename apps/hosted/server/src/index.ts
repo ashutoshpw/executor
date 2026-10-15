@@ -104,6 +104,7 @@ export { apiChallenge, apiProtectedResource } from "./implementation/api-oauth.t
 export { browserTelemetry } from "./implementation/telemetry.ts";
 
 export { hostedWebhookCallback } from "./implementation/webhooks.ts";
+export { hostedFileLink } from "./implementation/file-links.ts";
 export { browserMcpRequest, hostedMcpApproval } from "./implementation/mcp-approvals.ts";
 
 export { makeOrganizationIcons } from "./implementation/organization-icons.ts";

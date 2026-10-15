@@ -18,6 +18,25 @@ export const BlobHandle = Schema.Struct({
 });
 export type BlobHandle = typeof BlobHandle.Type;
 
+/**
+ * A short-lived link that downloads a file with an ordinary HTTP GET, with no other credential.
+ * It serves byte ranges, so a download manager can resume it.
+ */
+export const BlobLink = Schema.Struct({
+  url: Schema.String,
+  /** ISO-8601 time after which the link stops working. */
+  expiresAt: Schema.String,
+});
+export type BlobLink = typeof BlobLink.Type;
+
+/** What `url` accepts. Both fields are optional. */
+export interface BlobLinkOptions {
+  /** How long the link works, in seconds. The host clamps it to what it allows, at least 60. */
+  readonly expiresInSeconds?: number;
+  /** The file name a browser saves the download as. */
+  readonly filename?: string;
+}
+
 /** What this host stores. Apps check it before they transfer a file. */
 export const BlobLimits = Schema.Struct({
   /** The largest file this host stores. */
@@ -26,7 +45,7 @@ export const BlobLimits = Schema.Struct({
   maxInlineBytes: Schema.Int,
   /** The most bytes one `read` returns. */
   maxReadBytes: Schema.Int,
-  methods: Schema.Array(Schema.Literals(["fromUrl", "create", "read"])),
+  methods: Schema.Array(Schema.Literals(["fromUrl", "create", "read", "url"])),
   /** How long a new handle lives in this organization. */
   ttlSeconds: Schema.Int,
 });
@@ -122,6 +141,13 @@ export interface AppBlobs {
     range: { readonly offset: number; readonly length: number },
   ) => Promise<Uint8Array>;
   /**
+   * A link that downloads the file over HTTPS, to give to a person, a browser or another service.
+   * The link is a bearer URL: anyone who holds it can download the file until it expires, so hand
+   * it only to the party that should have the file. Check `limits().methods` for `"url"` first;
+   * a host that cannot serve links fails with `BlobUnavailable`.
+   */
+  readonly url: (handle: BlobReference, options?: BlobLinkOptions) => Promise<BlobLink>;
+  /**
    * Delete a file this app created. Only the creating app may delete it. Files are shared by
    * content within an organization, so the deletion removes the handle for every app in it.
    */
@@ -137,6 +163,7 @@ export interface HostBlobs {
     options: { readonly contentType?: string },
   ) => Effect.Effect<BlobHandle, BlobError>;
   readonly stat: (id: string) => Effect.Effect<BlobHandle, BlobError>;
+  readonly url: (id: string, options: BlobLinkOptions) => Effect.Effect<BlobLink, BlobError>;
   readonly read: (
     handle: BlobHandle,
     range: { readonly offset: number; readonly length: number },
@@ -163,6 +190,12 @@ export const BlobCommand = Schema.Union([
     contentType: Schema.optionalKey(Schema.String),
   }),
   Schema.Struct({ op: Schema.Literal("stat"), id: Schema.String }),
+  Schema.Struct({
+    op: Schema.Literal("url"),
+    id: Schema.String,
+    expiresInSeconds: Schema.optionalKey(Schema.Int),
+    filename: Schema.optionalKey(Schema.String),
+  }),
   Schema.Struct({
     op: Schema.Literal("read"),
     handle: BlobHandle,

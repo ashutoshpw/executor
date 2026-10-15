@@ -47,6 +47,8 @@ import {
 } from "../contracts/runtime.ts";
 import { BlobUnavailable } from "apps/contracts";
 import { makeBlobControl } from "./blob-control.ts";
+import { FileTransferHost, type FileTransfer } from "../contracts/file-handles.ts";
+import { makeFileLinks } from "./file-links.ts";
 
 /** Capture host cryptography; caller owns database and platform resource lifetimes. */
 export const createExecutor = (
@@ -88,12 +90,22 @@ export const createExecutor = (
     // Files: each invocation's control answers for the app's owner, read when a file operation
     // runs, so an invocation that never touches files never reads it.
     const userContent = options.userContent;
+    // Links are signed with a key derived from the executor's own secret, so a host that supplied
+    // its own credentials has none to derive from and apps and callers get no links.
+    const links =
+      userContent === undefined || options.secret === undefined
+        ? undefined
+        : yield* makeFileLinks({ secret: options.secret, origin });
+    const fileTransfer: FileTransfer | undefined =
+      userContent === undefined ? undefined : { userContent, links };
     const fileControl: typeof InvocationBlobs.Service =
       userContent === undefined
         ? undefined
-        : (app) =>
+        : (app, actor) =>
             makeBlobControl({
               userContent,
+              links,
+              actor,
               app,
               owner: storedApp(db, { app: AppId.make(app) }).pipe(
                 Effect.map((stored) => stored.owner),
@@ -234,6 +246,7 @@ export const createExecutor = (
     return {
       [WebhookSourceHost]: { tick: webhookSources.tick },
       [WorkflowHost]: workflows.host,
+      [FileTransferHost]: fileTransfer,
       [RepositoryHost]: {
         request: (input, request) =>
           Effect.gen(function* () {

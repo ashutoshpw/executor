@@ -1,5 +1,10 @@
 /** Hosted authoring uses the product's current organization authentication contract. */
-import { AppIdentity, appManagementApi, frameworkApi } from "@executor-js/app-management/contracts";
+import {
+  AppIdentity,
+  appManagementApi,
+  fileTransferApi,
+  frameworkApi,
+} from "@executor-js/app-management/contracts";
 import { HttpApiMiddleware } from "effect/http-api";
 import { AuthenticationUnavailable, Forbidden, Unauthorized } from "./auth.ts";
 import { OrganizationForbidden } from "./organization.ts";
@@ -18,3 +23,8 @@ export const HostedAppManagementApi = appManagementApi(
 );
 /** Framework lookups for the management app, under the same organization authorization. */
 export const HostedFrameworkApi = frameworkApi("/api/organizations/:organization", HostedAppAccess);
+/** Files the organization's apps keep by handle, under the same organization authorization. */
+export const HostedFileTransferApi = fileTransferApi(
+  "/api/organizations/:organization",
+  HostedAppAccess,
+);

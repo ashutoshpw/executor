@@ -4,7 +4,12 @@ import {
   appManagementHandlers,
   frameworkHandlers,
 } from "@executor-js/app-management";
-import { HostedAppManagementApi, HostedFrameworkApi } from "../contracts/app-management.ts";
+import {
+  HostedAppManagementApi,
+  HostedFileTransferApi,
+  HostedFrameworkApi,
+} from "../contracts/app-management.ts";
+import { fileTransferHandlers } from "@executor-js/app-management/files";
 import { hostedAppAccess } from "../app-management.ts";
 import { hostedResourceAccessHandlers } from "./resource-access.ts";
 import { hostedOAuthClientHandlers } from "./oauth-clients.ts";
@@ -69,6 +74,9 @@ export const hostedHandlers = Layer.mergeAll(
   ),
   // Each host provides FrameworkDocumentation from its packaged authoring assets.
   frameworkHandlers(HostedFrameworkApi, HostedApi.identifier).pipe(Layer.provide(hostedAppAccess)),
+  fileTransferHandlers(HostedFileTransferApi, HostedApi.identifier).pipe(
+    Layer.provide(hostedAppAccess),
+  ),
   hostedAppAccountHandlers,
   hostedScheduleHandlers,
   health,

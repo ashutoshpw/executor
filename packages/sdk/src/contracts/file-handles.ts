@@ -13,6 +13,7 @@ import {
   type BlobNotFound,
   type BlobUnavailable,
 } from "apps/contracts";
+import type { FileLinks } from "../implementation/file-links.ts";
 import type { BlobKey, BlobStorage } from "./blobs.ts";
 
 /** What a product's store accepts and how long it keeps files. */
@@ -148,11 +149,35 @@ export interface FileHandleStore {
   readonly retireOwner: (owner: string) => Effect.Effect<void, BlobUnavailable>;
 }
 
+/** A SHA-256 computed over chunks as they stream by, so a large file is never held in memory. */
+export interface StreamingSha256 {
+  readonly write: (chunk: Uint8Array) => Promise<void>;
+  /** The lowercase hex digest. Call once, after the last chunk. */
+  readonly finish: () => Promise<string>;
+}
+
 /** Everything a product gives `createExecutor` for file handles. */
 export interface UserContentOptions {
   readonly store: BlobStorage;
   readonly handles: FileHandleStore;
   readonly policy: BlobPolicy;
+  /**
+   * A new streaming digest. The platform picks the implementation: workerd's `DigestStream` or
+   * Node's `createHash`. Uploads through HTTP hash the bytes here as they stream into the store.
+   */
+  readonly hasher: () => StreamingSha256;
+}
+
+/**
+ * The key under which an executor exposes how its host moves files over HTTP: the store and
+ * handles it keeps, and the links it signs. Products mount routes over it. Absent when the host
+ * stores no files.
+ */
+export const FileTransferHost = Symbol("executor.FileTransfer");
+export interface FileTransfer {
+  readonly userContent: UserContentOptions;
+  /** Absent when the executor has no secret to sign with, so apps and callers get no links. */
+  readonly links: FileLinks | undefined;
 }
 
 /** The user-content key of a file: a folder per owner. Owner names are percent-encoded. */
@@ -171,6 +196,12 @@ export const BlobControlCommand = Schema.Union([
   Schema.Struct({ op: Schema.Literal("touch"), id: Schema.String }),
   Schema.Struct({ op: Schema.Literal("abort"), id: Schema.String }),
   Schema.Struct({ op: Schema.Literal("stat"), id: Schema.String }),
+  Schema.Struct({
+    op: Schema.Literal("url"),
+    id: Schema.String,
+    expiresInSeconds: Schema.optionalKey(Schema.Int),
+    filename: Schema.optionalKey(Schema.String),
+  }),
   Schema.Struct({ op: Schema.Literal("delete"), id: Schema.String }),
 ]);
 export type BlobControlCommand = typeof BlobControlCommand.Type;

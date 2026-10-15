@@ -2,7 +2,12 @@ import { HostedAppAccounts } from "./app-accounts.ts";
 import { HostedResourceAccess } from "./resource-access.ts";
 import { HostedOAuthClients } from "./oauth-clients.ts";
 import { HostedSchedules } from "./schedules.ts";
-import { HostedAppAccess, HostedAppManagementApi, HostedFrameworkApi } from "./app-management.ts";
+import {
+  HostedAppAccess,
+  HostedAppManagementApi,
+  HostedFileTransferApi,
+  HostedFrameworkApi,
+} from "./app-management.ts";
 export { HostedAppManagementApi } from "./app-management.ts";
 /** Common hosted contracts. Product reads require a hosted session. */
 import { CatalogEntry, CatalogUnavailable } from "@executor-js/catalog/contracts";
@@ -219,4 +224,5 @@ export const HostedApi = HttpApi.make("executor-hosted")
       .middleware(RequireUser),
   )
   .addHttpApi(HostedAppManagementApi)
-  .addHttpApi(HostedFrameworkApi);
+  .addHttpApi(HostedFrameworkApi)
+  .addHttpApi(HostedFileTransferApi);

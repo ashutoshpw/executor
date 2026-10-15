@@ -371,6 +371,16 @@ Call `ctx.blobs.limits()` first when size matters: `maxFileBytes` is what this h
 on self-host and local, 100 MiB on Cloud), and a larger file fails with `BlobTooLarge`. On Cloud
 a `fromUrl` needs the upstream's `Content-Length` or an `expectedSize`.
 
+To give a file to a person, a browser or another service, call `ctx.blobs.url(handle, {
+expiresInSeconds?, filename? })`. It returns `{ url, expiresAt }`: a link anyone can open with an
+ordinary HTTPS GET and no other credential until it expires, so a download manager can resume it
+with byte ranges. The host clamps the lifetime to between 60 seconds and 24 hours (15 minutes by
+default), the file downloads as an attachment named `filename`, and the link stops working when the
+file expires or the user it was issued for leaves the organization. A link is a bearer secret: hand
+it only to the party that should have the file, and never log it. Check
+`(await ctx.blobs.limits()).methods` for `"url"` first; a host that cannot sign links fails with
+`BlobUnavailable`.
+
 Files are the organization's: two apps that store the same bytes share one handle, and another
 organization's handle reads as `BlobNotFound`. Files expire after the lifetime an organization
 owner or admin sets under Blob in the organization settings (seven days by default); an
