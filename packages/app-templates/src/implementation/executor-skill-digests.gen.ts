@@ -9,11 +9,11 @@ export const executorSkillDigests: Readonly<Record<string, string>> = {
   "app-authoring/integrations.md": "2d50abfb3b682eae292f6f02c4387e2eb11eff905e7b668811bc7c1443b43413",
   "app-authoring/starter.md": "58445ed62c60fbcfa66934f805176e42d71802db9a408c7b8d4028352b0b3562",
   "app-authoring/storage.md": "78f0658fa492e87c3a8c415c654998104213a945fb4344748b373dcb20fe957e",
-  "app-authoring/tools.md": "3eb39cdf9a5aa5d8dce5b3dd147384e6bda6c7b2589f3a9416d623c4120c3b49",
+  "app-authoring/tools.md": "a8a9ee4c115e88385970826fd3359c8efc952c3c76e06fa8c7c3906910e7ecd4",
   "app-authoring/ui.md": "c2331bd689071b1b55d24a4a9da4aa186639a9ba2ee650c160fb05a3fe145729",
   "app-authoring/webhooks.md": "713dde373c65582dcfb257001f4fd4d79ce6e89ad95669842137a5cd58c873dd",
   "app-authoring/workflows.md": "243842172b2f3e12f3ba0b0bc28961c85a9e9e6f9a6c8e8191697c1d8dd479ae",
-  "code-mode/SKILL.md": "75a28794a33dfdd0271369a16cdddfda04fbe183cda6aed91af1ad3258ddda3b",
-  "executor/SKILL.md": "8e8ae6af79edec98ecb62a14e591ae46f15deed14832972bf0a92de46761b432",
+  "code-mode/SKILL.md": "f92209018cb40e4c3d2b222094ab3345bb18fdde9fe1d494f57ce15164eb1611",
+  "executor/SKILL.md": "2e20b82fafdd7fefb682ba55229bd2e922844d5ad931877f43c5635cdf62aa05",
   "executor/feedback.md": "11397bd260917e5a21e92897a19368d0426bf5944a7c081adc2c061d1ea797cd"
 };
