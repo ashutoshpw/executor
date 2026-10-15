@@ -9,6 +9,7 @@ import { ToolName } from "@executor-js/sdk/core";
 import { InteractionId, PendingInteraction, ElicitationResponseInvalid } from "./interactions.ts";
 export * from "./interactions.ts";
 import { NativeElicitationFailed } from "./elicitation.ts";
+import { TaskIdArgument } from "./task.ts";
 
 /** Fixed interpreter input, live-program capacity and discovery fan-out and time bounds. */
 export const McpRuntimeLimits = Schema.Struct({
@@ -219,6 +220,7 @@ export const resumeUnavailableMessage = (reason: ResumeUnavailableReason): strin
 /** Generated code is bounded before it reaches the parser. */
 export const ExecuteInput = Schema.Struct({
   code: Schema.String.check(Schema.isMaxLength(defaultMcpRuntimeLimits.maxCodeChars)),
+  taskId: TaskIdArgument,
 });
 /**
  * Incomplete or failing apps stay visible as explicit discovery diagnostics. Absent fields are
@@ -288,6 +290,7 @@ export type McpExecutionResult = typeof McpExecutionResult.Type;
 export const ResumeInput = Schema.Struct({
   requestId: InteractionId,
   response: ElicitationResponse,
+  taskId: TaskIdArgument,
 });
 /**
  * Claude Code saves a text result over 50,000 characters to a file unless the tool raises that
@@ -418,6 +421,7 @@ export const CallRequest = Schema.Struct({
  */
 export const CallInput = Schema.Struct({
   calls: Schema.Union([CallRequest, Schema.Array(CallRequest).check(Schema.isMinLength(1))]),
+  taskId: TaskIdArgument,
 });
 /** How one direct call ended. A failed call does not stop the others in its batch. */
 export const CallOutcome = Schema.Union([

@@ -14,6 +14,7 @@ import { Cause, Context, Effect, Layer, Result, Schema } from "effect";
 import { McpSchema, McpServer } from "effect/ai";
 import type { McpBackend } from "../contracts/backend.ts";
 import { fileResourceScheme, fileResourceUri } from "../contracts/file-uri.ts";
+import { taskContextLayer } from "./task.ts";
 
 /** The `resource_link` block arrived with MCP 2025-06-18; older clients get the unchanged result. */
 const linkProtocols: ReadonlySet<string> = new Set(["2025-06-18", "2025-11-25", "2026-07-28"]);
@@ -153,6 +154,7 @@ export const toolkitWithFileLinks =
   (toolkit) =>
     Layer.effectDiscard(McpServer.registerToolkit(toolkit)).pipe(
       Layer.provide(withFileLinks(backend)),
+      Layer.provide(taskContextLayer),
       Layer.provide(McpServer.McpServer.layer),
     );
 

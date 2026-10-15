@@ -49,6 +49,7 @@ import {
   type ResumeUnavailableReason,
 } from "../contracts/execute.ts";
 import type { BrowserApprovalView, BrowserApprovalAcknowledgement } from "../contracts/browser.ts";
+import { CurrentTask, type TaskContext } from "../contracts/task.ts";
 import { programScheduler } from "./program-scheduler.ts";
 import { reportFailure } from "./diagnostics.ts";
 import {
@@ -142,6 +143,8 @@ type Run = {
   readonly approval: ApprovalMode;
   readonly scheduling: ReturnType<typeof programScheduler>;
   readonly caller: string;
+  /** The task and run of the request that started the program; later resumes inherit them. */
+  readonly task: TaskContext | undefined;
   readonly scope: Scope.Closeable;
   readonly events: Queue.Queue<Event>;
   readonly pending: Map<InteractionId, Pending>;
@@ -379,7 +382,14 @@ export const makeExecutions = (
       Effect.gen(function* () {
         const operation: Operation = { waiting: new Set() };
         run.operations.add(operation);
+        // Work started by a resume belongs to the program's task and run, not the resume request's.
+        const resumer = yield* CurrentTask;
+        const task =
+          run.task === undefined
+            ? resumer
+            : { ...run.task, taskId: run.task.taskId ?? resumer?.taskId };
         yield* Effect.scoped(work(backend, operation)).pipe(
+          Effect.provideService(CurrentTask, task),
           Effect.ensuring(
             Effect.sync(() => run.operations.delete(operation)).pipe(Effect.andThen(wake(run))),
           ),
@@ -758,6 +768,7 @@ export const makeExecutions = (
             transport,
             approval,
             caller,
+            task: yield* CurrentTask,
             scheduling: programScheduler(scheduler),
             scope: yield* Scope.make(),
             events: yield* Queue.unbounded<Event>(),
