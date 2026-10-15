@@ -119,6 +119,33 @@ const transferOf = Effect.gen(function* () {
 const unavailable = <A, R>(effect: Effect.Effect<A, BlobUnavailable | StorageError, R>) =>
   effect.pipe(Effect.mapError(() => new FilesUnavailable()));
 
+/** One file as the Files page shows it; `names` maps an app to its current name. */
+const entryOf = (
+  row: {
+    readonly handle: {
+      readonly id: string;
+      readonly contentType: string;
+      readonly size: number;
+      readonly sha256: string;
+      readonly expiresAt: string;
+    };
+    readonly creator: string | undefined;
+    readonly createdAt: string;
+  },
+  names: ReadonlyMap<AppId, string>,
+): FileEntry => ({
+  id: row.handle.id,
+  contentType: row.handle.contentType,
+  size: row.handle.size,
+  sha256: row.handle.sha256,
+  createdAt: row.createdAt,
+  expiresAt: row.handle.expiresAt,
+  app:
+    row.creator === undefined
+      ? null
+      : { id: row.creator as AppId, name: names.get(row.creator as AppId) ?? null },
+});
+
 export const hostedOrganizationFilesHandlers = HttpApiBuilder.group(
   HostedApi,
   "organizationFiles",
@@ -159,22 +186,42 @@ export const hostedOrganizationFilesHandlers = HttpApiBuilder.group(
           const page = rows.slice(0, limit);
           const last = page[page.length - 1];
           return {
-            files: page.map((row): FileEntry => ({
-              id: row.handle.id,
-              contentType: row.handle.contentType,
-              size: row.handle.size,
-              sha256: row.handle.sha256,
-              createdAt: row.createdAt,
-              expiresAt: row.handle.expiresAt,
-              app:
-                row.creator === undefined
-                  ? null
-                  : { id: row.creator as AppId, name: names.get(row.creator as AppId) ?? null },
-            })),
+            files: page.map((row) => entryOf(row, names)),
             next: rows.length > limit && last !== undefined ? encodeCursor(last) : null,
             apps: choices,
             canDelete: access.role !== "member",
           };
+        }),
+      )
+      .handle("get", ({ params }) =>
+        Effect.gen(function* () {
+          yield* requireUnlimitedCredential;
+          const access = yield* CurrentOrganization;
+          const { userContent } = yield* transferOf;
+          const executor = yield* Effect.flatten(HostedExecutor);
+          const creators = yield* visibleFileCreators({
+            organization: access.organization,
+            owner: access.owner,
+            user: yield* CurrentUserId,
+          });
+          // A file the caller may not see answers exactly as a missing or expired one.
+          const found = yield* userContent.handles
+            .stat({
+              owner: access.owner,
+              id: params.handle,
+              visible: (creator) =>
+                creators === "any" ||
+                (creator !== undefined && creators.includes(creator as AppId)),
+            })
+            .pipe(
+              Effect.catchTags({
+                BlobNotFound: () => Effect.fail(new FileNotFound()),
+                BlobExpired: () => Effect.fail(new FileNotFound()),
+                BlobUnavailable: () => Effect.fail(new FilesUnavailable()),
+              }),
+            );
+          const allApps = yield* executor.apps.list({ owner: access.owner });
+          return entryOf(found, new Map(allApps.map((app) => [app.id, app.name])));
         }),
       )
       .handle("delete", ({ params }) =>

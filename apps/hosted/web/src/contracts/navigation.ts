@@ -1,6 +1,7 @@
 import { AccountConnectionId, AccountId } from "@executor-js/sdk";
 import { GrantId } from "@executor-js/mcp-auth/grants";
 import { AppView, AppViewFromUrl, AssistantId } from "@executor-js/ui/contracts/dashboard";
+import { AppId } from "@executor-js/sdk/core";
 import { Option, Schema } from "effect";
 import { OrganizationId } from "@executor-js/hosted-server/organization";
 import { UsageRange } from "@executor-js/hosted-server/usage";
@@ -93,6 +94,17 @@ export function parseTasksSearch(search: Record<string, unknown>): {
   return {
     ...parseHomeSearch(search),
     task: Option.getOrUndefined(Schema.decodeUnknownOption(Schema.NonEmptyString)(search.task)),
+  };
+}
+
+/** The Files page keeps its app filter and the file open in the drawer (by handle) in the address. */
+export function parseFilesSearch(search: Record<string, unknown>): {
+  readonly app?: AppId | undefined;
+  readonly file?: string | undefined;
+} {
+  return {
+    app: Option.getOrUndefined(Schema.decodeUnknownOption(AppId)(search.app)),
+    file: Option.getOrUndefined(Schema.decodeUnknownOption(Schema.NonEmptyString)(search.file)),
   };
 }
 

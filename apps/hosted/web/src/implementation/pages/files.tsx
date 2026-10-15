@@ -7,6 +7,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { Delete02Icon, Download01Icon, File01Icon } from "@hugeicons/core-free-icons";
 import { fileResourceUri } from "@executor-js/mcp/browser";
 import type { AppId } from "@executor-js/sdk/core";
+import { Alert, AlertDescription } from "@executor-js/ui/components/alert";
 import { Button } from "@executor-js/ui/components/button";
 import {
   Dialog,
@@ -27,7 +28,7 @@ import { EmptyState } from "@executor-js/ui/dashboard/empty-state";
 import { FilePreviewSheet } from "@executor-js/ui/dashboard/file-preview";
 import { productTitle, useDocumentTitle } from "@executor-js/ui/hooks/document-title";
 import type { FileEntry } from "@executor-js/hosted-server/files";
-import { deleteFileAtom, downloadLinkAtom, filesAtom } from "../../contracts/files.ts";
+import { deleteFileAtom, downloadLinkAtom, fileAtom, filesAtom } from "../../contracts/files.ts";
 import { type HostedError } from "../../contracts/errors.ts";
 import { HostedFailure } from "../components/dashboard-bindings.tsx";
 import { appError } from "../../contracts/errors.ts";
@@ -52,9 +53,20 @@ export const formatFileSize = (bytes: number) => {
 };
 
 /** Files the organization's apps keep, as the signed-in member may see them. */
-export function FilesPage() {
+export function FilesPage({
+  app,
+  file,
+  onAppChange,
+  onFileChange,
+}: {
+  /** The app the listing is filtered to, from the address. */
+  readonly app: AppId | undefined;
+  /** The handle of the file open in the drawer, from the address. */
+  readonly file: string | undefined;
+  readonly onAppChange: (app: AppId | undefined) => void;
+  readonly onFileChange: (file: string | undefined) => void;
+}) {
   const { organization, slug } = useOrganizationRoute();
-  const [app, setApp] = useState<AppId | undefined>(undefined);
   const [generation, setGeneration] = useState(0);
   // The cursors of the pages shown so far; the first page has none.
   const [afters, setAfters] = useState<ReadonlyArray<string | undefined>>([undefined]);
@@ -83,7 +95,7 @@ export function FilesPage() {
           <Select
             value={app ?? allApps}
             onValueChange={(value) => {
-              setApp(apps.find((choice) => choice.id === value)?.id);
+              onAppChange(apps.find((choice) => choice.id === value)?.id);
               setGeneration((current) => current + 1);
               setAfters([undefined]);
             }}
@@ -106,6 +118,8 @@ export function FilesPage() {
         pages={afters.map((after) => ({ after }))}
         canDelete={canDelete}
         app={app}
+        file={file}
+        onFileChange={onFileChange}
         generation={generation}
         more={(next) => setAfters((current) => [...current, next])}
         changed={reset}
@@ -130,6 +144,8 @@ function FilesTable({
   pages,
   canDelete,
   app,
+  file,
+  onFileChange,
   generation,
   more,
   changed,
@@ -138,6 +154,8 @@ function FilesTable({
   readonly pages: ReadonlyArray<{ readonly after: string | undefined }>;
   readonly canDelete: boolean;
   readonly app: AppId | undefined;
+  readonly file: string | undefined;
+  readonly onFileChange: (file: string | undefined) => void;
   readonly generation: number;
   readonly more: (next: string) => void;
   readonly changed: () => void;
@@ -149,51 +167,56 @@ function FilesTable({
   const remove = useAtomSet(deleteFileAtom(organization), { mode: "promiseExit" });
   const deletion = useAtomValue(deleteFileAtom(organization));
   const link = useAtomSet(downloadLinkAtom(organization), { mode: "promiseExit" });
-  const [previewing, setPreviewing] = useState<FileEntry | null>(null);
   const [downloadFailure, setDownloadFailure] = useState<Cause.Cause<HostedError>>();
   const firstPage = useAtomValue(filesAtom({ organization, app, after: undefined, generation }));
   const empty = AsyncResult.value(firstPage).pipe(
     Option.map((value) => value.files.length === 0),
     Option.getOrElse(() => false),
   );
-  if (empty)
-    return (
-      <EmptyState
-        title={filtered ? "No files for this app" : "No files yet"}
-        icon={<HugeiconsIcon icon={File01Icon} />}
-      >
-        Files an app stores for your organization appear here until they expire.
-      </EmptyState>
-    );
-  const download = async (file: FileEntry) => {
+  const download = async (entry: FileEntry) => {
     setDownloadFailure(undefined);
-    const result = await link({ handle: file.id });
+    const result = await link({ handle: entry.id });
     if (Exit.isFailure(result)) {
       // Close the drawer so the failure is not rendered behind its modal overlay.
-      setPreviewing(null);
+      onFileChange(undefined);
       setDownloadFailure(result.cause);
     } else window.location.assign(result.value.url);
   };
+  const preview = file !== undefined && (
+    <LinkedPreview
+      handle={file}
+      resourceUri={(entry) =>
+        organizationId === undefined ? undefined : fileResourceUri(organizationId, entry.id)
+      }
+      onClose={() => onFileChange(undefined)}
+      onDownload={(entry) => void download(entry)}
+      mintLink={async (entry, expiresInSeconds) => {
+        const result = await link(
+          expiresInSeconds === undefined
+            ? { handle: entry.id }
+            : { handle: entry.id, expiresInSeconds },
+        );
+        if (Exit.isFailure(result)) throw new Error(appError(result.cause));
+        return result.value.url;
+      }}
+    />
+  );
+  if (empty)
+    return (
+      <>
+        {preview}
+        <EmptyState
+          title={filtered ? "No files for this app" : "No files yet"}
+          icon={<HugeiconsIcon icon={File01Icon} />}
+        >
+          Files an app stores for your organization appear here until they expire.
+        </EmptyState>
+      </>
+    );
   return (
     <>
       {downloadFailure && <HostedFailure cause={downloadFailure} />}
-      <FilePreviewSheet
-        file={previewing}
-        resourceUri={(file) =>
-          organizationId === undefined ? undefined : fileResourceUri(organizationId, file.id)
-        }
-        onClose={() => setPreviewing(null)}
-        onDownload={(file) => void download(file as FileEntry)}
-        mintLink={async (file, expiresInSeconds) => {
-          const result = await link(
-            expiresInSeconds === undefined
-              ? { handle: file.id }
-              : { handle: file.id, expiresInSeconds },
-          );
-          if (Exit.isFailure(result)) throw new Error(appError(result.cause));
-          return result.value.url;
-        }}
-      />
+      {preview}
       <div className="overflow-hidden rounded-[10px] border border-border bg-background">
         <table className={filesTableClass} aria-label="Files">
           <thead>
@@ -222,7 +245,7 @@ function FilesTable({
               more={more}
               canDelete={canDelete}
               download={download}
-              preview={setPreviewing}
+              preview={(entry) => onFileChange(entry.id)}
               remove={setRemoving}
             />
           ))}
@@ -258,6 +281,7 @@ function FilesTable({
                   const result = await remove(removing.id);
                   if (Exit.isFailure(result)) setFailure(result.cause);
                   else {
+                    if (file === removing.id) onFileChange(undefined);
                     setRemoving(null);
                     changed();
                   }
@@ -270,6 +294,46 @@ function FilesTable({
         </Dialog>
       )}
     </>
+  );
+}
+
+/**
+ * The drawer for the file the address names. The file is read by handle, because it may not be on
+ * a page the listing has loaded; one the caller cannot reach gets a notice instead of a drawer.
+ */
+function LinkedPreview({
+  handle,
+  onClose,
+  ...sheet
+}: {
+  readonly handle: string;
+  readonly onClose: () => void;
+  readonly resourceUri: (file: { readonly id: string }) => string | undefined;
+  readonly onDownload: (file: FileEntry) => void;
+  readonly mintLink: (file: FileEntry, expiresInSeconds?: number) => Promise<string>;
+}) {
+  const { organization } = useOrganizationRoute();
+  const result = useAtomValue(fileAtom({ organization, handle }));
+  const entry = Option.getOrNull(AsyncResult.value(result));
+  if (AsyncResult.isFailure(result) && entry === null)
+    return (
+      <Alert className="mb-4">
+        <AlertDescription className="flex items-center justify-between gap-3">
+          <span>This file is no longer available or you don't have access to it.</span>
+          <Button variant="outline" size="sm" onClick={onClose}>
+            Dismiss
+          </Button>
+        </AlertDescription>
+      </Alert>
+    );
+  return (
+    <FilePreviewSheet
+      file={entry}
+      resourceUri={sheet.resourceUri}
+      onClose={onClose}
+      onDownload={(file) => sheet.onDownload(file as FileEntry)}
+      mintLink={(file, expiresInSeconds) => sheet.mintLink(file as FileEntry, expiresInSeconds)}
+    />
   );
 }
 
