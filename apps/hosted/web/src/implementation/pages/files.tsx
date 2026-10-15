@@ -166,8 +166,11 @@ function FilesTable({
   const download = async (file: FileEntry) => {
     setDownloadFailure(undefined);
     const result = await link(file.id);
-    if (Exit.isFailure(result)) setDownloadFailure(result.cause);
-    else window.location.assign(result.value.url);
+    if (Exit.isFailure(result)) {
+      // Close the drawer so the failure is not rendered behind its modal overlay.
+      setPreviewing(null);
+      setDownloadFailure(result.cause);
+    } else window.location.assign(result.value.url);
   };
   return (
     <>
