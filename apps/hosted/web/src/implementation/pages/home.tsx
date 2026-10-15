@@ -1,5 +1,5 @@
 import { Link } from "@tanstack/react-router";
-import { Fragment, useState, type ReactNode } from "react";
+import { Fragment, useState } from "react";
 import type { UsageRange, UsageReport } from "@executor-js/hosted-server/usage";
 import { Button } from "@executor-js/ui/components/button";
 import { LocalTime } from "@executor-js/ui/components/local-time";
@@ -10,9 +10,21 @@ import { productTitle, useDocumentTitle } from "@executor-js/ui/hooks/document-t
 import { usageAtom } from "../../contracts/usage.ts";
 import { HostedFailure } from "../components/dashboard-bindings.tsx";
 import { useOrganizationRoute } from "../components/organization.tsx";
+import {
+  cell,
+  count,
+  duration,
+  headCell,
+  numberCell,
+  numberHead,
+  percent,
+  Section,
+  Table,
+  Tile,
+} from "../components/usage-parts.tsx";
 
 const homeTitle = "Home";
-const ranges = [
+export const ranges = [
   { value: "24h", label: "24 hours" },
   { value: "7d", label: "7 days" },
   { value: "30d", label: "30 days" },
@@ -21,10 +33,6 @@ const ranges = [
 /** The range the page shows when the address names none. */
 export const defaultRange = "7d" as const satisfies UsageRange;
 
-const count = new Intl.NumberFormat();
-const percent = (rate: number) => `${(rate * 100).toFixed(rate === 1 || rate === 0 ? 0 : 1)}%`;
-const duration = (ms: number) =>
-  ms >= 1000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms)} ms`;
 const dayFormat = new Intl.DateTimeFormat(undefined, {
   month: "short",
   day: "numeric",
@@ -40,7 +48,8 @@ export function HomePage({
   readonly range?: UsageRange | undefined;
   readonly onRangeChange: (range: UsageRange) => void;
 }) {
-  const { organization, slug: organizationSlug } = useOrganizationRoute();
+  const { organization, slug: organizationSlug, role } = useOrganizationRoute();
+  const admin = role !== undefined && role !== "member";
   useDocumentTitle(productTitle(homeTitle));
   return (
     <PageFrame>
@@ -48,6 +57,17 @@ export function HomePage({
         title={homeTitle}
         description="Tool calls made by your connected agents, schedules and workflows."
       >
+        {admin && (
+          <Button size="sm" variant="outline" asChild>
+            <Link
+              to="/org/$organizationSlug/tasks"
+              params={{ organizationSlug }}
+              search={{ range: range === defaultRange ? undefined : range }}
+            >
+              Tasks
+            </Link>
+          </Button>
+        )}
         <div role="group" aria-label="Time range" className="flex items-center gap-1.5">
           {ranges.map((item) => (
             <Button
@@ -138,40 +158,6 @@ function Report({
           </ul>
         </Section>
       )}
-    </div>
-  );
-}
-
-function Tile({ label, value }: { readonly label: string; readonly value: string }) {
-  return (
-    <div className="rounded-lg border p-4">
-      <dt className="text-xs text-muted-foreground">{label}</dt>
-      <dd className="mt-1 text-2xl font-semibold tracking-tight tabular-nums">{value}</dd>
-    </div>
-  );
-}
-
-function Section({ title, children }: { readonly title: string; readonly children: ReactNode }) {
-  return (
-    <section>
-      <h2 className="mb-2 text-sm font-semibold">{title}</h2>
-      {children}
-    </section>
-  );
-}
-
-const headCell = "px-4 py-2 text-left text-xs font-medium text-muted-foreground";
-const numberHead = `${headCell} text-right`;
-const cell = "px-4 py-2.5 text-sm";
-const numberCell = `${cell} text-right tabular-nums`;
-
-function Table({ caption, children }: { readonly caption: string; readonly children: ReactNode }) {
-  return (
-    <div className="overflow-x-auto rounded-lg border">
-      <table className="w-full min-w-120 border-collapse">
-        <caption className="sr-only">{caption}</caption>
-        {children}
-      </table>
     </div>
   );
 }
