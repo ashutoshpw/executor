@@ -8,6 +8,7 @@ import {
   organizationBlobTtl,
 } from "@executor-js/hosted-server";
 import { defaultBlobPolicy, makeFileHandleStore } from "@executor-js/sdk/blobs";
+import { digestStreamSha256 } from "@executor-js/sdk/file-transfer";
 import { hostedResourceLifecycle } from "@executor-js/hosted-server/resource-lifecycle";
 import {
   createExecutor,
@@ -136,6 +137,7 @@ export const cloudExecutor = Effect.fn(function* (
             sql: Context.get(services, SqlClient.SqlClient),
             table: "hosted_file_handles",
           }),
+          hasher: digestStreamSha256,
           policy: {
             ...defaultBlobPolicy,
             maxFileBytes: cloudMaxFileBytes,

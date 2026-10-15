@@ -7,6 +7,8 @@ export type {
   BlobFetchInit,
   BlobHandle,
   BlobLimits,
+  BlobLink,
+  BlobLinkOptions,
   BlobReference,
 } from "./contracts/blobs.ts";
 export {

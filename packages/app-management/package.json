@@ -7,6 +7,7 @@
     ".": "./src/http.ts",
     "./http": "./src/http.ts",
     "./cli": "./src/cli.ts",
+    "./files": "./src/implementation/files.ts",
     "./contracts": "./src/contracts/api.ts",
     "./data-steps": "./src/data-steps.ts",
     "./source-display": "./src/implementation/source-display.ts",

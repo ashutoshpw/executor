@@ -9,8 +9,10 @@ import {
   BlobUnavailable,
   BlobUpstreamFailed,
   maxBlobRequestBodyBytes,
+  BlobLink,
   type AppBlobs,
   type BlobError,
+  type BlobLinkOptions,
   type BlobFetchInit,
   type BlobReference,
   type HostBlobs,
@@ -25,6 +27,7 @@ export const unavailableBlobs: HostBlobs = {
   fromUrl: () => unavailable,
   create: () => unavailable,
   stat: () => unavailable,
+  url: () => unavailable,
   read: () => unavailable,
   delete: () => unavailable,
 };
@@ -56,6 +59,12 @@ export const authorBlobs = (
     telemetry,
   ),
   stat: toPromise((handle: BlobReference) => host.stat(referenceId(handle)), signal, telemetry),
+  url: toPromise(
+    (handle: BlobReference, options?: BlobLinkOptions) =>
+      host.url(referenceId(handle), options ?? {}),
+    signal,
+    telemetry,
+  ),
   read: toPromise(
     (handle: BlobHandle, range: { readonly offset: number; readonly length: number }) =>
       host.read(handle, range),
@@ -109,6 +118,15 @@ export const isolatedBlobs = (deliver: (request: unknown) => Promise<unknown>): 
         ...(options.contentType === undefined ? {} : { contentType: options.contentType }),
       }).pipe(Effect.flatMap(decode(BlobHandle))),
     stat: (id) => send({ op: "stat", id }).pipe(Effect.flatMap(decode(BlobHandle))),
+    url: (id, options) =>
+      send({
+        op: "url",
+        id,
+        ...(options.expiresInSeconds === undefined
+          ? {}
+          : { expiresInSeconds: Math.trunc(options.expiresInSeconds) }),
+        ...(options.filename === undefined ? {} : { filename: options.filename }),
+      }).pipe(Effect.flatMap(decode(BlobLink))),
     read: (handle, range) =>
       send({ op: "read", handle, offset: range.offset, length: range.length }).pipe(
         Effect.flatMap(decode(Schema.String)),

@@ -48,6 +48,7 @@ import {
   makeFileHandleStore,
   maxLocalFileBytes,
   pendingBlobSeconds,
+  type StreamingSha256,
   type UserContentOptions,
 } from "@executor-js/sdk/blobs";
 import { hostedResourceLifecycle } from "@executor-js/hosted-server/resource-lifecycle";
@@ -72,6 +73,8 @@ export interface SelfHostPlatform {
    * binding buffers one in the product Worker, which a large upload must not do.
    */
   readonly userContentRequiresSize: boolean;
+  /** A new streaming SHA-256: workerd's digest in the packaged product, Node's natively. */
+  readonly hasher: () => StreamingSha256;
   readonly repositories: RepositoryBackend;
   readonly runtime: AppRuntime;
   readonly workflows: WorkflowRuntime;
@@ -121,6 +124,7 @@ export const selfHostExecutorServices = <E, R>(
         blobs,
         userContent,
         userContentRequiresSize,
+        hasher,
         repositories,
       } = yield* acquire(Deferred.await(ready)).pipe(
         automationObservation === undefined
@@ -144,6 +148,7 @@ export const selfHostExecutorServices = <E, R>(
       const userContentOptions: UserContentOptions = {
         store: userContent,
         handles: makeFileHandleStore({ sql: database, table: "hosted_file_handles" }),
+        hasher,
         policy: {
           ...defaultBlobPolicy,
           maxFileBytes: maxLocalFileBytes,
