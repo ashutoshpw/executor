@@ -606,6 +606,22 @@ func serve(mode string) error {
 		}
 	}
 	config = bytes.ReplaceAll(config, []byte("@@NPM_REGISTRY@@"), []byte(strconv.Quote(registry)))
+	// The image ships the apps framework it was built with; an app that declares exactly that
+	// version builds from it instead of installing it from npm. An empty version turns this off.
+	frameworkVersion := ""
+	switch values["EXECUTOR_APPS_FRAMEWORK_DISABLED"] {
+	case "", "false":
+		shipped, err := os.ReadFile(filepath.Join(runtime, "framework", "version"))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Executor: the image's apps framework is missing; every apps release installs from the npm registry:", err)
+		} else {
+			frameworkVersion = strings.TrimSpace(string(shipped))
+		}
+	case "true":
+	default:
+		return errors.New("EXECUTOR_APPS_FRAMEWORK_DISABLED must be true or false")
+	}
+	config = bytes.ReplaceAll(config, []byte("@@APPS_FRAMEWORK_VERSION@@"), []byte(strconv.Quote(frameworkVersion)))
 	config = bytes.ReplaceAll(config, []byte("@@RUNTIME@@"), []byte(strings.Trim(strconv.Quote(runtime), "\"")))
 	service := `"product"`
 	if mode == "export" {

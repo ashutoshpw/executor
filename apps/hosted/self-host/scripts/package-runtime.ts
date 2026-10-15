@@ -2,7 +2,7 @@
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { readExecutorSkills } from "@executor-js/app-templates/executor";
-import { bundleWorkerdHost } from "@executor-js/sdk/node/build";
+import { bundleWorkerdHost, readFrameworkPackage } from "@executor-js/sdk/node/build";
 import { build } from "esbuild";
 import { Effect, FileSystem, Path, Schema } from "effect";
 import { HttpClient, HttpClientResponse } from "effect/http";
@@ -208,6 +208,17 @@ const packageRuntime = Effect.gen(function* () {
   yield* fs.writeFile(path.join(output, "workerd"), workerd.binary);
   yield* fs.chmod(path.join(output, "workerd"), 0o755);
   yield* fs.copy(web, path.join(output, "web"), { overwrite: true });
+  // The apps framework this image ships. Apps that declare its exact version build from these
+  // files instead of installing that version from npm; `version` is what the Go host binds.
+  const framework = yield* readFrameworkPackage(path.join(root, "packages/apps/dist")).pipe(
+    Effect.orDie,
+  );
+  yield* fs.makeDirectory(path.join(output, "framework"), { recursive: true });
+  yield* fs.writeFileString(
+    path.join(output, "framework/framework.json"),
+    JSON.stringify(framework.files),
+  );
+  yield* fs.writeFileString(path.join(output, "framework/version"), framework.version);
   yield* fs.copy(path.join(root, "packages/telemetry/dist/motel"), path.join(output, "motel"), {
     overwrite: true,
   });
@@ -278,7 +289,7 @@ const config :Workerd.Config = (
   )),
   (name="apps",worker=(
    compatibilityDate="2026-07-30",compatibilityFlags=["nodejs_compat"],modules=[${moduleConfig.join(",")}],
-   bindings=[(name="LOADER",workerLoader=()),(name="DATA",durableObjectNamespace="AppDataSupervisor"),(name="AUTH",text="service-binding"),(name="CREDENTIAL_SECRET",fromEnvironment="EXECUTOR_CREDENTIAL_HANDLE_SECRET"),(name="APPS_PRIVATE_FETCH",json="@@APPS_PRIVATE_FETCH@@"),(name="APP_WORKERS",json="@@APP_WORKERS@@"),(name="APP_WORKER_IDLE_SECONDS",json="@@APP_WORKER_IDLE_SECONDS@@"),(name="PUBLIC_FETCH",service="public"),(name="SELF_ORIGIN",text=@@SELF_ORIGIN@@),(name="NPM_REGISTRY",text=@@NPM_REGISTRY@@),(name="SELF",service=(name="product",entrypoint="SelfOrigin")),(name="HOST",service=(name="product",entrypoint="WorkflowCallbacks")),(name="RUNS",wrapped=(moduleName="cloudflare-runtime:workflows-wrapped-binding",innerBindings=[(name="binding",service=(name="workflows",entrypoint="WorkflowBinding"))]))],
+   bindings=[(name="LOADER",workerLoader=()),(name="DATA",durableObjectNamespace="AppDataSupervisor"),(name="AUTH",text="service-binding"),(name="CREDENTIAL_SECRET",fromEnvironment="EXECUTOR_CREDENTIAL_HANDLE_SECRET"),(name="APPS_PRIVATE_FETCH",json="@@APPS_PRIVATE_FETCH@@"),(name="APP_WORKERS",json="@@APP_WORKERS@@"),(name="APP_WORKER_IDLE_SECONDS",json="@@APP_WORKER_IDLE_SECONDS@@"),(name="PUBLIC_FETCH",service="public"),(name="SELF_ORIGIN",text=@@SELF_ORIGIN@@),(name="NPM_REGISTRY",text=@@NPM_REGISTRY@@),(name="APPS_FRAMEWORK_VERSION",text=@@APPS_FRAMEWORK_VERSION@@),(name="APPS_FRAMEWORK",service="framework"),(name="SELF",service=(name="product",entrypoint="SelfOrigin")),(name="HOST",service=(name="product",entrypoint="WorkflowCallbacks")),(name="RUNS",wrapped=(moduleName="cloudflare-runtime:workflows-wrapped-binding",innerBindings=[(name="binding",service=(name="workflows",entrypoint="WorkflowBinding"))]))],
    durableObjectNamespaces=[(className="AppDataSupervisor",uniqueKey="executor-app-data",enableSql=true)],durableObjectStorage=(localDisk="app-data")
   )),
   (name="workflows",worker=(
@@ -291,6 +302,7 @@ const config :Workerd.Config = (
   (name="public",network=(allow=["public"],tlsOptions=(trustBrowserCas=true,trustedCertificates=[@@EXTRA_CA_CERTIFICATES@@]))),
   (name="internet",network=(allow=["public","private","local"],tlsOptions=(trustBrowserCas=true,trustedCertificates=[@@EXTRA_CA_CERTIFICATES@@]))),
   (name="dashboard",disk=(path="@@RUNTIME@@/web")),
+  (name="framework",disk=(path="@@RUNTIME@@/framework")),
   (name="product-data",disk=(path="/app/data/product",writable=true,allowDotfiles=true)),
   (name="legacy-data",disk=(path="/app/data/hosted.pglite",allowDotfiles=true)),
   (name="app-data",disk=(path="/app/data/workerd",writable=true,allowDotfiles=true)),

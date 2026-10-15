@@ -83,6 +83,15 @@ host boundary changes). Merging allocates the numbers and the deploy from
 `main` publishes them. Never publish `apps` from a branch or by hand; see
 [publishing apps](notes/apps-publishing.md).
 
+A fork's framework carries a version npm cannot hold, such as
+`0.0.1-beta.92-fork.1`, when it speaks a host protocol npm's same-numbered
+release does not. The self-host host serves its checkout's built `apps` package
+(`packages/apps/dist`, packed into the image as `framework/`) to apps that
+declare exactly that version, so they build without the registry; any other
+declared version installs from npm. `check-publish.mjs` refuses to publish such
+a version, so never move it to a number npm already holds. Set
+`EXECUTOR_APPS_FRAMEWORK_DISABLED=true` to turn the host's own framework off.
+
 `scripts/releases/apps-published.ts` runs after `bun run apps:build`. It packs
 the staged package and compares every file with the published archive of the
 same version:

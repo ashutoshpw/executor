@@ -33,3 +33,17 @@ export const catalogFeedUrl = Config.String("EXECUTOR_CATALOG_URL").pipe(Config.
 
 /** A registry mirror for app builds. Apps resolve their declared packages from the public npm registry by default. */
 export const npmRegistry = Config.String("EXECUTOR_NPM_REGISTRY").pipe(Config.option);
+
+/**
+ * A built `apps` package (`bun run apps:build` writes one to `packages/apps/dist`) whose files the
+ * host serves to apps that declare its exact version. Defaults to this checkout's own build. A
+ * directory named here that is not a built package stops the host, because the operator asked for it.
+ */
+export const appsFrameworkDirectory = Config.String("EXECUTOR_APPS_FRAMEWORK_DIR").pipe(
+  Config.option,
+);
+
+/** Install every `apps` release from the npm registry, including the version this host ships. */
+export const appsFrameworkDisabled = Config.Boolean("EXECUTOR_APPS_FRAMEWORK_DISABLED").pipe(
+  Config.withDefault(false),
+);
