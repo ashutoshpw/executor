@@ -1,5 +1,6 @@
 import {
   BoxesIcon,
+  File01Icon,
   FingerPrintIcon,
   Home01Icon,
   Key01Icon,
@@ -18,6 +19,7 @@ export const items = [
   { to: "/org/$organizationSlug/connect", label: "Connections", icon: Plug01Icon },
   { to: "/org/$organizationSlug/accounts", label: "Accounts", icon: UserCircleIcon },
   { to: "/org/$organizationSlug/approvals", label: "Approvals", icon: Shield01Icon },
+  { to: "/org/$organizationSlug/files", label: "Files", icon: File01Icon },
   { to: "/org/$organizationSlug/groups", label: "Groups", icon: UserGroupIcon },
 ] as const;
 /** The organization settings page, listed after the host's own pages. */
