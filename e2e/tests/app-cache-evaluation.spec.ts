@@ -56,7 +56,7 @@ export default defineApp({}, async (ctx) => {
           "GET",
           `${prefix}/apps/${app.id}/tools/index`,
         );
-        expect(failed.status).toBe(502);
+        expect(failed.status).toBe(422);
         expect(JSON.stringify(failed.body)).not.toContain(privateMarker);
         // The cache's reason is named; the app's code did not throw, so it is not blamed.
         expect((yield* body(EvaluationFailure, failed)).failure).toEqual({

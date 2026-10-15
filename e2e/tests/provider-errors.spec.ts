@@ -155,7 +155,7 @@ export default defineApp({ user: { accounts: { service: provider.many() } } }, a
       phase?: string,
     ) =>
       Effect.gen(function* () {
-        expect(response.status, `${kind}: ${JSON.stringify(response.body)}`).toBe(502);
+        expect(response.status, `${kind}: ${JSON.stringify(response.body)}`).toBe(422);
         const parsed = yield* body(Failure, response);
         expect(parsed).toMatchObject({
           reason,
@@ -201,7 +201,7 @@ export default defineApp({ user: { accounts: { service: provider.many() } } }, a
         expectStated(listed, kind === "mcp" ? "while connecting" : "while listing its tools");
       // Lazy MCP sources do not discover tools when listing unrelated webhooks.
       const setup = yield* api.request(actors.owner, "GET", `${path}/webhook-definitions`);
-      expect(setup.status, JSON.stringify(setup.body)).toBe(kind === "mcp" ? 200 : 502);
+      expect(setup.status, JSON.stringify(setup.body)).toBe(kind === "mcp" ? 200 : 422);
       if (kind === "mcp") expect(setup.body).toEqual([]);
     }
     yield* upstream.configure({ status: 401, phase: "call" });

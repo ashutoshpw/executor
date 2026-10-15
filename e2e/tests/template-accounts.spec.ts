@@ -427,7 +427,7 @@ return { items: found.items, results };`,
         // pointer to the nested root. A child without a name must still be rejected. The combined
         // account operation checks each account's result itself, so the mismatch is its failure.
         const incomplete = yield* call(false);
-        expect(incomplete.status, JSON.stringify(incomplete.body)).toBe(502);
+        expect(incomplete.status, JSON.stringify(incomplete.body)).toBe(422);
         const rejected = yield* body(OutputRejected, incomplete);
         expect(rejected.failure.message).toContain(
           'Missing key. Expected string\n  at ["structuredContent"]["child"]["name"]',

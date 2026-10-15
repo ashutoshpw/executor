@@ -424,7 +424,7 @@ layer(HostedLive, { excludeTestServices: true })("Live OpenAPI import", (it) => 
 
         // Calling the left-out operation explains why, without sending a request.
         const admin = yield* app.call("posts.admin.getAdmin", "query", {});
-        expect(admin.status, JSON.stringify(admin.body)).toBe(502);
+        expect(admin.status, JSON.stringify(admin.body)).toBe(422);
         expect((yield* body(EvaluationFailed, admin)).failure).toEqual({
           source: "app",
           errorName: "OpenapiCompileError",
@@ -475,14 +475,14 @@ layer(HostedLive, { excludeTestServices: true })("Live OpenAPI import", (it) => 
           message: `The schema at ${pointer} is invalid: "items" must be a schema, not an array, so the reference inside it cannot be resolved. Left out: GET /teams/{team}. ${customTool}`,
         };
         const read = yield* app.tool("teams.teams.getTeam");
-        expect(read.status, JSON.stringify(read.body)).toBe(502);
+        expect(read.status, JSON.stringify(read.body)).toBe(422);
         const evaluation = yield* body(EvaluationFailed, read);
         expect(evaluation.failure).toEqual(leftOut);
         expect(evaluation.message).toContain(pointer);
         const called = yield* app.call("teams.teams.getTeam", "query", {
           path: { team: "core" },
         });
-        expect(called.status, JSON.stringify(called.body)).toBe(502);
+        expect(called.status, JSON.stringify(called.body)).toBe(422);
         expect((yield* body(EvaluationFailed, called)).failure).toEqual(leftOut);
 
         // A malformed Swagger 2.0 definition is named by its JSON Pointer before it is upgraded.
