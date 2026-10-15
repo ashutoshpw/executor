@@ -155,10 +155,11 @@ export const selfHostRouteMap = <DashboardE, DashboardR>(options: {
     );
     // Git builds namespaces from the same publishing domain as the API; it is provided here, not
     // inherited, so a route group added later cannot silently fall back to the default.
+    const domain = yield* publishingDomain;
     const authoring = Layer.mergeAll(
       gitRoutes.pipe(
         HttpRouter.provideRequest(
-          hostedAppGitAccess.pipe(Layer.provide(Layer.effect(PublishingDomain, publishingDomain))),
+          hostedAppGitAccess.pipe(Layer.provide(Layer.succeed(PublishingDomain, domain))),
         ),
       ),
       // This server's own public catalog, readable by other servers and the CLI. It lists only apps

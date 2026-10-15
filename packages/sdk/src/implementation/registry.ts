@@ -137,7 +137,13 @@ export const resolvePublication = (
   input: PublicationReference,
 ): Effect.Effect<AppCopySnapshot, RegistryError> =>
   Effect.gen(function* () {
-    const snapshot = yield* registry.snapshot(input.package, input.commit);
+    const { snapshot, origin } =
+      registry.resolve === undefined
+        ? {
+            snapshot: yield* registry.snapshot(input.package, input.commit),
+            origin: registry.origin,
+          }
+        : yield* registry.resolve(input.package, input.commit);
     if (snapshot.publication.name !== input.package || snapshot.publication.commit !== input.commit)
       return yield* new RegistryError({ reason: "changed" });
     const manifest = yield* publicationSource(snapshot.files).pipe(
@@ -146,8 +152,6 @@ export const resolvePublication = (
     // The source keeps the name it was published under; its owner may have changed scope since.
     if (packageLabel(manifest.name) !== packageLabel(input.package))
       return yield* new RegistryError({ reason: "invalid-source" });
-    const origin =
-      registry.originOf === undefined ? registry.origin : yield* registry.originOf(input.package);
     return {
       files: snapshot.files,
       origin: {
@@ -180,12 +184,21 @@ const layeredRegistry = (local: Registry, upstream: Registry): Registry => {
           missing(error) ? upstream.files(name, commit) : Effect.fail(error),
         ),
       );
+  const resolve = (name: string, commit: string) =>
+    local.snapshot(name, commit).pipe(
+      Effect.map((snapshot) => ({ snapshot, origin: local.origin })),
+      Effect.catchTag("RegistryError", (error) =>
+        missing(error)
+          ? upstream
+              .snapshot(name, commit)
+              .pipe(Effect.map((snapshot) => ({ snapshot, origin: upstream.origin })))
+          : Effect.fail(error),
+      ),
+    );
   return {
     origin: local.origin,
-    originOf: (name) =>
-      local
-        .list(name)
-        .pipe(Effect.map((listings) => (listings.length > 0 ? local.origin : upstream.origin))),
+    // The origin comes from the registry that answered, never from a second read.
+    resolve,
     list: (name) =>
       Effect.gen(function* () {
         const own = yield* local.list(name);
@@ -200,14 +213,7 @@ const layeredRegistry = (local: Registry, upstream: Registry): Registry => {
         const names = new Set(own.map((listing) => listing.name));
         return [...own, ...others.filter((listing) => !names.has(listing.name))].sort(byName);
       }),
-    snapshot: (name, commit) =>
-      local
-        .snapshot(name, commit)
-        .pipe(
-          Effect.catchTag("RegistryError", (error) =>
-            missing(error) ? upstream.snapshot(name, commit) : Effect.fail(error),
-          ),
-        ),
+    snapshot: (name, commit) => Effect.map(resolve(name, commit), ({ snapshot }) => snapshot),
     files,
     // A listing found here answers for all of its paths; a missing path is not another listing's.
     file: (name, commit, path) => files(name, commit).pipe(Effect.flatMap((read) => read(path))),
@@ -275,6 +281,19 @@ export const makeRegistry = (
       );
       if (Option.isSome(existing) && existing.value.app !== input.app)
         return yield* new PublicationIssue({ reason: "name-taken", name: manifest.name });
+      // A name the upstream lists stays the upstream's: this catalog would hide it from Add app and
+      // break installs of its real commit. An app already published here keeps its listing.
+      if (upstream !== undefined && Option.isNone(existing)) {
+        const listed = yield* upstream.list(manifest.name).pipe(
+          Effect.catchTag("RegistryError", (error) =>
+            Effect.logWarning("The upstream app catalog could not be checked for this name", {
+              reason: error.reason,
+            }).pipe(Effect.as([] as ReadonlyArray<Publication>)),
+          ),
+        );
+        if (listed.length > 0)
+          return yield* new PublicationIssue({ reason: "name-taken", name: manifest.name });
+      }
       return manifest;
     });
   return {
