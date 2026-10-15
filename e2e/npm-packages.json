@@ -114,6 +114,11 @@
       "name": "apps",
       "range": "0.0.1-beta.84",
       "transitive": false
+    },
+    {
+      "name": "apps",
+      "range": "0.0.1-beta.91",
+      "transitive": false
     }
   ],
   "packages": {
@@ -333,6 +338,14 @@
           "dependencies": {
             "effect": "https://pkg.pr.new/Effect-TS/effect/effect@c7d1ffff31a3e2ae0b0b0796b742bddeb797269d",
             "@effect/sql-sqlite-do": "https://pkg.pr.new/Effect-TS/effect/@effect/sql-sqlite-do@c7d1ffff31a3e2ae0b0b0796b742bddeb797269d",
+            "@cloudflare/workers-types": "5.20260729.1"
+          }
+        },
+        "0.0.1-beta.91": {
+          "tarball": "https://registry.npmjs.org/apps/-/apps-0.0.1-beta.91.tgz",
+          "integrity": "sha512-ViSmK2s2QhuXaohJinOsTIom/LTZMvFk0/LdPZJyXDMdxEe3vMNIeHQQOVCtSEVkkcNIY5XnpFmsZrUTfQeSFg==",
+          "dependencies": {
+            "effect": "4.0.1",
             "@cloudflare/workers-types": "5.20260729.1"
           }
         }
