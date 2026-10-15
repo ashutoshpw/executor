@@ -1,5 +1,6 @@
 /**
- * The organization's task insights setting: stored per organization, with arguments off by default.
+ * The organization's task insights setting: stored per organization, with arguments and responses
+ * off by default.
  * The recorder reads it for every tool call through a short cache; a save replaces the cached value
  * at once, so a change reaches new calls immediately on this server.
  */
@@ -24,6 +25,7 @@ import { UsageStore } from "../contracts/usage.ts";
 
 const SettingsRow = Schema.Struct({
   record_arguments: Schema.Boolean,
+  record_responses: Schema.Boolean,
   retention_days: TaskArgumentRetentionDays,
   extra_masked_keys: Schema.String,
 });
@@ -41,7 +43,7 @@ const decodeKeys = (text: string) =>
  * Failures are the caller's: the recorder treats them as recording off.
  */
 export const readTaskInsightsSettings = (sql: SqlClient.SqlClient, organizationId: string) =>
-  sql`select record_arguments, retention_days, extra_masked_keys
+  sql`select record_arguments, record_responses, retention_days, extra_masked_keys
     from hosted_organization_task_settings where organization_id = ${organizationId}`.pipe(
     Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(SettingsRow))),
     Effect.flatMap((rows) =>
@@ -50,6 +52,7 @@ export const readTaskInsightsSettings = (sql: SqlClient.SqlClient, organizationI
         : decodeKeys(rows[0].extra_masked_keys).pipe(
             Effect.map((extraMaskedKeys): TaskInsightsSettingsFields => ({
               recordArguments: rows[0]?.record_arguments ?? false,
+              recordResponses: rows[0]?.record_responses ?? false,
               retentionDays: rows[0]?.retention_days ?? defaultTaskArgumentRetentionDays,
               extraMaskedKeys,
             })),
@@ -151,6 +154,9 @@ const auditChange = (before: TaskInsightsSettingsFields, after: TaskInsightsSett
     ...(before.recordArguments === after.recordArguments
       ? {}
       : { recordArguments: { from: before.recordArguments, to: after.recordArguments } }),
+    ...(before.recordResponses === after.recordResponses
+      ? {}
+      : { recordResponses: { from: before.recordResponses, to: after.recordResponses } }),
     ...(before.retentionDays === after.retentionDays
       ? {}
       : { retentionDays: { from: before.retentionDays, to: after.retentionDays } }),
@@ -188,25 +194,29 @@ export const hostedTaskInsightsSettingsHandlers = HttpApiBuilder.group(
           if (access.role === "member") return yield* new OrganizationForbidden();
           const extraMaskedKeys = normalizeMaskedKeys(payload.extraMaskedKeys);
           if (extraMaskedKeys === undefined) return yield* new TaskInsightsSettingsInvalid();
-          const next: TaskInsightsSettingsFields = {
-            recordArguments: payload.recordArguments,
-            retentionDays: payload.retentionDays,
-            extraMaskedKeys,
-          };
           const sql = yield* database;
           const unavailable = Effect.mapError(() => new GroupsUnavailable());
           const before = yield* readTaskInsightsSettings(sql, access.organization).pipe(
             unavailable,
           );
+          const next: TaskInsightsSettingsFields = {
+            recordArguments: payload.recordArguments,
+            // A caller from before responses existed leaves the stored choice alone.
+            recordResponses: payload.recordResponses ?? before.recordResponses,
+            retentionDays: payload.retentionDays,
+            extraMaskedKeys,
+          };
           yield* sql
             .withTransaction(
               Effect.gen(function* () {
                 yield* sql`insert into hosted_organization_task_settings
-                (organization_id, record_arguments, retention_days, extra_masked_keys)
-                values (${access.organization}, ${next.recordArguments}, ${next.retentionDays},
+                (organization_id, record_arguments, record_responses, retention_days, extra_masked_keys)
+                values (${access.organization}, ${next.recordArguments}, ${next.recordResponses},
+                  ${next.retentionDays},
                   ${JSON.stringify(next.extraMaskedKeys)})
                 on conflict (organization_id) do update
                   set record_arguments = excluded.record_arguments,
+                    record_responses = excluded.record_responses,
                     retention_days = excluded.retention_days,
                     extra_masked_keys = excluded.extra_masked_keys,
                     updated_at = now()`;
@@ -223,10 +233,19 @@ export const hostedTaskInsightsSettingsHandlers = HttpApiBuilder.group(
             .pipe(unavailable);
           yield* publishTaskInsightsSettings(access.organization, next);
           const store = yield* UsageStore;
-          // Turning recording off removes what was stored, now rather than after retention.
+          // Turning one kind of recording off removes what was stored of that kind, now rather
+          // than after retention. The other kind stays.
           if (before.recordArguments && !next.recordArguments)
-            yield* store.scrubArguments({ byOrganization: new Map([[access.organization, 0]]) });
-          else // A shorter retention applies now, not at the next scheduled sweep.
+            yield* store.scrubArguments(
+              { byOrganization: new Map([[access.organization, 0]]) },
+              { arguments: true },
+            );
+          if (before.recordResponses && !next.recordResponses)
+            yield* store.scrubArguments(
+              { byOrganization: new Map([[access.organization, 0]]) },
+              { response: true },
+            );
+          // A shorter retention applies to both now, not at the next scheduled sweep.
           if (next.retentionDays < before.retentionDays)
             yield* store.scrubArguments({
               byOrganization: new Map([[access.organization, next.retentionDays]]),

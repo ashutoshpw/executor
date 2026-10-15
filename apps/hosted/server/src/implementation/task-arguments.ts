@@ -57,8 +57,26 @@ const maskText = (value: string): string => {
   return text;
 };
 
+/** Where a value sits: the object it is a field of and its name there. Both absent at the root and in arrays. */
+export interface MaskPosition {
+  readonly parent: Readonly<Record<string, unknown>> | undefined;
+  readonly key: string | undefined;
+}
+
+/**
+ * Offered every string and object that is not under a credential name, before it is masked or
+ * visited. A result other than undefined replaces the value as it is, so a value that was
+ * intercepted is never inspected again; credential names are decided first, so the hook never
+ * sees a secret.
+ */
+export type MaskIntercept = (node: unknown, at: MaskPosition) => unknown;
+
 /** Replace credential keys and values in a JSON-like value, to a bounded depth and size. */
-export const maskArguments = (value: unknown, extraKeys: ReadonlyArray<string> = []): unknown => {
+export const maskArguments = (
+  value: unknown,
+  extraKeys: ReadonlyArray<string> = [],
+  intercept?: MaskIntercept,
+): unknown => {
   const extra = new Set(
     extraKeys.map((key) => key.trim().toLowerCase()).filter((key) => key !== ""),
   );
@@ -78,13 +96,16 @@ export const maskArguments = (value: unknown, extraKeys: ReadonlyArray<string> =
         key,
         isSecretName(key) || (secretPair && pairValueFields.includes(key))
           ? maskedValue
-          : visit(item, depth + 1),
+          : visit(item, depth + 1, { parent: fields, key }),
       ]),
     );
   };
-  const visit = (node: unknown, depth: number): unknown => {
+  const noPosition: MaskPosition = { parent: undefined, key: undefined };
+  const visit = (node: unknown, depth: number, at: MaskPosition = noPosition): unknown => {
     nodes += 1;
     if (nodes > maxNodes) return "[omitted]";
+    const replaced = intercept?.(node, at);
+    if (replaced !== undefined) return replaced;
     if (typeof node === "string") return maskText(node);
     if (typeof node === "bigint") return node.toString();
     if (typeof node === "function" || typeof node === "symbol") return undefined;

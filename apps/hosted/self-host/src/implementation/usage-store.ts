@@ -4,6 +4,7 @@ import {
   emptyUsage,
   UsageStore,
   type ArgumentRetention,
+  type ScrubFields,
   type TaskCallRecord,
   type TaskCallsQuery,
   type TaskListQuery,
@@ -28,9 +29,9 @@ const rangeMillis: Record<UsageRange, number> = {
   "7d": 7 * dayMillis,
   "30d": 30 * dayMillis,
 };
-/** Version 2 adds the task, session, run and arguments columns. */
-const schemaVersion = 2;
-const taskColumns = ["task_id", "mcp_session_id", "run_id", "arguments"] as const;
+/** Version 2 adds the task, session, run and arguments columns; version 3 adds the response. */
+const schemaVersion = 3;
+const taskColumns = ["task_id", "mcp_session_id", "run_id", "arguments", "response"] as const;
 
 class UnsupportedDuckDB extends Data.TaggedError("UnsupportedDuckDB")<{
   readonly version: string;
@@ -80,7 +81,8 @@ export const selfHostUsageStore = Effect.gen(function* () {
         task_id varchar,
         mcp_session_id varchar,
         run_id varchar,
-        arguments varchar
+        arguments varchar,
+        response varchar
       )`,
     );
     // A file from an earlier version keeps its rows; the new columns are null for them. Tasks are
@@ -126,7 +128,13 @@ export const selfHostUsageStore = Effect.gen(function* () {
           if (call.errorType === undefined) appender.appendNull();
           else appender.appendVarchar(call.errorType);
           appender.appendInteger(Math.min(Math.round(call.durationMs), 2_147_483_647));
-          for (const value of [call.taskId, call.mcpSessionId, call.runId, call.arguments])
+          for (const value of [
+            call.taskId,
+            call.mcpSessionId,
+            call.runId,
+            call.arguments,
+            call.response,
+          ])
             if (value === undefined) appender.appendNull();
             else appender.appendVarchar(value);
           appender.endRow();
@@ -328,7 +336,7 @@ export const selfHostUsageStore = Effect.gen(function* () {
   const taskCalls = (input: TaskCallsQuery) =>
     read(
       `select epoch_ms(occurred_at) as at, app_id, tool_name, outcome, error_type, duration_ms,
-        task_id, mcp_session_id, run_id, arguments
+        task_id, mcp_session_id, run_id, arguments, response
       from (
         select *, rowid as row_id, ${taskKey} as task_key from usage_tool_calls
         where organization_id = ? and occurred_at >= ?
@@ -355,6 +363,7 @@ export const selfHostUsageStore = Effect.gen(function* () {
           sessionId: row.mcp_session_id === null ? null : String(row.mcp_session_id),
           runId: row.run_id === null ? null : String(row.run_id),
           arguments: row.arguments === null ? null : String(row.arguments),
+          response: row.response === null ? null : String(row.response),
         })),
       ),
       Effect.catch(() =>
@@ -363,9 +372,19 @@ export const selfHostUsageStore = Effect.gen(function* () {
         ),
       ),
     );
-  /** Null the arguments past each organization's retention; the rest of every record stays. */
-  const scrubArguments = (retention: ArgumentRetention) =>
-    flush.pipe(
+  /**
+   * Null the arguments and responses past each organization's retention; the rest of every record
+   * stays. `fields` limits it to one of them; both by default.
+   */
+  const scrubArguments = (retention: ArgumentRetention, fields?: ScrubFields) => {
+    const columns = [
+      ...(fields === undefined || fields.arguments === true ? ["arguments"] : []),
+      ...(fields === undefined || fields.response === true ? ["response"] : []),
+    ];
+    if (columns.length === 0) return Effect.void;
+    const set = columns.map((column) => `${column} = null`).join(", ");
+    const present = columns.map((column) => `${column} is not null`).join(" or ");
+    return flush.pipe(
       Effect.andThen(
         writerLock.withPermits(1)(
           Effect.tryPromise(async () => {
@@ -375,16 +394,16 @@ export const selfHostUsageStore = Effect.gen(function* () {
               byDays.set(days, [...(byDays.get(days) ?? []), organization]);
             for (const [days, organizations] of byDays)
               await writer.run(
-                `update usage_tool_calls set arguments = null
-                where arguments is not null and occurred_at < ?
+                `update usage_tool_calls set ${set}
+                where (${present}) and occurred_at < ?
                   and organization_id in (${organizations.map(() => "?").join(", ")})`,
                 [timestamp(new Date(now - days * dayMillis)), ...organizations],
               );
             if (retention.defaultDays !== undefined) {
               const listed = [...retention.byOrganization.keys()];
               await writer.run(
-                `update usage_tool_calls set arguments = null
-                where arguments is not null and occurred_at < ?
+                `update usage_tool_calls set ${set}
+                where (${present}) and occurred_at < ?
                   ${listed.length === 0 ? "" : `and organization_id not in (${listed.map(() => "?").join(", ")})`}`,
                 [timestamp(new Date(now - retention.defaultDays * dayMillis)), ...listed],
               );
@@ -394,6 +413,7 @@ export const selfHostUsageStore = Effect.gen(function* () {
       ),
       Effect.catch(() => Effect.logWarning("Usage argument retention could not run")),
     );
+  };
 
   const store: typeof UsageStore.Service = {
     available: true,

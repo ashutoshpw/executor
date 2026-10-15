@@ -1,6 +1,7 @@
 /** Read task insights for owners and admins: tasks grouped from the usage records. */
 import { Effect, Schema } from "effect";
 import { Base64Url } from "effect/encoding";
+import { FileTransferHost } from "@executor-js/sdk/blobs";
 import { AppId, type OwnerId } from "@executor-js/sdk/core";
 import { HttpApiBuilder } from "effect/http-api";
 import { HostedApi } from "../contracts/api.ts";
@@ -8,7 +9,9 @@ import { HostedExecutor } from "../contracts/executor.ts";
 import { CurrentOrganization, OrganizationForbidden } from "../contracts/organization.ts";
 import {
   defaultTasksPageSize,
+  maxTaskCallFiles,
   maxTaskCalls,
+  type TaskCallFile,
   TaskNotFound,
   TasksCursorInvalid,
   type TaskKind,
@@ -54,6 +57,58 @@ const named = (
   const name = names.get(appId);
   return name === undefined ? {} : { appName: name };
 };
+
+const fileUri = /executor-file:\/\/([^/\s"\\]+)\/([^\s"\\]+)/gu;
+
+/** The file IDs of this organization that some text names by address, in order, without repeats. */
+const namedFiles = (organization: string, texts: ReadonlyArray<string | null>) => {
+  const found = new Map<string, string>();
+  for (const text of texts) {
+    if (text === null) continue;
+    for (const match of text.matchAll(fileUri)) {
+      if (found.size >= maxTaskCallFiles) return found;
+      try {
+        // Another organization's address names nothing here.
+        if (decodeURIComponent(match[1] ?? "") !== organization) continue;
+        const id = decodeURIComponent(match[2] ?? "");
+        if (id !== "" && !found.has(id)) found.set(id, match[0]);
+      } catch {
+        // Not a valid address; skip it.
+      }
+    }
+  }
+  return found;
+};
+
+/** The state of each file a call names, looked up in the organization's file store. */
+const callFiles = (
+  organization: string,
+  owner: OwnerId,
+  call: { readonly arguments: string | null; readonly response: string | null },
+) =>
+  Effect.gen(function* () {
+    const named = namedFiles(organization, [call.arguments, call.response]);
+    if (named.size === 0) return [] as ReadonlyArray<TaskCallFile>;
+    const executor = yield* Effect.flatten(HostedExecutor);
+    const transfer = executor[FileTransferHost];
+    return yield* Effect.forEach([...named], ([id, uri]) =>
+      (transfer === undefined
+        ? Effect.succeed(undefined)
+        : transfer.userContent.handles.stat({ owner, id }).pipe(
+            Effect.map((found) => found.handle),
+            Effect.orElseSucceed(() => undefined),
+          )
+      ).pipe(
+        Effect.map((handle): TaskCallFile => ({
+          id,
+          uri,
+          contentType: handle?.contentType ?? null,
+          size: handle?.size ?? null,
+          available: handle !== undefined,
+        })),
+      ),
+    );
+  }).pipe(Effect.orElseSucceed((): ReadonlyArray<TaskCallFile> => []));
 
 /** Only owners and admins read tasks; every query is scoped to the caller's organization. */
 export const hostedTasksHandlers = HttpApiBuilder.group(HostedApi, "tasks", (handlers) =>
@@ -127,31 +182,49 @@ export const hostedTasksHandlers = HttpApiBuilder.group(HostedApi, "tasks", (han
         });
         if (found.length === 0) return yield* new TaskNotFound();
         const names = yield* appNames(access.owner);
-        // The sweep removes old arguments on a schedule; none is shown past retention before it runs.
-        // When the setting cannot be read, no argument is shown: the retention is unknown.
+        // The sweep removes old arguments and responses on a schedule; none is shown past retention
+        // before it runs.
+        // When the setting cannot be read, nothing is shown: the retention is unknown.
         const settings = yield* readableRecordingSettings(access.organization);
         const cutoff =
           settings === undefined
             ? Number.POSITIVE_INFINITY
             : Date.now() - settings.retentionDays * dayMillis;
+        const calls = yield* Effect.forEach(
+          found.slice(0, maxTaskCalls),
+          (call) => {
+            const kept = call.at >= cutoff;
+            const args = kept ? call.arguments : null;
+            const response = kept ? call.response : null;
+            return callFiles(access.organization, access.owner, {
+              arguments: args,
+              response,
+            }).pipe(
+              Effect.map((files) => ({
+                at: new Date(call.at).toISOString(),
+                appId: AppId.make(call.appId),
+                ...named(names, call.appId),
+                toolName: call.toolName,
+                outcome: call.outcome,
+                errorType: call.errorType,
+                durationMs: call.durationMs,
+                sessionId: call.sessionId,
+                runId: call.runId,
+                arguments: args,
+                response,
+                files,
+              })),
+            );
+          },
+          { concurrency: 8 },
+        );
         return {
           available: true,
           range,
           key: query.key,
           kind: parsed.kind,
           label: parsed.label,
-          calls: found.slice(0, maxTaskCalls).map((call) => ({
-            at: new Date(call.at).toISOString(),
-            appId: AppId.make(call.appId),
-            ...named(names, call.appId),
-            toolName: call.toolName,
-            outcome: call.outcome,
-            errorType: call.errorType,
-            durationMs: call.durationMs,
-            sessionId: call.sessionId,
-            runId: call.runId,
-            arguments: call.at < cutoff ? null : call.arguments,
-          })),
+          calls,
           truncated: found.length > maxTaskCalls,
         };
       }),

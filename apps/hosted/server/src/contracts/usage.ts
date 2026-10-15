@@ -2,8 +2,9 @@
  * Usage insights: one local record per finished tool call, and the aggregates the organization home
  * page reads. Recording is a product feature of the host's own storage, independent of product
  * analytics, so it ignores the analytics opt-out. Records hold identifiers and counts only, never
- * results, URLs, credentials, or messages. Tool-call arguments are kept only for organizations that
- * turned that on, masked, and only in the host's own store: never in analytics or feedback.
+ * URLs, credentials, or messages. Tool-call arguments and responses are kept only for
+ * organizations that turned each on, masked, and only in the host's own store: never in analytics
+ * or feedback.
  */
 import { AppId } from "@executor-js/sdk/core";
 import { Context, Effect, Schema } from "effect";
@@ -59,6 +60,8 @@ export interface UsageToolCall {
   readonly runId?: string;
   /** Masked, size-capped JSON; present only when the organization records arguments. */
   readonly arguments?: string;
+  /** Masked, size-capped JSON; present only when the organization records responses. */
+  readonly response?: string;
 }
 
 export const UsageTotals = Schema.Struct({
@@ -119,7 +122,13 @@ export const UsageReport = Schema.Struct({
 });
 export type UsageReport = typeof UsageReport.Type;
 
-/** How long each organization keeps stored arguments; organizations not listed use `defaultDays`. */
+/** Which stored text a scrub removes. */
+export interface ScrubFields {
+  readonly arguments?: boolean;
+  readonly response?: boolean;
+}
+
+/** How long each organization keeps stored arguments and responses; organizations not listed use `defaultDays`. */
 export interface ArgumentRetention {
   /** Applied to every organization not in `byOrganization`; absent leaves them alone. */
   readonly defaultDays?: number;
@@ -158,6 +167,7 @@ export interface TaskCallRecord {
   readonly sessionId: string | null;
   readonly runId: string | null;
   readonly arguments: string | null;
+  readonly response: string | null;
 }
 
 export interface TaskCallsQuery {
@@ -187,8 +197,14 @@ export const UsageStore = Context.Reference<{
   readonly tasks: (query: TaskListQuery) => Effect.Effect<ReadonlyArray<TaskSummary>>;
   /** The calls of one task in the order they were made, oldest first. */
   readonly taskCalls: (query: TaskCallsQuery) => Effect.Effect<ReadonlyArray<TaskCallRecord>>;
-  /** Remove stored arguments older than each organization's retention, keeping the rest of the records. */
-  readonly scrubArguments: (retention: ArgumentRetention) => Effect.Effect<void>;
+  /**
+   * Remove stored arguments and responses older than each organization's retention, keeping the
+   * rest of the records. `fields` limits it to one kind; both by default.
+   */
+  readonly scrubArguments: (
+    retention: ArgumentRetention,
+    fields?: ScrubFields,
+  ) => Effect.Effect<void>;
 }>("hosted/UsageStore", {
   defaultValue: () => ({
     available: false,

@@ -27,10 +27,13 @@ const observeTool = <A extends ToolCallResult | ToolResumeResult, E, R>(
         Effect.gen(function* () {
           const duration = Math.max(0, (yield* Clock.currentTimeMillis) - started);
           const timed = { ...properties, duration_ms: duration };
-          const record = (finished: {
-            readonly outcome?: "success" | "failure" | "cancelled" | undefined;
-            readonly error_type?: string | undefined;
-          }) =>
+          const record = (
+            finished: {
+              readonly outcome?: "success" | "failure" | "cancelled" | undefined;
+              readonly error_type?: string | undefined;
+            },
+            response?: { readonly value: unknown },
+          ) =>
             finished.outcome === undefined
               ? Effect.void
               : recordToolCall({
@@ -41,6 +44,7 @@ const observeTool = <A extends ToolCallResult | ToolResumeResult, E, R>(
                   durationMs: duration,
                   startedAt: started,
                   arguments: toolArguments,
+                  response,
                 });
           if (Exit.isFailure(exit)) {
             const failure = usageFailure(exit.cause);
@@ -56,7 +60,12 @@ const observeTool = <A extends ToolCallResult | ToolResumeResult, E, R>(
             const replayed =
               status === "already-consumed" ||
               (status === "failed" && "reason" in exit.value && exit.value.reason === "expired");
-            if (!replayed) yield* record(completion);
+            // Only a completed call has a response: failures and replays record none.
+            if (!replayed)
+              yield* record(
+                completion,
+                exit.value.status === "completed" ? { value: exit.value.value } : undefined,
+              );
           } else {
             yield* recordUsage("tool_approval_requested", { ...timed, status });
           }
