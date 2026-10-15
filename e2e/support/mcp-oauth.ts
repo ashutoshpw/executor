@@ -289,14 +289,17 @@ const make = Effect.gen(function* () {
     resourceParameter: "sent" | "omitted" = "sent",
     client: ClientOptions = e2eClient,
     resourceOrigin: string = origin,
+    organizationSlug?: string,
   ) =>
     Effect.gen(function* () {
-      // A scoped connection has its own MCP URL, OAuth resource and discovery document.
+      // A scoped connection has its own MCP URL, OAuth resource and discovery document, as does
+      // an organization's `/org/<slug>/mcp`.
       const query = connection === undefined ? "" : `?connection=${encodeURIComponent(connection)}`;
-      const resourceUrl = `${resourceOrigin}/${kind}${query}`;
+      const path = organizationSlug === undefined ? `/${kind}` : `/org/${organizationSlug}/mcp`;
+      const resourceUrl = `${resourceOrigin}${path}${query}`;
       // Playwright network traces contain cookies and authorization codes. Keep the video only.
       yield* browser.omitNetworkTrace;
-      const discoveryPath = `/.well-known/oauth-protected-resource/${kind}${query}`;
+      const discoveryPath = `/.well-known/oauth-protected-resource${path}${query}`;
       const resource = yield* discoverAt(resourceOrigin, discoveryPath);
       yield* ok("resource discovery", resource.status);
       const metadata = yield* body(
@@ -410,13 +413,24 @@ const make = Effect.gen(function* () {
           operation: "find intended organization",
           status: organizations.status,
         });
-      if (connection === undefined) {
+      if (connection === undefined && organizationSlug === undefined) {
         yield* browser.use("Select the intended organization", (page) =>
           page.getByRole("combobox").click(),
         );
         yield* browser.use("Confirm the organization selection", (page) =>
           page.getByRole("option", { name: organization.name, exact: true }).click(),
         );
+      } else if (connection === undefined) {
+        // The URL fixes its organization: consent shows it and offers no other choice.
+        yield* browser.use("Consent names the URL's organization", (page) =>
+          page.getByText("Organization:").waitFor(),
+        );
+        if (
+          (yield* browser.use("No organization choice", (page) =>
+            page.getByRole("combobox").count(),
+          )) !== 0
+        )
+          return yield* new OAuthFailed({ operation: "URL organization choice", status: 0 });
       } else {
         // The connection fixes its organization; consent names the scoped access instead.
         yield* browser.use("Consent describes the scoped connection", (page) =>
@@ -506,8 +520,16 @@ const make = Effect.gen(function* () {
     resourceParameter: "sent" | "omitted" = "sent",
     client: ClientOptions = e2eClient,
     resourceOrigin: string = origin,
+    organizationSlug?: string,
   ) =>
-    authorizeClient(kind, connection, resourceParameter, client, resourceOrigin).pipe(
+    authorizeClient(
+      kind,
+      connection,
+      resourceParameter,
+      client,
+      resourceOrigin,
+      organizationSlug,
+    ).pipe(
       Effect.flatMap(({ authorized, exchanged }) =>
         tokensOf(Tokens, exchanged).pipe(
           Effect.map((tokens): Grant => ({ ...authorized, tokens })),
@@ -521,6 +543,9 @@ const make = Effect.gen(function* () {
     authorizeWithoutResource: authorize("mcp", undefined, "omitted"),
     /** Authorize a scoped connection's own MCP URL through the same browser consent. */
     authorizeConnection: (connection: string) => authorize("mcp", connection),
+    /** Authorize an organization's own MCP URL, `/org/<slug>/mcp`, through the same consent. */
+    authorizeOrganization: (slug: string, resourceOrigin: string = origin) =>
+      authorize("mcp", undefined, "sent", e2eClient, resourceOrigin, slug),
     /** Authorize the MCP or API resource a client discovered at another origin. */
     authorizeAt: (kind: "mcp" | "api", resourceOrigin: string) =>
       authorize(kind, undefined, "sent", e2eClient, resourceOrigin),
