@@ -14,8 +14,7 @@ import {
   type TaskKind,
 } from "../contracts/tasks.ts";
 import { UsageStore, type TaskSummary } from "../contracts/usage.ts";
-import { defaultTaskArgumentRetentionDays } from "../contracts/task-insights-settings.ts";
-import { recordingSettings } from "./task-insights-settings.ts";
+import { readableRecordingSettings } from "./task-insights-settings.ts";
 
 const dayMillis = 24 * 60 * 60 * 1000;
 
@@ -129,9 +128,12 @@ export const hostedTasksHandlers = HttpApiBuilder.group(HostedApi, "tasks", (han
         if (found.length === 0) return yield* new TaskNotFound();
         const names = yield* appNames(access.owner);
         // The sweep removes old arguments on a schedule; none is shown past retention before it runs.
-        const settings = yield* recordingSettings(access.organization);
+        // When the setting cannot be read, no argument is shown: the retention is unknown.
+        const settings = yield* readableRecordingSettings(access.organization);
         const cutoff =
-          Date.now() - (settings.retentionDays ?? defaultTaskArgumentRetentionDays) * dayMillis;
+          settings === undefined
+            ? Number.POSITIVE_INFINITY
+            : Date.now() - settings.retentionDays * dayMillis;
         return {
           available: true,
           range,
