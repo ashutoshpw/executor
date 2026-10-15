@@ -253,6 +253,7 @@ export const makeWorkflowRuns = (
         const row = yield* read(run);
         const result = yield* observeAutomationTool(
           {
+            runId: run,
             source: "workflow",
             app: current.app,
             owner: row.owner,
