@@ -17,7 +17,7 @@ const [packed] = JSON.parse(
 const archive = join(artifacts, packed.filename);
 const manifest = JSON.parse(await readFile(join(root, "dist/package.json"), "utf8"));
 assert.equal(manifest.publishConfig.tag, "beta");
-assert.match(manifest.version, /^0\.0\.\d+-beta\.\d+$/);
+assert.match(manifest.version, /^0\.0\.\d+-beta\.\d+(-fork\.\d+)?$/);
 assert(!JSON.stringify(manifest).includes("workspace:"));
 // The MCP SDK this release is built with is the one quick add pins; the README example names it.
 const source = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
@@ -141,10 +141,15 @@ ${imports.map((specifier, i) => `import type * as Api${i} from ${JSON.stringify(
     `All ${imports.length} entry points import; strict NodeNext and Bundler consumers typecheck.`,
   );
   // Test the publish guard directly. This does not contact npm or publish.
-  execFileSync("node", ["check-publish.mjs"], {
-    cwd: join(root, "dist"),
-    env: { ...process.env, npm_config_tag: "beta" },
-  });
+  // A fork-only version must never be publishable; every other version must pass the beta tag.
+  const guard = () =>
+    execFileSync("node", ["check-publish.mjs"], {
+      cwd: join(root, "dist"),
+      env: { ...process.env, npm_config_tag: "beta" },
+      stdio: "pipe",
+    });
+  if (manifest.version.includes("-fork.")) assert.throws(guard);
+  else guard();
   assert.throws(() =>
     execFileSync("node", ["check-publish.mjs"], {
       cwd: join(root, "dist"),

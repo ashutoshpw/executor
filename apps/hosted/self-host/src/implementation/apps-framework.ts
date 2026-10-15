@@ -1,6 +1,6 @@
 /** The `apps` framework the native host serves from its own checkout. */
-import { readFrameworkPackage } from "@executor-js/sdk/node/workerd";
-import { Effect, Option, Path } from "effect";
+import { checkoutFrameworkDirectory, readFrameworkPackage } from "@executor-js/sdk/node/workerd";
+import { Effect, Option } from "effect";
 import { appsFrameworkDirectory, appsFrameworkDisabled } from "../contracts/config.ts";
 
 /**
@@ -16,15 +16,12 @@ export const selfHostAppsFramework = Effect.gen(function* () {
     );
     return undefined;
   }
-  const path = yield* Path.Path;
   const configured = yield* appsFrameworkDirectory;
-  const framework = readFrameworkPackage(
-    Option.getOrElse(configured, () =>
-      path.resolve(import.meta.dirname, "../../../../../packages/apps/dist"),
-    ),
-  );
-  if (Option.isSome(configured)) return yield* framework;
-  return yield* framework.pipe(
+  if (Option.isSome(configured)) return yield* readFrameworkPackage(configured.value);
+  // Found by walking up, so it holds for `bun src/main.ts` and for the bundle in `dist/` alike.
+  const found = yield* checkoutFrameworkDirectory(import.meta.dirname);
+  const directory = Option.getOrElse(found, () => "(no checkout)");
+  return yield* readFrameworkPackage(directory).pipe(
     Effect.catchTag("FrameworkPackageUnavailable", (error) =>
       Effect.logWarning(
         `This checkout's apps framework is not built (${error.directory}: ${error.reason}). Run bun run apps:build, or set EXECUTOR_APPS_FRAMEWORK_DIR. Until then every apps release installs from the npm registry, so apps cannot use this host's own framework version.`,

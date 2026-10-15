@@ -1,5 +1,5 @@
 /** A built `apps` package read from disk as the files an npm archive of it would hold. */
-import { Effect, FileSystem, Path, Schema } from "effect";
+import { Effect, FileSystem, Option, Path, Schema } from "effect";
 
 /** The package directory is missing, incomplete or unreadable. */
 export class FrameworkPackageUnavailable extends Schema.TaggedError<FrameworkPackageUnavailable>()(
@@ -61,3 +61,24 @@ export const readFrameworkPackage = (directory: string) =>
         }),
     ),
   );
+
+/**
+ * The `packages/apps/dist` of the checkout that holds `from`, found by walking up to the nearest
+ * directory with `packages/apps/package.json`. The same call works from a source file and from a
+ * bundle in a package's `dist/`, which sit at different depths. None when `from` is not inside a
+ * checkout, as in a packaged install.
+ */
+export const checkoutFrameworkDirectory = (from: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    let directory = path.resolve(from);
+    for (;;) {
+      if (yield* fs.exists(path.join(directory, "packages", "apps", "package.json"))) {
+        return Option.some(path.join(directory, "packages", "apps", "dist"));
+      }
+      const parent = path.dirname(directory);
+      if (parent === directory) return Option.none<string>();
+      directory = parent;
+    }
+  }).pipe(Effect.orElseSucceed(() => Option.none<string>()));
