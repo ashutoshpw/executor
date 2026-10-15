@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
   Add01Icon,
@@ -27,8 +27,26 @@ import {
   TooltipTrigger,
 } from "../components/tooltip.tsx";
 import { CopyButton } from "./code.tsx";
+import { Notice, ViewSwitch } from "./file-preview-controls.tsx";
 import { ToolMarkdown } from "./markdown.tsx";
 import { markdownDocument } from "./markdown-prose.ts";
+
+/**
+ * The viewers for images, text, tables and workbooks load only in a browser. The server render
+ * never reaches them, and a dynamic import would still ship their chunk to the Cloud Workers.
+ */
+const serverRender = () => Promise.reject(new Error("File previews render only in a browser"));
+const ExtraPreview = lazy(() =>
+  (import.meta.env.SSR ? serverRender() : import("./file-preview-viewers.tsx")).then((module) => ({
+    default: module.ExtraPreview,
+  })),
+);
+
+const loadingPreview = (
+  <Notice>
+    <Spinner /> <span className="ml-2">Loading preview…</span>
+  </Notice>
+);
 
 /** What the drawer needs to know about a file before it fetches any bytes. */
 export interface PreviewFile {
@@ -42,9 +60,28 @@ export const maxPdfPreviewBytes = 25 * 1024 * 1024;
 /** Markdown above this many bytes is downloaded, not previewed. */
 export const maxMarkdownPreviewBytes = 1024 * 1024;
 
-/** Media streams from its link, so nothing is buffered by the page and no size cap applies. */
-export type PreviewKind = "pdf" | "markdown" | "video" | "audio";
-type BufferedKind = "pdf" | "markdown";
+/** A workbook above this many bytes is downloaded, not previewed. */
+export const maxXlsxPreviewBytes = 10 * 1024 * 1024;
+/** Plain text above this many bytes is cut at it. */
+export const maxTextPreviewBytes = 1024 * 1024;
+/** A CSV or TSV above this many bytes is cut at it. */
+export const maxDelimitedPreviewBytes = 5 * 1024 * 1024;
+
+/**
+ * Media and images stream from their link, so nothing is buffered by the page and no size cap
+ * applies. The other kinds are fetched whole, up to a limit.
+ */
+export type PreviewKind =
+  | "pdf"
+  | "markdown"
+  | "video"
+  | "audio"
+  | "image"
+  | "text"
+  | "csv"
+  | "tsv"
+  | "xlsx";
+type BufferedKind = "pdf" | "markdown" | "text" | "csv" | "tsv" | "xlsx";
 
 /** A media link outlives a long playback: four hours, where the default is fifteen minutes. */
 export const mediaLinkSeconds = 4 * 60 * 60;
@@ -54,6 +91,11 @@ export const previewKind = (contentType: string): PreviewKind | undefined => {
   const type = contentType.split(";")[0]?.trim().toLowerCase();
   if (type === "application/pdf" || type === "application/x-pdf") return "pdf";
   if (type === "text/markdown" || type === "text/x-markdown") return "markdown";
+  if (type === "text/csv" || type === "application/csv" || type === "text/x-csv") return "csv";
+  if (type === "text/tab-separated-values" || type === "text/tsv") return "tsv";
+  if (type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") return "xlsx";
+  if (type?.startsWith("image/")) return "image";
+  if (type?.startsWith("text/")) return "text";
   if (type === "video/mp4" || type === "video/webm" || type === "video/quicktime") return "video";
   if (type === "video/ogg") return "video";
   if (
@@ -69,38 +111,73 @@ export const previewKind = (contentType: string): PreviewKind | undefined => {
   return undefined;
 };
 
-const limitOf = (kind: BufferedKind) =>
-  kind === "pdf" ? maxPdfPreviewBytes : maxMarkdownPreviewBytes;
+const limits = {
+  pdf: maxPdfPreviewBytes,
+  markdown: maxMarkdownPreviewBytes,
+  text: maxTextPreviewBytes,
+  csv: maxDelimitedPreviewBytes,
+  tsv: maxDelimitedPreviewBytes,
+  xlsx: maxXlsxPreviewBytes,
+} as const satisfies Record<BufferedKind, number>;
+const limitOf = (kind: BufferedKind) => limits[kind];
+
+/** These are cut at their limit; the others are refused above it. */
+const isCutAtLimit = (kind: BufferedKind) => kind === "text" || kind === "csv" || kind === "tsv";
+
+const isBuffered = (kind: PreviewKind | undefined): kind is BufferedKind =>
+  kind !== undefined && kind !== "video" && kind !== "audio" && kind !== "image";
 
 const megabytes = (bytes: number) => `${Math.round(bytes / (1024 * 1024))} MiB`;
 
+/** A size for a sentence: bytes, KiB, MiB or GiB with one decimal above a byte. */
+const formatBytes = (bytes: number) => {
+  const units = ["bytes", "KiB", "MiB", "GiB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  return unit === 0 ? `${value} bytes` : `${value.toFixed(1)} ${units[unit]}`;
+};
+
 type Bytes =
   | { readonly status: "loading" }
-  | { readonly status: "ready"; readonly bytes: ArrayBuffer }
+  | { readonly status: "ready"; readonly bytes: ArrayBuffer; readonly truncated: boolean }
   | { readonly status: "error"; readonly message: string };
 
 /**
  * Read a response body, stopping as soon as it passes `limit` bytes so the cap bounds the memory
- * used, not just the final size. Returns undefined when the body is larger than the limit.
+ * used, not just the final size. A body over the limit is refused (undefined), or with `cut` its
+ * first `limit` bytes are kept and the rest of the transfer is cancelled.
  */
 async function readWithin(
   response: Response,
   limit: number,
+  cut: boolean,
   signal: AbortSignal,
-): Promise<ArrayBuffer | undefined> {
+): Promise<{ readonly bytes: ArrayBuffer; readonly truncated: boolean } | undefined> {
   if (response.body === null) {
     const whole = await response.arrayBuffer();
-    return whole.byteLength > limit ? undefined : whole;
+    if (whole.byteLength <= limit) return { bytes: whole, truncated: false };
+    return cut ? { bytes: whole.slice(0, limit), truncated: true } : undefined;
   }
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let total = 0;
+  let truncated = false;
   try {
     while (!signal.aborted) {
       const { done, value } = await reader.read();
       if (done) break;
+      if (total + value.byteLength > limit) {
+        if (!cut) return undefined;
+        chunks.push(value.subarray(0, limit - total));
+        total = limit;
+        truncated = true;
+        break;
+      }
       total += value.byteLength;
-      if (total > limit) return undefined;
       chunks.push(value);
     }
   } finally {
@@ -113,14 +190,19 @@ async function readWithin(
     joined.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  return joined.buffer;
+  return { bytes: joined.buffer, truncated };
 }
 
 /**
  * Fetch a file's bytes through a freshly minted link. The request is aborted and the bytes
  * dropped when the drawer closes; nothing is cached across openings.
  */
-function useFileBytes(file: PreviewFile, limit: number, mintLink: () => Promise<string>): Bytes {
+function useFileBytes(
+  file: PreviewFile,
+  limit: number,
+  cut: boolean,
+  mintLink: () => Promise<string>,
+): Bytes {
   const [state, setState] = useState<Bytes>({ status: "loading" });
   useEffect(() => {
     const controller = new AbortController();
@@ -142,16 +224,16 @@ function useFileBytes(file: PreviewFile, limit: number, mintLink: () => Promise<
         const response = await fetch(url, { credentials: "omit", signal: controller.signal });
         if (!response.ok) return fail(`The file could not be loaded (HTTP ${response.status}).`);
         const declared = Number(response.headers.get("content-length"));
-        if (Number.isFinite(declared) && declared > limit) {
+        if (!cut && Number.isFinite(declared) && declared > limit) {
           controller.abort();
           return setState({ status: "error", message: "Too large to preview." });
         }
-        const bytes = await readWithin(response, limit, controller.signal);
-        if (bytes === undefined) {
+        const read = await readWithin(response, limit, cut, controller.signal);
+        if (read === undefined) {
           controller.abort();
           return setState({ status: "error", message: "Too large to preview." });
         }
-        if (!controller.signal.aborted) setState({ status: "ready", bytes });
+        if (!controller.signal.aborted) setState({ status: "ready", ...read });
       } catch (cause) {
         if (controller.signal.aborted) return;
         fail(
@@ -164,7 +246,7 @@ function useFileBytes(file: PreviewFile, limit: number, mintLink: () => Promise<
     return () => controller.abort();
     // The link is minted once per opened file; the caller's closure may change every render.
     // oxlint-disable-next-line react-hooks/exhaustive-deps
-  }, [file.id, limit]);
+  }, [file.id, limit, cut]);
   return state;
 }
 
@@ -172,18 +254,6 @@ const startsWithPdfHeader = (bytes: ArrayBuffer) => {
   const head = new Uint8Array(bytes, 0, Math.min(5, bytes.byteLength));
   return head.length === 5 && String.fromCharCode(...head) === "%PDF-";
 };
-
-/** A message filling the drawer body. */
-function Notice({ children }: { readonly children: React.ReactNode }) {
-  return (
-    <div
-      role="status"
-      className="flex flex-1 items-center justify-center p-6 text-center text-sm text-muted-foreground"
-    >
-      {children}
-    </div>
-  );
-}
 
 const zoomSteps = [0.5, 0.75, 1, 1.25, 1.5, 2, 2.5] as const;
 
@@ -437,56 +507,10 @@ const markdownViews = [
 function MarkdownViewer({ bytes }: { readonly bytes: ArrayBuffer }) {
   const [view, setView] = useState<MarkdownView>("preview");
   const source = useMemo(() => new TextDecoder("utf-8").decode(bytes), [bytes]);
-  // A radiogroup is one tab stop; the arrow keys move the choice, as a native radio group does.
-  const onViewKey = (event: React.KeyboardEvent<HTMLButtonElement>, current: MarkdownView) => {
-    const step =
-      event.key === "ArrowRight" || event.key === "ArrowDown"
-        ? 1
-        : event.key === "ArrowLeft" || event.key === "ArrowUp"
-          ? -1
-          : 0;
-    if (step === 0) return;
-    event.preventDefault();
-    const index = markdownViews.findIndex((option) => option.value === current);
-    const next = markdownViews[(index + step + markdownViews.length) % markdownViews.length]!;
-    setView(next.value);
-    const buttons = event.currentTarget.parentElement?.parentElement?.querySelectorAll("button");
-    (buttons?.[markdownViews.indexOf(next)] as HTMLButtonElement | undefined)?.focus();
-  };
   return (
     <>
       <div className="flex items-center justify-end border-b px-4 py-2">
-        <TooltipProvider>
-          <div
-            role="radiogroup"
-            aria-label="Markdown view"
-            className="flex shrink-0 rounded-md border p-0.5"
-          >
-            {markdownViews.map((option) => (
-              <Tooltip key={option.value}>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    role="radio"
-                    aria-checked={view === option.value}
-                    tabIndex={view === option.value ? 0 : -1}
-                    onKeyDown={(event) => onViewKey(event, option.value)}
-                    aria-label={option.label}
-                    onClick={() => setView(option.value)}
-                    className={`rounded px-2 py-1 transition-colors ${
-                      view === option.value
-                        ? "bg-muted text-foreground"
-                        : "text-muted-foreground hover:text-foreground"
-                    }`}
-                  >
-                    <HugeiconsIcon icon={option.icon} size={16} aria-hidden />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent>{option.label}</TooltipContent>
-              </Tooltip>
-            ))}
-          </div>
-        </TooltipProvider>
+        <ViewSwitch label="Markdown view" options={markdownViews} value={view} onChange={setView} />
       </div>
       <div className="min-h-0 flex-1 overflow-auto p-4">
         {view === "raw" ? (
@@ -625,7 +649,8 @@ function PreviewBody({
   readonly kind: BufferedKind;
   readonly mintLink: () => Promise<string>;
 }) {
-  const state = useFileBytes(file, limitOf(kind), mintLink);
+  const limit = limitOf(kind);
+  const state = useFileBytes(file, limit, isCutAtLimit(kind), mintLink);
   if (state.status === "loading")
     return (
       <Notice>
@@ -640,11 +665,25 @@ function PreviewBody({
       <Notice>This file is not a valid PDF, so it cannot be previewed.</Notice>
     );
   }
-  return <MarkdownViewer bytes={state.bytes} />;
+  if (kind === "markdown") return <MarkdownViewer bytes={state.bytes} />;
+  return (
+    <Suspense fallback={loadingPreview}>
+      <ExtraPreview
+        kind={kind}
+        bytes={state.bytes}
+        contentType={file.contentType}
+        truncation={
+          state.truncated
+            ? `Showing the first ${megabytes(limit)} of ${formatBytes(file.size)}. Download the file to see all of it.`
+            : undefined
+        }
+      />
+    </Suspense>
+  );
 }
 
 /**
- * A right-hand drawer previewing a PDF, Markdown, video or audio file. It fetches through a short-lived link
+ * A right-hand drawer previewing a PDF, Markdown, text, CSV, spreadsheet, image, video or audio file. It fetches through a short-lived link
  * the caller mints, never navigates to the link and never renders HTML from the file.
  */
 export function FilePreviewSheet({
@@ -699,8 +738,9 @@ function FilePreviewContent({
   readonly onDownload: (file: PreviewFile) => void;
 }) {
   const kind = previewKind(file.contentType);
-  const buffered = kind === "pdf" || kind === "markdown" ? kind : undefined;
-  const tooLarge = buffered !== undefined && file.size > limitOf(buffered);
+  const buffered = isBuffered(kind) ? kind : undefined;
+  const tooLarge =
+    buffered !== undefined && !isCutAtLimit(buffered) && file.size > limitOf(buffered);
   return (
     <>
       <SheetHeader>
@@ -743,6 +783,14 @@ function FilePreviewContent({
           mintLink={(seconds) => mintLink(file, seconds)}
           onDownload={() => onDownload(file)}
         />
+      ) : kind === "image" ? (
+        <Suspense fallback={loadingPreview}>
+          <ExtraPreview
+            key={file.id}
+            kind="image"
+            mintLink={() => mintLink(file, mediaLinkSeconds)}
+          />
+        </Suspense>
       ) : buffered === undefined ? null : tooLarge ? (
         <Notice>
           Too large to preview (limit {megabytes(limitOf(buffered))}). Download it to open it.
