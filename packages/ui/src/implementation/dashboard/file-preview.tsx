@@ -27,6 +27,7 @@ import {
   TooltipTrigger,
 } from "../components/tooltip.tsx";
 import { ToolMarkdown } from "./markdown.tsx";
+import { markdownDocument } from "./markdown-prose.ts";
 
 /** What the drawer needs to know about a file before it fetches any bytes. */
 export interface PreviewFile {
@@ -475,7 +476,7 @@ function MarkdownViewer({ bytes }: { readonly bytes: ArrayBuffer }) {
             {source}
           </pre>
         ) : (
-          <div className="tool-markdown text-sm">
+          <div className={markdownDocument}>
             <ToolMarkdown blockRemoteImages>{source}</ToolMarkdown>
           </div>
         )}
