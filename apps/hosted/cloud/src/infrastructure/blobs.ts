@@ -134,15 +134,15 @@ export const cloudBlobs = Effect.gen(function* () {
           }),
         ),
       );
+      const size = options?.size;
       const write =
-        options?.size === undefined
-          ? // Without a length R2 cannot take a stream, so this adapter buffers the object.
-            collectBytes(observed, undefined).pipe(
-              Effect.flatMap((bytes) => bucket.put(key, bytes)),
-            )
-          : options.size > singlePutLimit
+        size === undefined || size === 0
+          ? // Without a length R2 cannot take a stream, so this adapter buffers the object. An empty
+            // object is buffered too: alchemy rejects a zero contentLength as a missing one.
+            collectBytes(observed, size).pipe(Effect.flatMap((bytes) => bucket.put(key, bytes)))
+          : size > singlePutLimit
             ? Effect.fail(new BlobStoreError({ operation: "put" }))
-            : bucket.put(key, observed, { contentLength: options.size });
+            : bucket.put(key, observed, { contentLength: size });
       return write.pipe(
         Effect.asVoid,
         Effect.provide(RuntimeContext.phantom),
