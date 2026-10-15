@@ -18,6 +18,7 @@ import {
 import { appPrivateHeaders } from "./ui-auth.ts";
 import { deploymentDocument } from "./ui-document.ts";
 import { appFailureBootstrap } from "./ui-errors.ts";
+import { etagMatches, serveRangedFile } from "./range-serving.ts";
 
 /**
  * Render an authorized deployment with a host-owned deployment watcher. Account problems that stop
@@ -119,84 +120,20 @@ export const storedAppFile = <E1, E2>(
 export const assetPath = (path: string) =>
   Option.liftThrowable(() => path.split("/").map(decodeURIComponent).join("/"))();
 
-const etagMatches = (header: string | undefined, etag: string) =>
-  header
-    ?.split(",")
-    .some(
-      (candidate) =>
-        candidate.trim() === "*" ||
-        candidate.trim().replace(/^W\//, "") === etag.replace(/^W\//, ""),
-    ) === true;
-
-/**
- * The single byte range a request asks for, as RFC 9110 reads `Range`: `undefined` serves the
- * whole file, including for ranges this host does not support, such as several at once.
- */
-const requestedRange = (
-  header: string | undefined,
-  ifRange: string | undefined,
-  etag: string,
-  size: number,
-) => {
-  if (header === undefined || (ifRange !== undefined && ifRange.trim() !== etag)) return undefined;
-  const match = /^bytes=(\d*)-(\d*)$/u.exec(header.trim());
-  if (match === null) return undefined;
-  const [, first = "", last = ""] = match;
-  if (first === "" && last === "") return undefined;
-  if (first === "") {
-    const suffix = Number(last);
-    if (suffix === 0) return "unsatisfiable" as const;
-    return { start: Math.max(0, size - suffix), end: size - 1 };
-  }
-  const start = Number(first);
-  const end = last === "" ? size - 1 : Math.min(Number(last), size - 1);
-  if (start >= size) return "unsatisfiable" as const;
-  if (end < start) return undefined;
-  return { start, end };
-};
-
 /**
  * Stream a stored file. Its ETag names its exact bytes, so a conditional request needs no read.
  * Single byte ranges are served for media seeking and resumed downloads.
  */
 const storedFile = (file: AppUiStoredFile, cacheControl: string) =>
-  Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    const etag = `"${file.etag}"`;
-    const headers = {
-      ...appPrivateHeaders,
-      "cache-control": cacheControl,
-      vary: "Cookie",
-      etag,
-      "accept-ranges": "bytes",
-    };
-    if (etagMatches(request.headers["if-none-match"], etag))
-      return HttpServerResponse.empty({ status: 304, headers });
-    const range = requestedRange(
-      request.headers.range,
-      request.headers["if-range"],
-      etag,
-      file.size,
-    );
-    if (range === "unsatisfiable")
-      return HttpServerResponse.empty({
-        status: 416,
-        headers: { ...headers, "content-range": `bytes */${file.size}` },
-      });
-    const length = range === undefined ? file.size : range.end - range.start + 1;
-    const body = yield* file.read(
-      range === undefined ? undefined : { offset: range.start, length },
-    );
-    return HttpServerResponse.stream(body, {
-      status: range === undefined ? 200 : 206,
+  serveRangedFile(
+    {
+      size: file.size,
+      etag: `"${file.etag}"`,
       contentType: file.contentType,
-      contentLength: length,
-      headers:
-        range === undefined
-          ? headers
-          : { ...headers, "content-range": `bytes ${range.start}-${range.end}/${file.size}` },
-    });
-  });
+      read: file.read,
+    },
+    { ...appPrivateHeaders, "cache-control": cacheControl, vary: "Cookie" },
+  );
 
 /** Serve an asset only after the host has checked current access and file existence.
  * Asset URLs name their deployment, so their bytes never change: the browser keeps them for a year
