@@ -69,6 +69,24 @@ export const fileCreatorsOf: FileCreators<GroupDatabase | HostedExecutor> = (ide
 const Cursor = Schema.Struct({ t: Schema.String, i: Schema.String });
 const exactTime = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:[+-]\d{2}(?::\d{2})?)?$/u;
 
+/** Whether a matching timestamp is a real date and offset, so Postgres will accept the cast. */
+const realTime = (text: string) => {
+  const [date = "", rest = ""] = text.split(" ");
+  const [year = 0, month = 0, day = 0] = date.split("-").map(Number);
+  const when = new Date(Date.UTC(year, month - 1, day));
+  if (
+    when.getUTCFullYear() !== year ||
+    when.getUTCMonth() !== month - 1 ||
+    when.getUTCDate() !== day
+  )
+    return false;
+  const [hour = 0, minute = 0, second = 0] = rest.slice(0, 8).split(":").map(Number);
+  if (hour > 23 || minute > 59 || second > 59) return false;
+  const zone = /[+-](\d{2})(?::(\d{2}))?$/u.exec(rest.slice(8));
+  if (zone === null) return true;
+  return Number(zone[1]) <= 15 && Number(zone[2] ?? 0) <= 59;
+};
+
 const encodeCursor = (row: {
   readonly createdAtExact: string;
   readonly handle: { readonly id: string };
@@ -78,7 +96,7 @@ const decodeCursor = (value: string) =>
   Effect.fromResult(Base64Url.decodeString(value)).pipe(
     Effect.flatMap((text) => Schema.decodeUnknownEffect(Schema.fromJsonString(Cursor))(text)),
     Effect.filterOrFail(
-      (cursor) => exactTime.test(cursor.t),
+      (cursor) => exactTime.test(cursor.t) && realTime(cursor.t),
       () => new FilesCursorInvalid(),
     ),
     Effect.mapError(() => new FilesCursorInvalid()),

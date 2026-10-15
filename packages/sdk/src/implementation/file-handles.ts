@@ -199,6 +199,8 @@ export const makeFileHandleStore = (options: {
         );
         const row = found[0];
         if (row === undefined) return yield* new BlobNotFound({ id: input.id });
+        if (input.visible !== undefined && !input.visible(row.creator_app_id ?? undefined))
+          return yield* new BlobNotFound({ id: input.id });
         if (Date.parse(row.expires_at) <= Date.parse(at))
           return yield* new BlobExpired({ id: input.id });
         return stored(row);

@@ -135,9 +135,8 @@ export const fileTransferHandlers = <
           const found = yield* transfer.userContent.handles.stat({
             owner: identity.owner,
             id: params.handle,
+            visible: yield* creatorVisibility(creators, identity),
           });
-          if (!(yield* creatorVisibility(creators, identity))(found.creator))
-            return yield* new BlobNotFound({ id: params.handle });
           return yield* transfer.links.signGet({
             owner: identity.owner,
             id: found.handle.id,
