@@ -516,7 +516,13 @@ in which case declare that URL. Executor signs a new assertion when the token ex
 a token endpoint that answers `invalid_grant` (a disabled key or a bad signature) fails
 the call with `OAuthReconnectRequired`. A connect that fails reports
 `OAuthSetupFailed` with `invalid_service_account_key`, `token_url_mismatch`,
-`subject_required` or the service's own error code, never the key.
+`subject_required` or the service's own error code, never the key. The key file
+is at most 16 KiB, and `subject` is an email address of at most 320 characters;
+whitespace around the key's `client_email`, `private_key_id` and `private_key` is
+ignored. Executor sets the assertion's `iat` a minute in the past, so a host clock a
+little ahead of the provider's is not refused. `jwt_bearer` needs host protocol 14
+(the `apps` releases that speak it); apps built with earlier ones cannot declare
+it, and keep working beside it.
 
 Deploy the source, then request a connection for its account requirement.
 Use `appAccounts.userConnect` for a user requirement and

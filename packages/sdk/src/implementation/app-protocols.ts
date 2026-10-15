@@ -11,6 +11,8 @@ import {
   protocol1,
   protocol2,
   protocol3,
+  type DeclaredProvider,
+  type HostAccount,
   type HostAccounts,
   type HostInvocation,
   type HostRequest,
@@ -57,11 +59,11 @@ export interface AppProtocol {
   readonly sealedCredentials: boolean;
 }
 
-/** Protocol 13 is the host's current protocol, so its messages need no conversion. */
-const protocol13: AppProtocol = {
-  version: 13,
+/** Protocol 14 is the host's current protocol, so its messages need no conversion. */
+const protocol14: AppProtocol = {
+  version: 14,
   workerEntry: appBridge,
-  nodeEntry: nodeAppEntry(13),
+  nodeEntry: nodeAppEntry(14),
   invocation: (input) => JSON.stringify(input),
   request: (command) => command,
   refuse: () => undefined,
@@ -72,14 +74,82 @@ const protocol13: AppProtocol = {
 };
 
 /**
+ * A bundle reads an account's fields and placements, never how the host signs in. Bundles of
+ * protocol 13 and earlier cannot declare an OAuth method that signs in with a service account key
+ * (`jwt_bearer`), so the host sends it to them as the `secrets` method it behaves as: the same
+ * fields, exposure and placements.
+ */
+const bundleProvider = (provider: DeclaredProvider): DeclaredProvider => ({
+  ...provider,
+  auth: Object.fromEntries(
+    Object.entries(provider.auth).map(([name, method]): [string, typeof method] => [
+      name,
+      method.type === "oauth2" && method.grant === "jwt_bearer"
+        ? {
+            type: "secrets",
+            label: "Service account",
+            fields: method.response,
+            ...(method.plain === undefined ? {} : { plain: method.plain }),
+            ...(method.raw === undefined ? {} : { raw: method.raw }),
+            ...(method.request === undefined ? {} : { request: method.request }),
+          }
+        : method,
+    ]),
+  ),
+});
+
+const bundleSlots = (slots: NonNullable<HostAccounts["user"]>): NonNullable<HostAccounts["user"]> =>
+  Object.fromEntries(
+    Object.entries(slots).map(([slot, selection]) => [
+      slot,
+      Array.isArray(selection)
+        ? selection.map(bundleAccount)
+        : bundleAccount(selection as HostAccount),
+    ]),
+  );
+
+const bundleAccount = (account: HostAccount): HostAccount => ({
+  ...account,
+  provider: bundleProvider(account.provider),
+});
+
+/** An invocation's accounts as bundles of protocol 13 and earlier read them. */
+const bundleAccounts = (accounts: HostAccounts): HostAccounts => ({
+  app: bundleSlots(accounts.app),
+  ...(accounts.user === undefined ? {} : { user: bundleSlots(accounts.user) }),
+});
+
+/** The workflow steps a bundle of protocol 13 or earlier invokes, with accounts it can read. */
+const bundleWorkflow = (execution: WorkflowExecution): WorkflowExecution => ({
+  ...execution,
+  resolve: () =>
+    execution.resolve().pipe(
+      Effect.map((context) => ({
+        ...context,
+        accounts: Redacted.make(bundleAccounts(Redacted.value(context.accounts))),
+      })),
+    ),
+});
+
+/**
+ * Protocol 13 is protocol 14 without the `jwt_bearer` OAuth method. Its bundles never declare it,
+ * so requirements and every reply are unchanged; the accounts the host sends carry it as the
+ * `secrets` method it behaves as.
+ */
+const protocol13: AppProtocol = {
+  ...protocol14,
+  version: 13,
+  nodeEntry: nodeAppEntry(13),
+  invocation: (input) => JSON.stringify({ ...input, accounts: bundleAccounts(input.accounts) }),
+  workflow: bundleWorkflow,
+};
+
+/**
  * Bundles of protocol 12 and earlier read one flat record of requirements and accounts. They
  * declare no app requirements, so they have no app accounts: the host sends them the invocation's
  * user accounts, and none for work without a caller.
  */
-const unscopedAccounts = <Slots>(accounts: {
-  readonly app: Slots;
-  readonly user?: Slots;
-}): Slots | Record<string, never> => accounts.user ?? {};
+const unscopedAccounts = (accounts: HostAccounts) => bundleAccounts(accounts).user ?? {};
 
 const RequirementsReply = Schema.Struct({
   ok: Schema.Literal(true),
@@ -272,6 +342,7 @@ const protocols: ReadonlyMap<number, AppProtocol> = new Map(
     protocol11,
     protocol12,
     protocol13,
+    protocol14,
   ].map((protocol) => [protocol.version, protocol]),
 );
 

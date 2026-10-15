@@ -7,12 +7,18 @@
 import { Effect, Schema } from "effect";
 import { Base64 } from "effect/encoding";
 import { OAuthJwtBearerKey } from "../contracts/oauth.ts";
-
-/** The longest key file Executor reads, in characters. Real keys are about 2.4 KiB. */
-export const maxServiceAccountKeyLength = 16 * 1024;
+import { maxServiceAccountKeyLength } from "../contracts/oauth-clients.ts";
 
 /** An RFC 7523 assertion's default lifetime, below the hour providers allow at most. */
 export const assertionLifetimeSeconds = 3300;
+
+/**
+ * How far an assertion's `iat` is set behind the host's clock. Providers refuse an `iat` in their
+ * future (Google answers `invalid_grant`, "Invalid JWT"), so a host clock a few seconds ahead would
+ * otherwise fail to sign in. `exp` follows `iat`, so the lifetime stays within the hour providers
+ * allow at most.
+ */
+export const assertionBackdateSeconds = 60;
 
 export class ServiceAccountKeyInvalid extends Schema.TaggedError<ServiceAccountKeyInvalid>()(
   "ServiceAccountKeyInvalid",
@@ -40,7 +46,8 @@ export type ParsedServiceAccountKey = OAuthJwtBearerKey & { readonly tokenUri: s
 
 const stringField = (file: Readonly<Record<string, unknown>>, field: string) => {
   const value = file[field];
-  return typeof value === "string" && value.trim() !== "" ? value : undefined;
+  // Pasted keys carry stray whitespace; `iss` and `kid` must match the provider's value exactly.
+  return typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
 };
 
 /**
@@ -118,6 +125,7 @@ export const signAssertion = (input: {
 }): Effect.Effect<string, ServiceAccountKeyInvalid> =>
   Effect.gen(function* () {
     const lifetime = Math.min(input.lifetimeSeconds ?? assertionLifetimeSeconds, 3600);
+    const issuedAt = input.nowSeconds - assertionBackdateSeconds;
     const header = json({
       alg: "RS256",
       typ: "JWT",
@@ -128,8 +136,8 @@ export const signAssertion = (input: {
       ...(input.subject === undefined ? {} : { sub: input.subject }),
       scope: input.scope,
       aud: input.audience,
-      iat: input.nowSeconds,
-      exp: input.nowSeconds + lifetime,
+      iat: issuedAt,
+      exp: issuedAt + lifetime,
     });
     const signed = `${header}.${claims}`;
     const signature = yield* Effect.tryPromise({
