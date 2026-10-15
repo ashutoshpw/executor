@@ -23,6 +23,7 @@ import {
   SelectValue,
 } from "@executor-js/ui/components/select";
 import { EmptyState } from "@executor-js/ui/dashboard/empty-state";
+import { FilePreviewSheet } from "@executor-js/ui/dashboard/file-preview";
 import { productTitle, useDocumentTitle } from "@executor-js/ui/hooks/document-title";
 import type { FileEntry } from "@executor-js/hosted-server/files";
 import { deleteFileAtom, downloadLinkAtom, filesAtom } from "../../contracts/files.ts";
@@ -146,6 +147,7 @@ function FilesTable({
   const remove = useAtomSet(deleteFileAtom(organization), { mode: "promiseExit" });
   const deletion = useAtomValue(deleteFileAtom(organization));
   const link = useAtomSet(downloadLinkAtom(organization), { mode: "promiseExit" });
+  const [previewing, setPreviewing] = useState<FileEntry | null>(null);
   const [downloadFailure, setDownloadFailure] = useState<Cause.Cause<HostedError>>();
   const firstPage = useAtomValue(filesAtom({ organization, app, after: undefined, generation }));
   const empty = AsyncResult.value(firstPage).pipe(
@@ -161,9 +163,25 @@ function FilesTable({
         Files an app stores for your organization appear here until they expire.
       </EmptyState>
     );
+  const download = async (file: FileEntry) => {
+    setDownloadFailure(undefined);
+    const result = await link(file.id);
+    if (Exit.isFailure(result)) setDownloadFailure(result.cause);
+    else window.location.assign(result.value.url);
+  };
   return (
     <>
       {downloadFailure && <HostedFailure cause={downloadFailure} />}
+      <FilePreviewSheet
+        file={previewing}
+        onClose={() => setPreviewing(null)}
+        onDownload={(file) => void download(file as FileEntry)}
+        mintLink={async (file) => {
+          const result = await link(file.id);
+          if (Exit.isFailure(result)) throw new Error("Could not create a download link.");
+          return result.value.url;
+        }}
+      />
       <div className="overflow-hidden rounded-[10px] border border-border bg-background">
         <table className={filesTableClass} aria-label="Files">
           <thead>
@@ -191,12 +209,8 @@ function FilesTable({
               last={index === pages.length - 1}
               more={more}
               canDelete={canDelete}
-              download={async (file) => {
-                setDownloadFailure(undefined);
-                const result = await link(file.id);
-                if (Exit.isFailure(result)) setDownloadFailure(result.cause);
-                else window.location.assign(result.value.url);
-              }}
+              download={download}
+              preview={setPreviewing}
               remove={setRemoving}
             />
           ))}
@@ -256,6 +270,7 @@ function FilesChunk({
   more,
   canDelete,
   download,
+  preview,
   remove,
 }: {
   readonly after: string | undefined;
@@ -265,6 +280,7 @@ function FilesChunk({
   readonly more: (next: string) => void;
   readonly canDelete: boolean;
   readonly download: (file: FileEntry) => Promise<void>;
+  readonly preview: (file: FileEntry) => void;
   readonly remove: (file: FileEntry) => void;
 }) {
   const { organization } = useOrganizationRoute();
@@ -292,7 +308,14 @@ function FilesChunk({
       {files.map((file) => (
         <tr key={file.id}>
           <td>
-            <div className="font-mono text-[12px]">{file.id.slice(0, 8)}</div>
+            <button
+              type="button"
+              className="font-mono text-[12px] underline-offset-2 hover:underline focus-visible:underline"
+              aria-label={`Preview ${file.id}`}
+              onClick={() => preview(file)}
+            >
+              {file.id.slice(0, 8)}
+            </button>
             <div className="text-muted-foreground">{file.contentType}</div>
           </td>
           <td>{formatFileSize(file.size)}</td>
