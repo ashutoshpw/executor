@@ -448,7 +448,7 @@ export const mcpChallenge = Effect.gen(function* () {
 });
 
 const invalidAddress = HttpServerResponse.jsonUnsafe(
-  { error: "Unsupported elicitation_mode or connection." },
+  { error: "Unsupported organization, elicitation_mode or connection." },
   { status: 400 },
 );
 
