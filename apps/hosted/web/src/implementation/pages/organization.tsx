@@ -35,6 +35,7 @@ import {
 } from "../components/organization.tsx";
 import { OrganizationMembers, type MemberLimit } from "../components/organization-members.tsx";
 import { OrganizationBlobSettings } from "../components/organization-blob-settings.tsx";
+import { OrganizationTaskInsightsSettings } from "../components/organization-task-insights-settings.tsx";
 import { productTitle, useDocumentTitle } from "@executor-js/ui/hooks/document-title";
 import { organizationSlugMaxLength } from "@executor-js/hosted-server/organization";
 
@@ -92,6 +93,7 @@ function OrganizationSettings({
         <OrganizationIcon disabled={pending} />
         <OrganizationUrl disabled={pending} />
         <OrganizationBlobSettings disabled={pending} />
+        <OrganizationTaskInsightsSettings disabled={pending} />
         {children}
       </div>
       <OrganizationMembers emailInvitations={emailInvitations} memberLimit={memberLimit} />

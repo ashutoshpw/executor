@@ -96,6 +96,7 @@ export function OrganizationSettingsPending({ children }: { readonly children?: 
           </CardFooter>
         </Card>
         <OrganizationBlobSettingsPending />
+        <TaskInsightsSettingsPending />
         {children}
         <span className="sr-only">Loading organization settings…</span>
       </div>
@@ -130,6 +131,44 @@ export function OrganizationBlobSettingsPending() {
       </CardContent>
       <CardFooter>
         <p>Between 1 hour and 365 days · default 7 days</p>
+        <div className="flex items-center [&_>_button]:h-7.5 [&_>_button]:px-3 [&_>_button]:text-xs max-[640px]:[&_>_button]:min-h-10">
+          <Button variant="outline" disabled>
+            Save
+          </Button>
+        </div>
+      </CardFooter>
+    </Card>
+  );
+}
+
+/** The Task insights card's heading, shared by the loaded card and its placeholder. */
+export function TaskInsightsHeading() {
+  return (
+    <CardHeader>
+      <CardTitle>
+        <h2>Task insights</h2>
+      </CardTitle>
+      <CardDescription>
+        Whether the arguments of agents&apos; tool calls are kept with each task, and for how long.
+      </CardDescription>
+    </CardHeader>
+  );
+}
+
+/** The Task insights card's known copy and controls, with placeholders for the stored values. */
+export function TaskInsightsSettingsPending() {
+  return (
+    <Card className={organizationSettingClass}>
+      <TaskInsightsHeading />
+      <CardContent>
+        <div className="grid w-[min(100%,_520px)] gap-4">
+          <Skeleton className="h-4 w-44" aria-label="Loading task insights" />
+          <Skeleton className="h-9 w-40" />
+          <Skeleton className="h-9 w-full" />
+        </div>
+      </CardContent>
+      <CardFooter>
+        <p>Calls are always recorded; this setting only controls their arguments.</p>
         <div className="flex items-center [&_>_button]:h-7.5 [&_>_button]:px-3 [&_>_button]:text-xs max-[640px]:[&_>_button]:min-h-10">
           <Button variant="outline" disabled>
             Save
