@@ -9,6 +9,7 @@ import {
   BlobError,
   BlobIntegrityError,
   BlobLimits,
+  BlobLink,
   BlobNotFound,
   BlobReply,
   BlobTooLarge,
@@ -22,17 +23,24 @@ import {
   BlobStatted,
   type UserContentOptions,
 } from "../contracts/file-handles.ts";
+import type { FileLinks } from "./file-links.ts";
 
 /** One invocation's control surface: a command in, the encoded reply out. It never fails. */
 export type BlobControl = (input: unknown) => Effect.Effect<unknown>;
 
 const sha256Pattern = /^[0-9a-f]{64}$/;
 
-/** Control for an invocation of `app`, owned by `owner`. */
+/**
+ * Control for an invocation of `app`, owned by `owner`. With `links`, the app may ask for download
+ * links; they are issued for `actor`, the user the invocation runs for, or for the app when there
+ * is none, as a scheduled run has not.
+ */
 export const makeBlobControl = (options: {
   readonly userContent: UserContentOptions;
   readonly app: string;
   readonly owner: Effect.Effect<string, BlobUnavailable>;
+  readonly links?: FileLinks | undefined;
+  readonly actor?: string | undefined;
 }): BlobControl => {
   const { store, handles, policy } = options.userContent;
   const pendingSeconds = policy.pendingSeconds ?? pendingBlobSeconds;
@@ -43,7 +51,10 @@ export const makeBlobControl = (options: {
           maxFileBytes: policy.maxFileBytes,
           maxInlineBytes: policy.maxInlineBytes,
           maxReadBytes: policy.maxReadBytes,
-          methods: [...policy.methods],
+          methods: [
+            ...policy.methods.filter((method) => method !== "url"),
+            ...(options.links === undefined ? [] : (["url"] as const)),
+          ],
           ttlSeconds,
         }),
       ),
@@ -101,6 +112,20 @@ export const makeBlobControl = (options: {
             key: found.key,
             maxReadBytes: policy.maxReadBytes,
           }).pipe(Effect.orDie);
+        }
+        case "url": {
+          const links = options.links;
+          if (links === undefined) return yield* new BlobUnavailable();
+          const found = yield* handles.stat({ owner, id: command.id });
+          const link = yield* links.signGet({
+            owner,
+            id: found.handle.id,
+            sha256: found.handle.sha256,
+            subject: options.actor === undefined ? `app:${options.app}` : `user:${options.actor}`,
+            expiresInSeconds: command.expiresInSeconds,
+            filename: command.filename,
+          });
+          return yield* Schema.encodeEffect(BlobLink)(link).pipe(Effect.orDie);
         }
         case "delete": {
           const claimed = yield* handles.retire({ owner, id: command.id, appId: options.app });

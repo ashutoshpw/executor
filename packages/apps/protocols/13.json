@@ -1152,6 +1152,49 @@
               "name": "op",
               "type": {
                 "_tag": "Literal",
+                "literal": "url"
+              },
+              "isOptional": false
+            },
+            {
+              "name": "id",
+              "type": {
+                "_tag": "String"
+              },
+              "isOptional": false
+            },
+            {
+              "name": "expiresInSeconds",
+              "type": {
+                "_tag": "Number",
+                "checks": [
+                  {
+                    "_tag": "Filter",
+                    "representation": {
+                      "id": "effect/schema/isInt",
+                      "payload": null
+                    }
+                  }
+                ]
+              },
+              "isOptional": true
+            },
+            {
+              "name": "filename",
+              "type": {
+                "_tag": "String"
+              },
+              "isOptional": true
+            }
+          ]
+        },
+        {
+          "_tag": "Objects",
+          "propertySignatures": [
+            {
+              "name": "op",
+              "type": {
+                "_tag": "Literal",
                 "literal": "read"
               },
               "isOptional": false

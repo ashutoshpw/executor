@@ -44,6 +44,7 @@ import {
   clientMetadataDocument,
   clientMetadataDocumentPath,
   hostedWebhookCallback,
+  hostedFileLink,
   catalogLive,
   hostedMiddlewareLive,
   mcpProtectedResource,
@@ -508,6 +509,10 @@ export default Api.make(
       // A delivery can hand a webhook source to another actor; that change wakes reconciliation.
       HttpRouter.provideRequest(schedules.layer),
     );
+    // A file link carries its own authority, so it is served outside the API's credentials.
+    const fileLinkRoutes = HttpRouter.add("*", "/api/file-links/*", hostedFileLink).pipe(
+      HttpRouter.provideRequest(executor),
+    );
     const withGitAccess = <A, E, R>(layer: Layer.Layer<A, E, R>) =>
       layer.pipe(
         HttpRouter.provideRequest(hostedAppGitAccess),
@@ -581,6 +586,7 @@ export default Api.make(
           : HttpRouter.add("GET", route, dashboard(null)),
       ),
       appWebhookRoutes,
+      fileLinkRoutes,
       HttpRouter.add(
         "GET",
         "/api/auth/organization/list",
@@ -630,6 +636,7 @@ export default Api.make(
       apiDiscoveryRoutes,
       authorizationServerRoutes,
       appWebhookRoutes,
+      fileLinkRoutes,
       // The Executor app reads its skills beside the API it calls.
       publishedSkillRoutes(authoring),
       // The public app registry, the SDK's and CLI's default host.

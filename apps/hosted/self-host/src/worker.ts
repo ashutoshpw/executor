@@ -6,6 +6,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { PgliteClient } from "@effect/sql-pglite";
 import { executorSkillFiles } from "@executor-js/app-templates/executor";
 import { bindingWorkerdApps } from "@executor-js/sdk/workerd";
+import { digestStreamSha256 } from "@executor-js/sdk/file-transfer";
 import { ScheduleHostReady } from "@executor-js/sdk/scheduling";
 import { telemetryConfig, telemetryLayer } from "@executor-js/telemetry";
 import { CurrentTelemetryClient } from "@executor-js/telemetry/transport";
@@ -176,6 +177,7 @@ const prepare = (state: DurableObjectState, env: Environment) =>
               blobs,
               userContent,
               userContentRequiresSize: true,
+              hasher: digestStreamSha256,
               repositories: bindingRepositories(env.NATIVE, directory),
             };
           }),
