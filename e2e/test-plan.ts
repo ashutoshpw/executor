@@ -842,6 +842,17 @@ export const scenarios = plan({
       local: na("Hosted deployment API scenario"),
     },
   },
+  taskInsightsResponses: {
+    fixtures: "actors",
+    file: "task-insights.spec.ts",
+    title:
+      "Task insights keep no tool responses until the organization turns response recording on and then keep them masked and capped, with media saved as organization files",
+    targets: {
+      "self-host": scheduled,
+      cloud: na("Usage is recorded by the self-host store; Cloud reports it unavailable"),
+      local: na("Hosted deployment API scenario"),
+    },
+  },
   taskInsightsAccess: {
     fixtures: "actors",
     file: "task-insights.spec.ts",

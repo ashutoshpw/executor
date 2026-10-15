@@ -10,9 +10,13 @@ import { HostedLive, withHostedCase } from "../support/case.ts";
 import { McpClient } from "../support/mcp-client.ts";
 import { appsManifest } from "../support/apps-release.ts";
 
+/** A 1x1 PNG. */
+const png =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
 const source = `import { defineApp, query, mutation, object, string, array, record, router } from "apps";
 import { always } from "apps/operations/approval";
-export default defineApp({}, async () => ({ tools: router({
+export default defineApp({}, async (ctx) => ({ tools: router({
   echo: query({ input: object({ text: string() }), description: "Echo text back to the caller" },
     async (_ctx, { text }) => ({ text })),
   explode: query({ input: object({}), description: "Always fails" },
@@ -22,6 +26,16 @@ export default defineApp({}, async () => ({ tools: router({
     description: "Echo text back after the caller approves",
     approval: always(),
   }, async (_ctx, { text }) => ({ text })),
+  secretive: query({ input: object({}), description: "Return a credential and a plain value" },
+    async () => ({ apiKey: "resp-key-123", region: "eu", note: "kept" })),
+  picture: query({ input: object({}), description: "Return an MCP style image block" },
+    async () => ({ content: [{ type: "image", data: ${JSON.stringify(png)}, mimeType: "image/png" }] })),
+  inline: query({ input: object({}), description: "Return a data URI image" },
+    async () => ({ preview: "data:image/png;base64,${png}" })),
+  huge: query({ input: object({}), description: "Return a very long string" },
+    async () => ({ text: "y".repeat(40000) })),
+  stored: query({ input: object({}), description: "Return a stored file handle" },
+    async () => ({ handle: await ctx.blobs.create(new TextEncoder().encode("hello file"), { contentType: "text/plain" }) })),
   sink: query({
     input: object({
       text: string(),
@@ -66,6 +80,16 @@ const TaskCall = Schema.Struct({
   sessionId: Schema.NullOr(Schema.String),
   runId: Schema.NullOr(Schema.String),
   arguments: Schema.NullOr(Schema.String),
+  response: Schema.NullOr(Schema.String),
+  files: Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      uri: Schema.String,
+      contentType: Schema.NullOr(Schema.String),
+      size: Schema.NullOr(Schema.Number),
+      available: Schema.Boolean,
+    }),
+  ),
 });
 const TaskDetail = Schema.Struct({
   key: Schema.String,
@@ -76,6 +100,7 @@ const TaskDetail = Schema.Struct({
 });
 const Settings = Schema.Struct({
   recordArguments: Schema.Boolean,
+  recordResponses: Schema.Boolean,
   retentionDays: Schema.Number,
   extraMaskedKeys: Schema.Array(Schema.String),
   available: Schema.Boolean,
@@ -354,6 +379,7 @@ layer(HostedLive, { excludeTestServices: true })("Task insights", (it) => {
           yield* body(Settings, yield* api.request(actors.owner, "GET", settingsPath)),
         ).toEqual({
           recordArguments: false,
+          recordResponses: false,
           retentionDays: 30,
           extraMaskedKeys: [],
           available: true,
@@ -481,6 +507,138 @@ return await ${sink}({ text: "n2", password: "nested-secret-2" });`,
         yield* run("ARGS-OFF-AGAIN", { text: "visible again" });
         const again = yield* reader.detail(actors.owner, "ARGS-OFF-AGAIN", (calls) => calls === 1);
         expect(again.calls[0]?.arguments).toBeNull();
+      }).pipe(Effect.provide(McpClient.layer)),
+    ),
+  );
+
+  it.effect(scenarios.taskInsightsResponses.title, (context) =>
+    withHostedCase(
+      context,
+      Effect.gen(function* () {
+        const api = yield* Api;
+        const actors = yield* Actors;
+        const app = yield* deployApp;
+        const reader = yield* taskReader(actors.organization.id);
+        const agent = yield* connectAgent(actors.owner, "Response agent");
+        const prefix = `/api/organizations/${actors.organization.id}`;
+        const settingsPath = `${prefix}/task-insights-settings`;
+        const save = (payload: Record<string, unknown>) =>
+          api.request(actors.owner, "PUT", settingsPath, payload);
+        const tool = (name: string) => `tools[${JSON.stringify(app.slug)}].${name}`;
+        yield* Effect.addFinalizer(() =>
+          save({
+            recordArguments: false,
+            recordResponses: false,
+            retentionDays: 30,
+            extraMaskedKeys: [],
+          }).pipe(Effect.orDie),
+        );
+        const run = (task: string, name: string, input: Record<string, unknown> = {}) =>
+          agent.call(`Call ${name} for ${task}`, {
+            name: "call",
+            arguments: { calls: { path: tool(name), input } },
+            _meta: { [taskIdKey]: task },
+          });
+        const single = (task: string) =>
+          reader
+            .detail(actors.owner, task, (calls) => calls === 1)
+            .pipe(Effect.map((detail) => detail.calls[0]!));
+
+        // Responses are not stored while only arguments are recorded.
+        expect(
+          (yield* save({ recordArguments: true, retentionDays: 7, extraMaskedKeys: [] })).status,
+        ).toBe(200);
+        yield* run("RESP-OFF", "secretive");
+        const off = yield* single("RESP-OFF");
+        expect(off.response).toBeNull();
+        expect(off.files).toEqual([]);
+
+        // A save without recordResponses keeps it as it was, and turning it on records responses.
+        const on = yield* body(
+          Settings,
+          yield* save({
+            recordArguments: true,
+            recordResponses: true,
+            retentionDays: 7,
+            extraMaskedKeys: [],
+          }),
+        );
+        expect(on).toMatchObject({ recordArguments: true, recordResponses: true });
+        const kept = yield* body(
+          Settings,
+          yield* save({ recordArguments: true, retentionDays: 7, extraMaskedKeys: [] }),
+        );
+        expect(kept.recordResponses).toBe(true);
+
+        yield* run("RESP-SECRET", "secretive");
+        const secret = yield* single("RESP-SECRET");
+        const secretResponse = secret.response ?? "";
+        expect(JSON.parse(secretResponse)).toEqual({
+          apiKey: "[masked]",
+          region: "eu",
+          note: "kept",
+        });
+        expect(secretResponse).not.toContain("resp-key-123");
+
+        // Inline media is saved as organization files and replaced by their addresses.
+        yield* run("RESP-IMAGE", "picture");
+        yield* run("RESP-DATA", "inline");
+        yield* run("RESP-HANDLE", "stored");
+        const media = yield* Effect.all(
+          ["RESP-IMAGE", "RESP-DATA", "RESP-HANDLE"].map((task) =>
+            reader
+              .detail(actors.owner, task, (calls) => calls === 1)
+              .pipe(
+                Effect.flatMap((detail) => {
+                  const item = detail.calls[0]!;
+                  return item.response !== null && item.files.length === 1
+                    ? Effect.succeed(item)
+                    : Effect.fail(`${task} is not complete`);
+                }),
+                Effect.retry({ schedule: Schedule.spaced(Duration.millis(500)), times: 20 }),
+                Effect.orDie,
+              ),
+          ),
+        );
+        const listed = yield* body(
+          Schema.Struct({
+            files: Schema.Array(Schema.Struct({ id: Schema.String, contentType: Schema.String })),
+          }),
+          yield* api.request(actors.owner, "GET", `${prefix}/files`),
+        );
+        for (const [index, item] of media.entries()) {
+          const file = item.files[0]!;
+          expect(file.uri).toBe(`executor-file://${actors.organization.id}/${file.id}`);
+          expect(file.available).toBe(true);
+          expect(item.response).toContain(file.uri);
+          expect(item.response).not.toContain("iVBORw0KGgo");
+          const entry = listed.files.find((candidate) => candidate.id === file.id);
+          expect(entry?.contentType).toBe(index === 2 ? "text/plain" : "image/png");
+          expect(file.contentType).toBe(entry?.contentType);
+        }
+
+        // A long response is cut and says how large it was.
+        yield* run("RESP-BIG", "huge");
+        const big = (yield* single("RESP-BIG")).response ?? "";
+        expect(Buffer.byteLength(big)).toBeLessThanOrEqual(16384);
+        expect(big).toMatch(/…\[truncated, [\d.]+ ?[A-Za-z]+ total\]$/);
+
+        // Turning responses off deletes them and keeps the arguments.
+        yield* run("RESP-ARGS", "secretive");
+        yield* single("RESP-ARGS");
+        expect(
+          (yield* save({
+            recordArguments: true,
+            recordResponses: false,
+            retentionDays: 7,
+            extraMaskedKeys: [],
+          })).status,
+        ).toBe(200);
+        for (const task of ["RESP-SECRET", "RESP-BIG", "RESP-IMAGE"]) {
+          const scrubbed = yield* single(task);
+          expect(scrubbed.response).toBeNull();
+          expect(scrubbed.arguments).not.toBeNull();
+        }
       }).pipe(Effect.provide(McpClient.layer)),
     ),
   );

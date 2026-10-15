@@ -98,6 +98,7 @@ function TaskInsightsSettingsForm({
   const state = useAtomValue(saveTaskInsightsSettingsAtom(organization.organization));
   const id = useId();
   const [record, setRecord] = useState(settings.recordArguments);
+  const [recordResponses, setRecordResponses] = useState(settings.recordResponses);
   const [retention, setRetention] = useState<TaskArgumentRetentionDays>(settings.retentionDays);
   const [keys, setKeys] = useState(settings.extraMaskedKeys.join(", "));
   const [error, setError] = useState<string>();
@@ -105,6 +106,7 @@ function TaskInsightsSettingsForm({
   const parsed = parseKeys(keys);
   const changed =
     record !== settings.recordArguments ||
+    recordResponses !== settings.recordResponses ||
     retention !== settings.retentionDays ||
     parsed.join("\n") !== settings.extraMaskedKeys.join("\n");
   const edited = () => {
@@ -121,6 +123,7 @@ function TaskInsightsSettingsForm({
           setSaved(false);
           const result = await save({
             recordArguments: record,
+            recordResponses,
             retentionDays: retention,
             extraMaskedKeys: parsed,
           });
@@ -152,9 +155,32 @@ function TaskInsightsSettingsForm({
                 </p>
               </div>
             </div>
+            <div className="flex items-start gap-2.5">
+              <Checkbox
+                id={`${id}-responses`}
+                checked={recordResponses}
+                disabled={disabled}
+                aria-describedby={`${id}-responses-hint`}
+                onCheckedChange={(next) => {
+                  setRecordResponses(next === true);
+                  edited();
+                }}
+              />
+              <div className="grid gap-0.5">
+                <label htmlFor={`${id}-responses`} className="text-[13px] font-medium">
+                  Record tool responses
+                </label>
+                <p id={`${id}-responses-hint`} className="text-[12px] text-muted-foreground">
+                  Off by default. Responses can contain customer data. They use the same retention
+                  and masked names as arguments. Images and other inline media are saved as an
+                  organization file, kept for the organization's file lifetime. Turning this off
+                  also deletes the responses already stored.
+                </p>
+              </div>
+            </div>
             <div className="grid gap-1.5">
               <label htmlFor={`${id}-retention`} className="text-[13px] font-medium">
-                Keep arguments for
+                Keep arguments and responses for
               </label>
               <Select
                 value={String(retention)}
@@ -194,7 +220,8 @@ function TaskInsightsSettingsForm({
                 }}
               />
               <p id={`${id}-keys-hint`} className="text-[12px] text-muted-foreground">
-                Comma separated. Values under these argument names are hidden, in any case.
+                Comma separated. Values under these names are hidden in arguments and responses, in
+                any case.
               </p>
             </div>
           </div>
@@ -207,7 +234,7 @@ function TaskInsightsSettingsForm({
         <CardFooter>
           <p>
             {settings.available
-              ? "Calls are always recorded; this setting only controls their arguments."
+              ? "Calls are always recorded; these settings only control their arguments and responses."
               : "This deployment keeps no tool call records, so nothing is recorded."}
           </p>
           <div className={actionClass}>
