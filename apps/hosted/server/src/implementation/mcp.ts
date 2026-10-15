@@ -17,7 +17,8 @@ import { GroupDatabase } from "../contracts/groups.ts";
 import { CurrentUserId } from "../contracts/auth.ts";
 import { policyDatabase, visibleApps, requireAppAccess } from "./resource-policy.ts";
 /** Hosted catalog and execution policy for the shared MCP engine; no HTTP transport or credentials. */
-import type { McpBackend } from "@executor-js/mcp";
+import { fileBackend, type McpBackend } from "@executor-js/mcp";
+import { FileTransferHost } from "@executor-js/sdk/blobs";
 import {
   AccountRequired,
   AppNotFound,
@@ -155,7 +156,19 @@ export const hostedMcpBackend = Effect.gen(function* () {
         return yield* new AppNotFound({ app });
       yield* requireAppAccess(app, "use");
     });
+  // Files are the organization's, whoever in it made them; links are issued for this user.
+  const files = fileBackend({
+    transfer: Effect.map(sdk, (executor) => executor[FileTransferHost]),
+    owner: organization.owner,
+    organization: organization.organization,
+    subject: user === undefined ? undefined : `user:${user}`,
+  });
   const backend = {
+    files: {
+      organization: files.organization,
+      stat: (input) => observe("statFile", files.stat(input), "read"),
+      read: (input) => observe("readFile", files.read(input)),
+    },
     eventDefinitions: (input) =>
       Effect.gen(function* () {
         yield* eventApp(input.app);

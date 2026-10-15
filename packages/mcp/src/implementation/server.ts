@@ -29,6 +29,7 @@ import { executeNative } from "./native-elicitation.ts";
 import { callTools, describeCatalog, executeProgram, searchCatalog } from "./execute.ts";
 import { skills } from "./skills.ts";
 import { eventsHandler } from "./events.ts";
+import { fileResource, toolkitWithFileLinks } from "./file-resources.ts";
 
 // Observe the final protocol value after timeout, admission and resume handling.
 const observeExecution =
@@ -191,9 +192,11 @@ export const makeMcp = (options: McpOptions) =>
           searchCatalog(options.backend, options.limits, input).pipe(Effect.withSpan("mcp.search"));
         const describe = (input: Parameters<typeof describeCatalog>[1]) =>
           describeCatalog(options.backend, input).pipe(Effect.withSpan("mcp.describe"));
+        // Tool results that return file handles also carry resource_link blocks.
+        const fileLinked = toolkitWithFileLinks(options.backend);
         const toolkit =
           mode === "native"
-            ? McpServer.toolkit(NativeMcpToolkit).pipe(
+            ? fileLinked(NativeMcpToolkit).pipe(
                 Layer.provide(
                   NativeMcpToolkit.toLayer({
                     execute: ({ code }) =>
@@ -223,7 +226,7 @@ export const makeMcp = (options: McpOptions) =>
                 ),
               )
             : mode === "browser" && delivery !== undefined
-              ? McpServer.toolkit(BrowserMcpToolkit).pipe(
+              ? fileLinked(BrowserMcpToolkit).pipe(
                   Layer.provide(
                     BrowserMcpToolkit.toLayer({
                       execute: ({ code }) =>
@@ -279,7 +282,7 @@ export const makeMcp = (options: McpOptions) =>
                     }),
                   ),
                 )
-              : McpServer.toolkit(McpToolkit).pipe(
+              : fileLinked(McpToolkit).pipe(
                   Layer.provide(
                     McpToolkit.toLayer({
                       execute: ({ code }) =>
@@ -307,9 +310,11 @@ export const makeMcp = (options: McpOptions) =>
                     }),
                   ),
                 );
+        // The file resource template advertises the resources capability on every product.
         return yield* Layer.mergeAll(
           toolkit,
           McpServer.events(eventsHandler(options.backend)),
+          fileResource(options.backend),
         ).pipe(
           Layer.provide(
             McpServer.layerHttp({

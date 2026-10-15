@@ -13,7 +13,13 @@ import { localRequest } from "./auth.ts";
 import type { ServerConfig } from "../contracts/config.ts";
 import { LocalMcpUnauthorized, type LocalMcpOAuth } from "./mcp-oauth.ts";
 /** Local access and documentation I/O for the shared MCP implementation. */
-import { makeMcp, refusedMcpRequest, type McpBackend, type McpLimits } from "@executor-js/mcp";
+import {
+  fileBackend,
+  makeMcp,
+  refusedMcpRequest,
+  type McpBackend,
+  type McpLimits,
+} from "@executor-js/mcp";
 import { annotateSkillRead, executorIntro } from "@executor-js/app-templates/executor";
 import {
   ElicitationFailed,
@@ -23,7 +29,9 @@ import {
   type Executor,
   type ToolInvocationOptions,
 } from "@executor-js/sdk/core";
+import { FileTransferHost } from "@executor-js/sdk/blobs";
 import { appVersion, versionRequirementAccounts } from "./app-accounts.ts";
+import { localOwner } from "./owners.ts";
 import type { SqlClient } from "effect/sql";
 import { Context, Effect, Redacted } from "effect";
 
@@ -33,6 +41,13 @@ import { Context, Effect, Redacted } from "effect";
  */
 const grantedBackend = (sql: SqlClient.SqlClient, executor: Executor, principal: string) =>
   ({
+    // The one local user owns every file, and links are issued for no one in particular.
+    files: fileBackend({
+      transfer: Effect.sync(() => executor[FileTransferHost]),
+      owner: localOwner,
+      organization: "local",
+      subject: "local",
+    }),
     eventDefinitions: (input) => executor.events.definitions(input),
     findEventSubscription: (key) => executor.events.find({ ...key, principal }),
     subscribeEvent: ({ key, ...input }) =>
@@ -146,6 +161,11 @@ export const localMcp = (
         findEventSubscription: () => Effect.fail(new LocalMcpUnauthorized()),
         subscribeEvent: () => Effect.fail(new LocalMcpUnauthorized()),
         unsubscribeEvent: () => Effect.fail(new LocalMcpUnauthorized()),
+        files: {
+          stat: () => Effect.fail(new LocalMcpUnauthorized()),
+          read: () => Effect.fail(new LocalMcpUnauthorized()),
+          organization: Effect.fail(new LocalMcpUnauthorized()),
+        },
       }),
     });
     const Caller = Context.Reference<string | undefined>("local/McpCaller", {
@@ -191,6 +211,11 @@ export const localMcp = (
         subscribeEvent: (input) => Effect.flatMap(RequestBackend, (b) => b.subscribeEvent(input)),
         unsubscribeEvent: (input) =>
           Effect.flatMap(RequestBackend, (b) => b.unsubscribeEvent(input)),
+        files: {
+          stat: (input) => Effect.flatMap(RequestBackend, (b) => b.files.stat(input)),
+          read: (input) => Effect.flatMap(RequestBackend, (b) => b.files.read(input)),
+          organization: Effect.flatMap(RequestBackend, (b) => b.files.organization),
+        },
       },
       caller,
       instructions: executorIntro,

@@ -30,7 +30,7 @@ import {
   Scope,
   Scheduler,
 } from "effect";
-import type { McpBackend } from "../contracts/backend.ts";
+import { FilesUnavailable, type McpBackend } from "../contracts/backend.ts";
 import {
   ApprovalTooLarge,
   ApprovalUnavailable,
@@ -570,6 +570,12 @@ export const makeExecutions = (
             );
           }),
         authorizeElicitation: () => Effect.fail(new ElicitationFailed({ reason: "unavailable" })),
+        // A program holds file handles, never file bytes: only a client's resources/read reads them.
+        files: {
+          stat: () => Effect.fail(new FilesUnavailable()),
+          read: () => Effect.fail(new FilesUnavailable()),
+          organization: Effect.fail(new FilesUnavailable()),
+        },
         // Only the execution manager answers approvals; program code never reaches this.
         resumeInvocation: () => Effect.die("A program cannot resume an approval request"),
       };
