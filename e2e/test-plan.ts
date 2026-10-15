@@ -1207,6 +1207,19 @@ export const scenarios = plan({
       local: na("Hosted organization API; local has no organizations."),
     },
   },
+  organizationFilePreviews: {
+    fixtures: "actors",
+    file: "organization-file-previews.spec.ts",
+    title:
+      "The Files page previews images, text, CSV, TSV and Excel workbooks in its drawer, cuts long text with a note and leaves other types to download",
+    targets: {
+      "self-host": scheduled,
+      cloud: na(
+        "Cloud's runner writes a UserContent bucket that managed local Cloud does not provide; run `bun run e2e:deployed` against a stage to cover it.",
+      ),
+      local: na("Hosted organization API; local has no organizations or Files page."),
+    },
+  },
   fileCliRoundTrip: {
     fixtures: "actors",
     file: "file-transfer.spec.ts",
