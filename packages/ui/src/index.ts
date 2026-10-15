@@ -10,6 +10,7 @@ export * from "./implementation/components/empty.tsx";
 export * from "./implementation/components/input.tsx";
 export * from "./implementation/components/label.tsx";
 export * from "./implementation/components/select.tsx";
+export * from "./implementation/components/sheet.tsx";
 export * from "./implementation/components/skeleton.tsx";
 export * from "./implementation/components/spinner.tsx";
 export * from "./implementation/components/tabs.tsx";
