@@ -1058,7 +1058,15 @@ export const grantOAuthPlugins = (settings: GrantOAuthOptions) => {
   const device = deviceAuthorizationPlugin({
     origin,
     provider: options,
-    accepts: (resource) => grantTarget(resourceOrigins, [resource]) !== undefined,
+    accepts: (resource) => {
+      const target = grantTarget(resourceOrigins, [resource]);
+      return (
+        target !== undefined &&
+        (settings.organizationResource !== undefined ||
+          target.kind !== "mcp" ||
+          target.organization === undefined)
+      );
+    },
     session: browserSession,
     approve: (ctx, request) =>
       Effect.gen(function* () {
@@ -1541,6 +1549,8 @@ export const grantOAuthPlugins = (settings: GrantOAuthOptions) => {
                   typeof resource === "string" ? [resource] : resource,
                 );
                 if (target?.kind !== "mcp" || target.organization === undefined) return;
+                // Without organizations, Better Auth answers invalid_target for the resource.
+                if (settings.organizationResource === undefined) return;
                 yield* namedOrganization(ctx, target.organization);
               }),
             ),
