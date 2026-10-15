@@ -20,10 +20,14 @@ import { Organization } from "../support/contracts.ts";
 import { McpClient } from "../support/mcp-client.ts";
 import { ConnectionView, consentTo, revokeClientGrants } from "../support/mcp-connections.ts";
 import { Target } from "../support/platform.ts";
+import { serverControl } from "../support/server-control.ts";
 import { scenarios } from "../test-plan.ts";
 
 /** The bound these scenarios give `resources/read`. */
 const readLimit = 64 * 1024;
+/** MCP's code for a resource that does not exist; the server uses it for every unreadable file. */
+const resourceNotFound = -32002;
+const hour = 60 * 60 * 1000;
 const Key = Schema.Struct({ id: Schema.String, key: Schema.RedactedFromValue(Schema.String) });
 
 /** A fresh organization owned by the scenario's owner, so handles never meet another scenario's. */
@@ -246,6 +250,19 @@ layer(HostedLive, { excludeTestServices: true })("MCP file resources", (it) => {
           );
         }
 
+        // Many files in one result: links stop at the cap, and the metadata they add stays well
+        // inside the fixed allowance on top of the output ceiling.
+        const many = yield* executed(
+          client,
+          `const made = await Promise.all(Array.from({ length: 24 }, (_, i) => ${toolPath(app.slug, "captureText")}({ text: "file " + i, contentType: "text/plain" })));
+           return made.map((entry) => entry.handle);`,
+        );
+        const manyLinks = yield* linksOf(many.result);
+        expect(manyLinks).toHaveLength(20);
+        expect(Buffer.byteLength(JSON.stringify(many.result.content.slice(1)))).toBeLessThan(
+          16_000,
+        );
+
         // A result with no file has no link, and the output limit never moved: a program that
         // returns more than it still fails to.
         const plain = yield* executed(client, "return 42;");
@@ -357,10 +374,39 @@ layer(HostedLive, { excludeTestServices: true })("MCP file resources", (it) => {
         );
         for (const refused of [missing, other, relabeled, crossed]) {
           expect(refused.ok).toBe(false);
-          if (!refused.ok) expect(refused.message).toContain("Resource not found");
+          if (!refused.ok) {
+            expect(refused.code).toBe(resourceNotFound);
+            expect(refused.message).toContain("Resource not found");
+          }
         }
         const malformed = yield* readResource(clientA, `executor-file://${orgA.id}/a/b`);
         expect(malformed.ok).toBe(false);
+        if (!malformed.ok) expect(malformed.code).toBe(resourceNotFound);
+
+        // An empty file is a file: it reads as empty text, not as missing.
+        const empty = yield* capturedByCall(clientA, appA.slug, "captureText", {
+          text: "",
+          contentType: "text/plain",
+        });
+        expect(empty.handle.size).toBe(0);
+        const emptyRead = yield* readResource(
+          clientA,
+          (yield* linksOf(empty.result))[0]?.uri ?? "",
+        );
+        expect(emptyRead.ok).toBe(true);
+        if (emptyRead.ok) {
+          expect(emptyRead.contents.text ?? emptyRead.contents.blob).toBe("");
+          expect(emptyRead.contents._meta.size).toBe(0);
+        }
+
+        // A result holding an unowned handle-shaped object beside a real handle links only the
+        // real one.
+        const mixed = yield* executed(
+          clientA,
+          `return { real: ${JSON.stringify(mine.handle)}, fake: { id: ${JSON.stringify(randomUUID())}, sha256: "${"1".repeat(64)}", size: 3, contentType: "text/plain", expiresAt: ${JSON.stringify(new Date(Date.now() + hour).toISOString())} } };`,
+        );
+        const mixedLinks = yield* linksOf(mixed.result);
+        expect(mixedLinks.map((link) => link.uri)).toEqual([uri]);
 
         // An app that returns a handle it made up, or another organization's real one, gets no
         // link: the host checks every handle-shaped value against the caller's own files.
@@ -439,6 +485,50 @@ layer(HostedLive, { excludeTestServices: true })("MCP file resources", (it) => {
           `executor-file://${actors.organization.id}/${viaScope.handle.id}`,
         );
         expect(viaFull.ok && viaFull.contents.text).toBe("scoped");
+      }).pipe(Effect.provide(McpClient.layer)),
+    ),
+  );
+
+  it.effect(scenarios.mcpFileResourceExpiry.title, (context) =>
+    withHostedCase(
+      context,
+      Effect.gen(function* () {
+        const mcp = yield* McpClient;
+        const actors = yield* Actors;
+        const api = yield* Api;
+        const key = yield* accessKey;
+        const org = yield* createOrganization("Resources expiry");
+        const app = yield* blobApp(actors.owner, org.id);
+        const client = yield* mcp.connect(key, "file-expiry", { organization: org.id });
+        // The shortest lifetime an organization may choose, so one clock jump expires the file.
+        const saved = yield* api.request(
+          actors.owner,
+          "PUT",
+          `/api/organizations/${org.id}/blob-settings`,
+          { ttlSeconds: 60 * 60 },
+        );
+        expect(saved.status).toBe(200);
+        const short = yield* capturedByCall(client, app.slug, "captureText", {
+          text: "short-lived",
+          contentType: "text/plain",
+        });
+        const uri = (yield* linksOf(short.result))[0]?.uri ?? "";
+        const before = yield* readResource(client, uri);
+        expect(before.ok && before.contents.text).toBe("short-lived");
+
+        yield* serverControl("clock/advance", 200, { milliseconds: 2 * hour });
+        const expired = yield* readResource(client, uri);
+        expect(expired.ok).toBe(false);
+        if (!expired.ok) {
+          expect(expired.code).toBe(resourceNotFound);
+          expect(expired.message).toContain("Resource not found");
+        }
+        // An expired handle in a later result gets no link.
+        const again = yield* executed(
+          client,
+          `return { handle: ${JSON.stringify(short.handle)} };`,
+        );
+        expect(again.result.content).toHaveLength(1);
       }).pipe(Effect.provide(McpClient.layer)),
     ),
   );

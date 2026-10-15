@@ -1,8 +1,10 @@
 /**
  * Files in MCP. A tool returns a small `BlobHandle` inside its value; the result then also carries
  * a `resource_link` to `executor-file://<org>/<id>`, and a client that wants the bytes asks for
- * them with `resources/read`. The bytes never travel in a tool result, so the output ceiling is
- * untouched: a link is a few hundred bytes of metadata.
+ * them with `resources/read`. The bytes never travel in a tool result. The 100,000-byte output
+ * ceiling applies to the execution value, before links are added; the links then add at most
+ * `maxLinkBytes` of metadata (20 links of a few hundred bytes), so a result is never larger than
+ * the ceiling plus that fixed allowance.
  *
  * One handle has one authorization. The backend decides who may stat or read a file from the
  * caller's authenticated request; the organization in the URI is advisory and only compared.
@@ -19,6 +21,8 @@ const linkingTools: ReadonlySet<string> = new Set(["call", "execute", "resume"])
 
 /** The most a scan visits, so a hostile result cannot make the decorator work unboundedly. */
 const scanLimits = { depth: 8, nodes: 2_000, links: 20 } as const;
+/** The most serialized link metadata one result gains, on top of the execution value's ceiling. */
+export const maxLinkBytes = 16_000;
 
 /** What a template URI names: `executor-file://<organization>/<handle id>`. */
 export const fileResourceTemplate = "executor-file://{org}/{id}";
@@ -163,7 +167,7 @@ const linked = (backend: McpBackend<Error>, result: McpSchema.CallToolResult) =>
         ),
       { concurrency: 4 },
     );
-    const links = owned.flatMap((handle) =>
+    const built = owned.flatMap((handle) =>
       handle === undefined
         ? []
         : [
@@ -178,22 +182,39 @@ const linked = (backend: McpBackend<Error>, result: McpSchema.CallToolResult) =>
             },
           ],
     );
+    // Links are accounted against a fixed byte allowance; a link that would pass it is dropped.
+    let budget = maxLinkBytes;
+    const links = built.filter((link) => {
+      budget -= JSON.stringify(link).length;
+      return budget >= 0;
+    });
     return links.length === 0
       ? result
       : new McpSchema.CallToolResult({ ...result, content: [...result.content, ...links] });
   }).pipe(Effect.catchCause(() => Effect.succeed(result)));
 
+/** MCP's "resource not found" code. Missing, expired, forged and other-organization files share it. */
+const resourceNotFoundCode = -32002;
+const notFound = (uri: string) =>
+  new McpSchema.McpErrorBase({
+    code: resourceNotFoundCode,
+    message: "Resource not found",
+    data: { uri },
+  });
+
 const invalid = (message: string, data?: unknown) =>
   new McpSchema.InvalidParams({ message, ...(data === undefined ? {} : { data }) });
+
+type FileReadError = McpSchema.McpErrorBase | McpSchema.InvalidParams | McpSchema.InternalError;
 
 /** `resources/read` of one file, answered from the backend. */
 const readFile = (
   backend: McpBackend<Error>,
   uri: string,
-): Effect.Effect<McpSchema.ReadResourceResult, McpSchema.InvalidParams | McpSchema.InternalError> =>
+): Effect.Effect<McpSchema.ReadResourceResult, FileReadError> =>
   Effect.gen(function* () {
     const parsed = parseFileResourceUri(uri);
-    if (parsed === undefined) return yield* invalid("Resource not found");
+    if (parsed === undefined) return yield* Effect.fail(notFound(uri));
     const { handle, contents } = yield* backend.files.read(parsed);
     const meta = { sha256: handle.sha256, size: handle.size, expiresAt: handle.expiresAt };
     return {
@@ -204,61 +225,61 @@ const readFile = (
       ],
     } satisfies McpSchema.ReadResourceResult;
   }).pipe(
-    Effect.catchCause(
-      (cause): Effect.Effect<never, McpSchema.InvalidParams | McpSchema.InternalError> => {
-        const failure = Cause.findFail(cause);
-        const error: unknown = Result.isSuccess(failure) ? failure.success.error : undefined;
-        switch ((error as { readonly _tag?: string } | undefined)?._tag) {
-          case "InvalidParams":
-            return Effect.fail(error as McpSchema.InvalidParams);
-          case "FileNotFound":
-            return Effect.fail(invalid("Resource not found"));
-          case "FileForbidden":
-            return Effect.fail(
-              invalid("This connection is not permitted to read files", { _tag: "FileForbidden" }),
-            );
-          case "FilesUnavailable":
-            return Effect.fail(invalid("This server cannot read files right now"));
-          case "FileTooLargeForResource": {
-            const { id, size, maximum, sha256, url, expiresAt } = error as {
-              readonly id: string;
-              readonly size: number;
-              readonly maximum: number;
-              readonly sha256: string;
-              readonly url?: string;
-              readonly expiresAt?: string;
-            };
-            const cli = `executor files get ${id}`;
-            return Effect.fail(
-              invalid(
-                `File ${id} is ${size} bytes, over this server's resource read limit of ${maximum} bytes. ${
-                  url === undefined
-                    ? `Download it with: ${cli}`
-                    : `Download it from ${url} (valid until ${expiresAt ?? "it expires"}) or run: ${cli}`
-                }`,
-                {
-                  _tag: "FileTooLarge",
-                  id,
-                  size,
-                  maxResourceReadBytes: maximum,
-                  sha256,
-                  ...(url === undefined ? {} : { url }),
-                  ...(expiresAt === undefined ? {} : { expiresAt }),
-                  cli,
-                },
-              ),
-            );
-          }
-          default:
-            // A defect or an error this module does not know: logged here, never shown to the client.
-            return Effect.logError(cause).pipe(
-              Effect.andThen(
-                Effect.fail(new McpSchema.InternalError({ message: "Internal error" })),
-              ),
-            );
+    Effect.catchCause((cause): Effect.Effect<never, FileReadError> => {
+      const failure = Cause.findFail(cause);
+      const error: unknown = Result.isSuccess(failure) ? failure.success.error : undefined;
+      if (error instanceof McpSchema.McpErrorBase) return Effect.fail(error);
+      switch ((error as { readonly _tag?: string } | undefined)?._tag) {
+        case "InvalidParams":
+          return Effect.fail(error as McpSchema.InvalidParams);
+        case "FileNotFound":
+          return Effect.fail(notFound(uri));
+        case "FileForbidden":
+          return Effect.fail(
+            invalid("This connection is not permitted to read files", { _tag: "FileForbidden" }),
+          );
+        case "FilesUnavailable":
+          // The store could not answer: a server fault, not a client mistake.
+          return Effect.fail(
+            new McpSchema.InternalError({ message: "This server cannot read files right now" }),
+          );
+        case "FileTooLargeForResource": {
+          const { id, size, maximum, sha256, url, expiresAt } = error as {
+            readonly id: string;
+            readonly size: number;
+            readonly maximum: number;
+            readonly sha256: string;
+            readonly url?: string;
+            readonly expiresAt?: string;
+          };
+          const cli = `executor files get ${id}`;
+          return Effect.fail(
+            invalid(
+              `File ${id} is ${size} bytes, over this server's resource read limit of ${maximum} bytes. ${
+                url === undefined
+                  ? `Download it with: ${cli}`
+                  : `Download it from ${url} (valid until ${expiresAt ?? "it expires"}) or run: ${cli}`
+              }`,
+              {
+                _tag: "FileTooLarge",
+                id,
+                size,
+                maxResourceReadBytes: maximum,
+                sha256,
+                ...(url === undefined ? {} : { url }),
+                ...(expiresAt === undefined ? {} : { expiresAt }),
+                cli,
+              },
+            ),
+          );
         }
-      },
-    ),
+        default:
+          // A defect or an error this module does not know: logged here, never shown to the client.
+          return Effect.logError(cause).pipe(
+            Effect.andThen(Effect.fail(new McpSchema.InternalError({ message: "Internal error" }))),
+          );
+      }
+    }),
   );
 
 /**
@@ -280,7 +301,13 @@ export const fileResource = (backend: McpBackend<Error>) =>
         annotations: Context.empty(),
         routerPath: "executor-file:://:0/:1",
         completions: {},
-        handle: (uri) => readFile(backend, uri),
+        // The template's handler type admits only InvalidParams and InternalError, but the wire
+        // encoder accepts any McpErrorBase, which is how MCP's -32002 reaches the client.
+        handle: (uri) =>
+          readFile(backend, uri) as Effect.Effect<
+            McpSchema.ReadResourceResult,
+            McpSchema.InvalidParams | McpSchema.InternalError
+          >,
       });
     }),
   );
