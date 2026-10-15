@@ -51,7 +51,7 @@ const withoutRemoteImages: Components = {
   ...components,
   img: ({ src, alt }) => {
     const label = alt !== undefined && alt !== "" ? alt : "image";
-    const safeSrc = typeof src === "string" && /^https?:\/\//i.test(src) ? src : undefined;
+    const safeSrc = typeof src === "string" && /^https:\/\//i.test(src) ? src : undefined;
     return safeSrc === undefined ? (
       <span className="text-muted-foreground">[{label}]</span>
     ) : (

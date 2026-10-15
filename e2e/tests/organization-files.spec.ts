@@ -432,23 +432,42 @@ layer(HostedLive, { excludeTestServices: true })("Organization files", (it) => {
         const markdownBytes = new TextEncoder().encode(
           `# Preview ${unique}\n\n<script>alert(1)</script>\n\n![remote](https://example.invalid/x.png)\n`,
         );
+        // Files an app stored are attributed to it, so the visibility rule applies to them; the
+        // files uploaded with a key have no creator app. Text bytes are what a tool can store.
+        // Each file has its own bytes, so none is the same stored object as another.
+        const markdownFor = (owner: string) =>
+          new TextEncoder().encode(`${text(markdownBytes)}\nowner: ${owner}\n`);
+        const asciiPdf = new TextEncoder().encode(`%PDF-1.4\n%%EOF ${unique}\n`);
         const previewed = [
-          { bytes: pdfBytes, contentType: "application/pdf" },
-          { bytes: markdownBytes, contentType: "text/markdown" },
-        ];
+          { bytes: pdfBytes, contentType: "application/pdf", via: "upload", member: false },
+          { bytes: markdownBytes, contentType: "text/markdown", via: "upload", member: false },
+          { bytes: asciiPdf, contentType: "application/pdf", via: "appA", member: true },
+          { bytes: markdownFor("appA"), contentType: "text/markdown", via: "appA", member: true },
+          { bytes: markdownFor("appB"), contentType: "text/markdown", via: "appB", member: false },
+        ] as const;
         const ids: string[] = [];
         for (const file of previewed) {
-          const put = yield* raw("PUT", `${prefix}/files`, {
-            headers: {
-              authorization: `Bearer ${ownerKey}`,
-              "x-executor-content-type": file.contentType,
-            },
-            body: file.bytes,
-          });
-          expect(put.status).toBe(201);
-          ids.push(
-            (yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Stored))(text(put.bytes))).id,
-          );
+          if (file.via === "upload") {
+            const put = yield* raw("PUT", `${prefix}/files`, {
+              headers: {
+                authorization: `Bearer ${ownerKey}`,
+                "x-executor-content-type": file.contentType,
+              },
+              body: file.bytes,
+            });
+            expect(put.status).toBe(201);
+            ids.push(
+              (yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Stored))(text(put.bytes)))
+                .id,
+            );
+          } else {
+            const app = file.via === "appA" ? appA : appB;
+            const captured = yield* app.capture("captureText", {
+              text: text(file.bytes),
+              contentType: file.contentType,
+            });
+            ids.push(captured.handle.id);
+          }
         }
         const listed = new Map(
           (yield* body(
@@ -470,10 +489,17 @@ layer(HostedLive, { excludeTestServices: true })("Organization files", (it) => {
           expect(served.headers["content-disposition"]).toMatch(/^attachment/u);
           expect(served.headers["x-content-type-options"]).toBe("nosniff");
           expect(served.headers["content-security-policy"]).toContain("sandbox");
-          // These files have no creator app, so a member cannot link them, as for a missing file.
-          const refused = yield* mint(actors.member, id);
-          expect(refused.status).toBe(absent.status);
-          expect(refused.body).toEqual(absent.body);
+          // A member links the files of an app they can use, and gets the not-found answer for
+          // the private app's file and for files no app created.
+          const asMember = yield* mint(actors.member, id);
+          if (file.member) {
+            expect(asMember.status, `a member links ${file.via} ${id}`).toBe(200);
+            const memberServed = yield* fetchWithHeaders((yield* body(Link, asMember)).url);
+            expect(Buffer.from(memberServed.bytes).equals(Buffer.from(file.bytes))).toBe(true);
+          } else {
+            expect(asMember.status, `a member links ${file.via} ${id}`).toBe(absent.status);
+            expect(asMember.body).toEqual(absent.body);
+          }
         }
       }),
     ),
