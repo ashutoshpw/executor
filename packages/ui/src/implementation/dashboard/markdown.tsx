@@ -43,10 +43,40 @@ const components: Components = {
   ),
 };
 
+/**
+ * Images in untrusted Markdown must not make the viewer's browser fetch a remote address, so
+ * each one shows its alt text, linked to its https address.
+ */
+const withoutRemoteImages: Components = {
+  ...components,
+  img: ({ src, alt }) => {
+    const label = alt !== undefined && alt !== "" ? alt : "image";
+    const safeSrc = typeof src === "string" && /^https?:\/\//i.test(src) ? src : undefined;
+    return safeSrc === undefined ? (
+      <span className="text-muted-foreground">[{label}]</span>
+    ) : (
+      <a href={safeSrc} target="_blank" rel="noopener noreferrer">
+        [{label}]
+      </a>
+    );
+  },
+};
+
 /** Render tool-authored Markdown without enabling raw HTML or unsafe links. */
-export function ToolMarkdown({ children }: { readonly children: string }) {
+export function ToolMarkdown({
+  children,
+  blockRemoteImages = false,
+}: {
+  readonly children: string;
+  /** Show images as linked alt text instead of loading them; for content from outside the host. */
+  readonly blockRemoteImages?: boolean;
+}) {
   return (
-    <Markdown remarkPlugins={[remarkGfm]} skipHtml components={components}>
+    <Markdown
+      remarkPlugins={[remarkGfm]}
+      skipHtml
+      components={blockRemoteImages ? withoutRemoteImages : components}
+    >
       {children}
     </Markdown>
   );

@@ -40,6 +40,7 @@
     "mdast-util-from-markdown": "2.0.3",
     "mdast-util-gfm": "3.1.0",
     "micromark-extension-gfm": "3.0.0",
+    "pdfjs-dist": "6.3.289",
     "radix-ui": "1.6.7",
     "react-markdown": "10.1.0",
     "remark-gfm": "4.0.1",
