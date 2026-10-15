@@ -626,7 +626,7 @@ layer(HostedLive, { excludeTestServices: true })("OAuth refresh resilience", (it
           input: {},
         });
         const refused = yield* write;
-        expect(refused.status, JSON.stringify(refused.body)).toBe(502);
+        expect(refused.status, JSON.stringify(refused.body)).toBe(422);
         expect(refused.body).toMatchObject({
           _tag: "AppProviderFailed",
           reason: "unauthorized",
@@ -729,7 +729,7 @@ export default defineApp({ user: { accounts: { service } } }, async ({ user: { a
         const beforeWrite = yield* refreshes;
         const posts = (yield* issuer.metrics).resourceRequests.POST;
         const written = yield* call("save", "mutation", { name: "first" });
-        expect(written.status, JSON.stringify(written.body)).toBe(502);
+        expect(written.status, JSON.stringify(written.body)).toBe(422);
         expect(written.body).toMatchObject({
           _tag: "AppProviderFailed",
           reason: "unauthorized",
@@ -781,7 +781,7 @@ export default defineApp({ user: { accounts: { service } } }, async ({ user: { a
         // its advice to retry is not passed on.
         yield* issuer.configure({ tokenError: refreshFailures.rate_limited });
         const limited = yield* call("save", "mutation", { name: "second" });
-        expect(limited.status, JSON.stringify(limited.body)).toBe(502);
+        expect(limited.status, JSON.stringify(limited.body)).toBe(422);
         expect(limited.body).toMatchObject({
           _tag: "AppProviderFailed",
           mayHaveWritten: true,
@@ -863,7 +863,7 @@ export default defineApp({ user: { accounts: { service } } }, async ({ user: { a
           yield* issuer.configure({ tokenError: refreshFailures.unavailable });
           const beforeFailure = { writes: yield* factoryWrites, refreshes: yield* refreshes };
           const failed = yield* call("save");
-          expect(failed.status, JSON.stringify(failed.body)).toBe(502);
+          expect(failed.status, JSON.stringify(failed.body)).toBe(422);
           expect(failed.body, mode).toMatchObject({
             _tag: "AppProviderFailed",
             reason: "unauthorized",
@@ -893,7 +893,7 @@ export default defineApp({ user: { accounts: { service } } }, async ({ user: { a
           yield* issuer.configure({ tokenError: null });
           const beforeRenewal = { writes: yield* factoryWrites, refreshes: yield* refreshes };
           const renewed = yield* call("save");
-          expect(renewed.status, JSON.stringify(renewed.body)).toBe(502);
+          expect(renewed.status, JSON.stringify(renewed.body)).toBe(422);
           expect(renewed.body, mode).toMatchObject({
             _tag: "AppProviderFailed",
             reason: "unauthorized",
