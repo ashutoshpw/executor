@@ -8,10 +8,13 @@ import { Effect, Layer } from "effect";
 import { HttpServerRequest } from "effect/http";
 import { McpSchema, McpServer } from "effect/ai";
 import {
+  CurrentResumedRun,
   CurrentTask,
+  parseSessionId,
   resolveTaskId,
   runIdMetaKey,
   taskIdMetaKey,
+  type ResumedRun,
   type TaskContext,
 } from "../contracts/task.ts";
 
@@ -46,14 +49,19 @@ export const taskContextLayer: Layer.Layer<McpServer.McpServer, never, McpServer
                 request._tag === "Some" ? request.value.headers["mcp-session-id"] : undefined;
               const task: TaskContext = {
                 taskId: resolveTaskId(context.requestMetadata, payload),
-                sessionId: header === undefined || header === "" ? null : header,
+                sessionId: parseSessionId(header) ?? null,
                 runId: crypto.randomUUID(),
               };
+              const resumed: ResumedRun = { runId: undefined };
               const result = yield* options
                 .handle(payload)
-                .pipe(Effect.provideService(CurrentTask, task));
+                .pipe(
+                  Effect.provideService(CurrentTask, task),
+                  Effect.provideService(CurrentResumedRun, resumed),
+                );
+              // A resume reports the run of the program it continues, which its records carry.
               return result instanceof McpSchema.CallToolResult
-                ? withRunMeta(result, task)
+                ? withRunMeta(result, { ...task, runId: resumed.runId ?? task.runId })
                 : result;
             }),
         });
