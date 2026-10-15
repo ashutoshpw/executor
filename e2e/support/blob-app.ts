@@ -57,6 +57,11 @@ export default defineApp({}, async ctx => ({
       async (_, input) => attempt(async () => ({ handle: await ctx.blobs.create(new Uint8Array(input.size).fill(65)) }))),
     stat: query({ input: object({ id: string() }) },
       async (_, input) => attempt(async () => ({ handle: await ctx.blobs.stat({ id: input.id }) }))),
+    link: query({ input: object({ id: string(), expiresInSeconds: number().optional(), filename: string().optional() }) },
+      async (_, input) => attempt(async () => ({ link: await ctx.blobs.url({ id: input.id }, {
+        ...(input.expiresInSeconds === undefined ? {} : { expiresInSeconds: input.expiresInSeconds }),
+        ...(input.filename === undefined ? {} : { filename: input.filename }),
+      }) }))),
     slice: query({ input: object({ handle, offset: number(), length: number() }) },
       async (_, input) => attempt(async () => {
         const bytes = await ctx.blobs.read(input.handle, { offset: input.offset, length: input.length });
