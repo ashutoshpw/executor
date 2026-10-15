@@ -53,11 +53,17 @@ export const parseKeys = (text: string): readonly string[] => {
  */
 export function OrganizationTaskInsightsSettings({ disabled }: { readonly disabled: boolean }) {
   const organization = useOrganization();
-  const admin = organization.role !== "member";
+  // The role is unknown until the membership check ends, and members may not read the setting, so
+  // nothing is fetched (and no card shown) until the role is known to be owner or admin.
+  if (organization.role !== "owner" && organization.role !== "admin") return null;
+  return <AdminTaskInsightsSettings disabled={disabled} />;
+}
+
+function AdminTaskInsightsSettings({ disabled }: { readonly disabled: boolean }) {
+  const organization = useOrganization();
   const result = useAtomValue(taskInsightsSettingsAtom(organization.organization));
   const refresh = useAtomRefresh(taskInsightsSettingsAtom(organization.organization));
   const settings = AsyncResult.value(result);
-  if (!admin) return null;
   if (Option.isNone(settings))
     return AsyncResult.isFailure(result) ? (
       <Card className={organizationSettingClass}>
@@ -141,7 +147,8 @@ function TaskInsightsSettingsForm({
                   Record tool arguments
                 </label>
                 <p id={`${id}-record-hint`} className="text-[12px] text-muted-foreground">
-                  Off by default. Credentials are masked before anything is stored.
+                  Off by default. Credentials are masked before anything is stored. Turning this off
+                  also deletes the arguments already stored.
                 </p>
               </div>
             </div>
