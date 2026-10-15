@@ -25,7 +25,8 @@ import {
   FileExpired,
   FileNotFound,
   FilesUnavailable,
-  type fileTransferApi,
+  type AnyFileTransferApi,
+  type FileTransferApi,
 } from "../contracts/api.ts";
 
 /** The link subject of a caller the product knows no user for, such as the local paired user. */
@@ -90,83 +91,89 @@ export const fileTransferHandlers = <
   Id extends string,
   R = never,
 >(
-  api: ReturnType<typeof fileTransferApi<I, S>>,
+  api: AnyFileTransferApi<I, S>,
   apiId: Id,
   creators?: FileCreators<R>,
 ) =>
-  HttpApiBuilder.group(HttpApi.make(apiId).addHttpApi(api), "files", (handlers) =>
-    handlers
-      .handleRaw("download", ({ params }) =>
-        rawFailure(
-          Effect.gen(function* () {
-            const identity = yield* AppIdentity;
-            const transfer = yield* transferOf;
-            const visible = yield* creatorVisibility(creators, identity);
-            return yield* downloadHandle({
-              userContent: transfer.userContent,
-              owner: identity.owner,
-              id: params.handle,
-              visible,
-            });
-          }),
-        ),
-      )
-      .handleRaw("upload", () =>
-        rawFailure(
-          Effect.gen(function* () {
-            const identity = yield* AppIdentity;
-            const transfer = yield* transferOf;
-            const request = yield* HttpServerRequest.HttpServerRequest;
-            return yield* uploadResponse(
-              uploadHandle({
+  HttpApiBuilder.group(
+    HttpApi.make(apiId).addHttpApi(api as FileTransferApi<I, S, {}>),
+    "files",
+    (handlers) =>
+      handlers
+        .handleRaw("download", ({ params }) =>
+          rawFailure(
+            Effect.gen(function* () {
+              const identity = yield* AppIdentity;
+              const transfer = yield* transferOf;
+              const visible = yield* creatorVisibility(creators, identity);
+              return yield* downloadHandle({
                 userContent: transfer.userContent,
                 owner: identity.owner,
-                contentType: uploadContentType(request),
-              }),
-            );
-          }),
+                id: params.handle,
+                visible,
+              });
+            }),
+          ),
+        )
+        .handleRaw("upload", () =>
+          rawFailure(
+            Effect.gen(function* () {
+              const identity = yield* AppIdentity;
+              const transfer = yield* transferOf;
+              const request = yield* HttpServerRequest.HttpServerRequest;
+              return yield* uploadResponse(
+                uploadHandle({
+                  userContent: transfer.userContent,
+                  owner: identity.owner,
+                  contentType: uploadContentType(request),
+                }),
+              );
+            }),
+          ),
+        )
+        .handle("downloadUrl", ({ params, payload }) =>
+          Effect.gen(function* () {
+            const identity = yield* AppIdentity;
+            const transfer: FileTransfer = yield* transferOf;
+            if (transfer.links === undefined) return yield* new BlobUnavailable();
+            const found = yield* transfer.userContent.handles.stat({
+              owner: identity.owner,
+              id: params.handle,
+              visible: yield* creatorVisibility(creators, identity),
+            });
+            return yield* transfer.links.signGet({
+              owner: identity.owner,
+              id: found.handle.id,
+              sha256: found.handle.sha256,
+              subject: subjectOf(identity),
+              expiresInSeconds: payload.expiresInSeconds,
+              filename: payload.filename,
+            });
+          }).pipe(Effect.mapError(linkFailure)),
+        )
+        .handle("uploadUrl", ({ payload }) =>
+          Effect.gen(function* () {
+            const identity = yield* AppIdentity;
+            const transfer: FileTransfer = yield* transferOf;
+            if (transfer.links === undefined) return yield* new BlobUnavailable();
+            return yield* transfer.links.signPut({
+              owner: identity.owner,
+              subject: subjectOf(identity),
+              expiresInSeconds: payload.expiresInSeconds,
+              contentType: payload.contentType,
+              maxBytes:
+                payload.maxBytes === undefined
+                  ? undefined
+                  : Math.min(payload.maxBytes, transfer.userContent.policy.maxFileBytes),
+            });
+          }).pipe(Effect.mapError(linkFailure)),
         ),
-      )
-      .handle("downloadUrl", ({ params, payload }) =>
-        Effect.gen(function* () {
-          const identity = yield* AppIdentity;
-          const transfer: FileTransfer = yield* transferOf;
-          if (transfer.links === undefined) return yield* new BlobUnavailable();
-          const found = yield* transfer.userContent.handles.stat({
-            owner: identity.owner,
-            id: params.handle,
-            visible: yield* creatorVisibility(creators, identity),
-          });
-          return yield* transfer.links.signGet({
-            owner: identity.owner,
-            id: found.handle.id,
-            sha256: found.handle.sha256,
-            subject: subjectOf(identity),
-            expiresInSeconds: payload.expiresInSeconds,
-            filename: payload.filename,
-          });
-        }).pipe(Effect.mapError(linkFailure)),
-      )
-      .handle("uploadUrl", ({ payload }) =>
-        Effect.gen(function* () {
-          const identity = yield* AppIdentity;
-          const transfer: FileTransfer = yield* transferOf;
-          if (transfer.links === undefined) return yield* new BlobUnavailable();
-          return yield* transfer.links.signPut({
-            owner: identity.owner,
-            subject: subjectOf(identity),
-            expiresInSeconds: payload.expiresInSeconds,
-            contentType: payload.contentType,
-            maxBytes:
-              payload.maxBytes === undefined
-                ? undefined
-                : Math.min(payload.maxBytes, transfer.userContent.policy.maxFileBytes),
-          });
-        }).pipe(Effect.mapError(linkFailure)),
-      ),
   );
 
 /** Mount the file routes under a product's authorized API prefix. */
 export const fileTransferRoutes = <I extends HttpApiMiddleware.AnyId, S>(
-  api: ReturnType<typeof fileTransferApi<I, S>>,
-) => HttpApiBuilder.layer(api).pipe(Layer.provide(fileTransferHandlers(api, api.identifier)));
+  api: AnyFileTransferApi<I, S>,
+) =>
+  HttpApiBuilder.layer(api as FileTransferApi<I, S, {}>).pipe(
+    Layer.provide(fileTransferHandlers(api, api.identifier)),
+  );

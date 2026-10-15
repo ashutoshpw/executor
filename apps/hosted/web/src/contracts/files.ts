@@ -43,10 +43,10 @@ export const deleteFileAtom = Atom.family((organization: OrganizationReference) 
 );
 
 /** A short-lived download link for a file, from the route that applies the file's visibility. */
-export const downloadLinkAtom = Atom.family((_organization: OrganizationReference) =>
+export const downloadLinkAtom = Atom.family((organization: OrganizationReference) =>
   HostedClient.runtime.fn((handle: string) =>
     Effect.flatMap(HostedClient, (client) =>
-      client.files.downloadUrl({ params: { handle }, payload: {} }),
+      client.files.downloadUrl({ params: { organization, handle }, payload: {} }),
     ),
   ),
 );
