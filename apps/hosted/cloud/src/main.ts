@@ -495,6 +495,11 @@ export default Api.make(
       HttpRouter.add("*", "/org/:organization/mcp", mcp.http),
       HttpRouter.add("GET", "/.well-known/oauth-protected-resource", mcpProtectedResource),
       HttpRouter.add("GET", "/.well-known/oauth-protected-resource/mcp", mcpProtectedResource),
+      HttpRouter.add(
+        "GET",
+        "/.well-known/oauth-protected-resource/org/:organization/mcp",
+        mcpProtectedResource,
+      ),
     ).pipe(HttpRouter.provideRequest(auth.mcpIdentity));
     const apiDiscoveryRoutes = Layer.mergeAll(
       HttpRouter.add("GET", "/api", apiChallenge),

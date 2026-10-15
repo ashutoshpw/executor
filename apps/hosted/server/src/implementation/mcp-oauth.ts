@@ -92,19 +92,44 @@ const hostedGrantOAuth = ({
     selectResource: (ctx, userId, required) =>
       Effect.gen(function* () {
         const header = ctx.headers?.get("x-executor-organization") ?? undefined;
-        // A connection belongs to one organization. The consent page may omit the choice,
-        // but it cannot name a different organization.
+        // A connection or an organization's URL belongs to one organization. The consent page
+        // may omit the choice, but it cannot name a different organization.
         const organization = yield* Schema.decodeUnknownEffect(OrganizationId)(
           required ?? header,
         ).pipe(Effect.mapError(() => new APIError("BAD_REQUEST")));
         if (required !== undefined && header !== undefined && header !== required)
           return yield* Effect.fail(
             new APIError("FORBIDDEN", {
-              message: "This connection belongs to a different organization.",
+              message: "This URL belongs to a different organization.",
             }),
           );
         yield* membership(ctx.context, userId, organization);
         return organization;
+      }),
+    organizationResource: (ctx, handle) =>
+      Effect.gen(function* () {
+        const find = (field: "id" | "slug") =>
+          authCall(() =>
+            ctx.context.adapter.findOne({
+              model: "organization",
+              where: [{ field, value: handle }],
+            }),
+          ).pipe(
+            Effect.flatMap((row) =>
+              row === null
+                ? Effect.succeed(undefined)
+                : Schema.decodeUnknownEffect(Schema.Struct({ id: OrganizationId }))(row).pipe(
+                    Effect.map((organization) => organization.id),
+                  ),
+            ),
+            Effect.mapError(() => new APIError("SERVICE_UNAVAILABLE")),
+          );
+        const byId = yield* find("id");
+        const bySlug = yield* find("slug");
+        // A handle matching two organizations is ambiguous, as in bearer authentication.
+        return byId !== undefined && bySlug !== undefined && byId !== bySlug
+          ? undefined
+          : (byId ?? bySlug);
       }),
     checkResource: (ctx, userId, resource) =>
       Schema.decodeUnknownEffect(OrganizationId)(resource).pipe(
