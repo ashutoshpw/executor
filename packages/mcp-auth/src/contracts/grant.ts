@@ -34,10 +34,22 @@ export const ConnectionId = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]
   Schema.brand("McpConnectionId"),
 );
 export type ConnectionId = typeof ConnectionId.Type;
-/** What an MCP URL selects: its approval mode and, for a scoped connection, that connection. */
+/**
+ * An organization named in an MCP URL path: a slug or an organization ID. Only characters that
+ * need no percent-encoding, so a URL has one canonical spelling.
+ */
+export const OrganizationHandle = Schema.String.check(
+  Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/u),
+).pipe(Schema.brand("McpOrganizationHandle"));
+export type OrganizationHandle = typeof OrganizationHandle.Type;
+/**
+ * What an MCP URL selects: its approval mode, for a scoped connection that connection, and for
+ * `/org/<handle>/mcp` that organization. A bare `/mcp` URL leaves the organization to the token.
+ */
 export const McpAddress = Schema.Struct({
   mode: ApprovalMode,
   connection: Schema.optionalKey(ConnectionId),
+  organization: Schema.optionalKey(OrganizationHandle),
 });
 export type McpAddress = typeof McpAddress.Type;
 /** The OAuth resource approved for this grant, preserved through refresh. */
@@ -164,7 +176,10 @@ export const grantEventAccess = (policy: GrantPolicy, app: AppId, event: string)
 export const deliveryRefusal = (grant: Grant, address: McpAddress): GrantRefusal | undefined =>
   grant.target.kind !== "mcp" ||
   grant.target.mode !== address.mode ||
-  grant.target.connection !== address.connection
+  grant.target.connection !== address.connection ||
+  // A grant issued for an organization's URL serves only that URL; one issued for the bare URL
+  // is organization-free and keeps serving every organization's URL.
+  (grant.target.organization !== undefined && grant.target.organization !== address.organization)
     ? { reason: "delivery", issued: grant.target }
     : approvalRefusal(grant.policy, grant.target);
 /** Browser approval pages answer only grants issued for a browser-mode URL. */
@@ -172,9 +187,24 @@ export const permitsBrowserApproval = (grant: Grant) =>
   grant.target.kind === "mcp" &&
   deliveryRefusal(grant, { ...grant.target, mode: "browser" }) === undefined;
 
+const wellKnownPrefix = "/.well-known/oauth-protected-resource";
+/**
+ * The organization an MCP URL's path names: `/org/<handle>/mcp`, or that path under the
+ * protected-resource well-known prefix (RFC 9728). Bare paths name none. A malformed handle is
+ * invalid, never read as the bare URL.
+ */
+const pathOrganization = (pathname: string): OrganizationHandle | null | undefined => {
+  const match = /^(?:\/\.well-known\/oauth-protected-resource)?\/org\/([^/]*)\/mcp$/u.exec(
+    pathname,
+  );
+  if (match === null) return null;
+  const handle = match[1];
+  return Schema.is(OrganizationHandle)(handle) ? handle : undefined;
+};
 /**
  * Missing URL mode retains the original model-mode default. A connection is optional;
- * duplicates and malformed values of either parameter are invalid.
+ * duplicates and malformed values of either parameter are invalid, as is a malformed
+ * organization in an `/org/<handle>/mcp` path.
  */
 export const requestedMcpAddress = (url: URL): McpAddress | undefined => {
   const modes = url.searchParams.getAll("elicitation_mode");
@@ -182,9 +212,12 @@ export const requestedMcpAddress = (url: URL): McpAddress | undefined => {
   if (modes.length > 1 || connections.length > 1) return undefined;
   const mode = modes.length === 0 ? "model" : modes[0];
   if (!Schema.is(ApprovalMode)(mode)) return undefined;
-  if (connections.length === 0) return { mode };
+  const organization = pathOrganization(url.pathname);
+  if (organization === undefined) return undefined;
+  const base = organization === null ? { mode } : { mode, organization };
+  if (connections.length === 0) return base;
   const connection = connections[0];
-  return Schema.is(ConnectionId)(connection) ? { mode, connection } : undefined;
+  return Schema.is(ConnectionId)(connection) ? { ...base, connection } : undefined;
 };
 const mcpQuery = (address: McpAddress) => {
   const query = new URLSearchParams();
@@ -193,9 +226,12 @@ const mcpQuery = (address: McpAddress) => {
   const encoded = query.toString();
   return encoded === "" ? "" : `?${encoded}`;
 };
+/** The MCP URL's path: `/org/<handle>/mcp` when it names an organization, else `/mcp`. */
+const mcpPath = (address: McpAddress) =>
+  address.organization === undefined ? "/mcp" : `/org/${address.organization}/mcp`;
 /** Canonical OAuth audience for each MCP address. Query parameters are valid RFC 8707 resource URIs. */
 export const mcpResource = (resourceOrigin: string, address: McpAddress) =>
-  `${resourceOrigin}/mcp${mcpQuery(address)}`;
+  `${resourceOrigin}${mcpPath(address)}${mcpQuery(address)}`;
 
 const notBypassed = "Do not bypass authorization.";
 /** Each refusal names what the grant covers. Connection IDs, app IDs and tool names are not secret. */
@@ -212,7 +248,7 @@ const refusalPresentation = (refusal: GrantRefusal): ErrorPresentation =>
               instructions: `A credential serves the one resource it was issued for. Connect the MCP client at the MCP URL so it receives its own credential, and verify that tools are listed. ${notBypassed}`,
             },
           };
-        const url = `/mcp${mcpQuery(issued)}`;
+        const url = `${mcpPath(issued)}${mcpQuery(issued)}`;
         return {
           title: "Different MCP URL",
           description: `This credential works only at the MCP URL ending in ${url}, not at the URL of this request.`,
@@ -314,6 +350,20 @@ export const mcpOAuthResources = (mcpOrigins: OriginList, connection?: Connectio
     })),
   );
 /**
+ * Every approval mode for one organization's URL at every MCP origin. Organizations are not
+ * fixed at setup, so these are inserted when a client first names the organization.
+ */
+export const mcpOrganizationResources = (
+  mcpOrigins: OriginList,
+  organization: OrganizationHandle,
+) =>
+  mcpOrigins.flatMap((origin) =>
+    ApprovalMode.literals.map((mode) => ({
+      identifier: mcpResource(origin, { mode, organization }),
+      allowedScopes: ["mcp", "offline_access"],
+    })),
+  );
+/**
  * RFC 8707 makes `resource` optional. A request that names none is for the plain MCP URL
  * that discovery advertises, in its original model mode: no approval mode or connection is
  * implied. API authority is never a default; a request for the `executor` scope has none.
@@ -336,9 +386,11 @@ export const grantTarget = (
   const url = URL.parse(resource);
   if (url === null) return undefined;
   if (origins.api.includes(url.origin) && resource === `${url.origin}/api`) return { kind: "api" };
-  if (!origins.mcp.includes(url.origin) || url.pathname !== "/mcp") return undefined;
+  if (!origins.mcp.includes(url.origin)) return undefined;
   const address = requestedMcpAddress(url);
-  // Only the canonical spelling is a resource; reordered or extra parameters are not.
+  // An organization's URL is its own resource; a connection is already bound to its organization.
+  if (address?.organization !== undefined && address.connection !== undefined) return undefined;
+  // Only the canonical spelling is a resource; other paths, reordered or extra parameters are not.
   return address !== undefined && mcpResource(url.origin, address) === resource
     ? { kind: "mcp", ...address }
     : undefined;
@@ -348,5 +400,5 @@ export const mcpResourceMetadataUrl = (resourceOrigin: string, address: McpAddre
   const query = new URLSearchParams();
   if (address.connection !== undefined) query.set("connection", address.connection);
   query.set("elicitation_mode", address.mode);
-  return `${resourceOrigin}/.well-known/oauth-protected-resource/mcp?${query.toString()}`;
+  return `${resourceOrigin}${wellKnownPrefix}${mcpPath(address)}?${query.toString()}`;
 };

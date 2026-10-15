@@ -30,7 +30,9 @@ import {
   defaultResource,
   grantTarget,
   mcpOAuthResources,
+  mcpOrganizationResources,
   OAuthResourceProvisioningFailed,
+  type OrganizationHandle,
   type ResourceOrigins,
 } from "../contracts/grant.ts";
 import {
@@ -95,6 +97,10 @@ const AuthorizeRequest = Schema.StructWithRest(
   }),
   [Schema.Record(Schema.String, Schema.Unknown)],
 );
+/** The `resource` parameters of an authorization request, one or several. */
+const OrganizationResourceRequest = Schema.Struct({
+  resource: Schema.Union([Schema.String, Schema.Array(Schema.String)]),
+});
 const selected = defineRequestState<{ userId: string; id: GrantId } | null>(() => null);
 /** What `authEndpointTemplates` reads of a Better Auth endpoint. */
 interface AuthEndpoint {
@@ -161,6 +167,14 @@ export interface GrantOAuthOptions {
     userId: string,
     required?: string,
   ) => Effect.Effect<string, APIError>;
+  /**
+   * The resource an `/org/<handle>/mcp` URL names, or undefined when no organization has that
+   * handle. Hosts without organizations omit it, and refuse those URLs.
+   */
+  readonly organizationResource?: (
+    context: GenericEndpointContext,
+    handle: OrganizationHandle,
+  ) => Effect.Effect<string | undefined, APIError>;
   readonly checkResource: (
     context: GenericEndpointContext,
     userId: string,
@@ -274,6 +288,28 @@ export const grantOAuthPlugins = (settings: GrantOAuthOptions) => {
     seedOAuthResources(context, {
       ...options,
       resources: mcpOAuthResources(resourceOrigins.mcp, connection),
+    });
+  /** Insert an organization's missing resources at every MCP origin; existing rows are kept. */
+  const seedOrganizationResources = (
+    context: OAuthResourceSeedContext,
+    organization: OrganizationHandle,
+  ) =>
+    seedOAuthResources(context, {
+      ...options,
+      resources: mcpOrganizationResources(resourceOrigins.mcp, organization),
+    });
+  /**
+   * The resource an organization's URL names, with that URL's resources inserted so the
+   * authorization can use them. Unknown handles name nothing and get no resources.
+   */
+  const namedOrganization = (context: GenericEndpointContext, handle: OrganizationHandle) =>
+    Effect.gen(function* () {
+      if (settings.organizationResource === undefined)
+        return yield* Effect.fail(new APIError("BAD_REQUEST"));
+      const resource = yield* settings.organizationResource(context, handle);
+      if (resource === undefined) return undefined;
+      yield* authCall(() => seedOrganizationResources(context.context, handle));
+      return resource;
     });
   const get = (context: GenericEndpointContext, id: GrantId) =>
     authCall(() =>
@@ -983,7 +1019,16 @@ export const grantOAuthPlugins = (settings: GrantOAuthOptions) => {
             ? GrantPolicy.make({ kind: "all" })
             : yield* parse(Schema.fromJsonString(GrantPolicy), policyHeader);
       yield* requireServable(policy, target);
-      const resource = yield* settings.selectResource(ctx, userId, connection?.resource);
+      // An organization's URL pins the grant to that organization, whatever the consent page chose.
+      const named =
+        target.kind === "mcp" && target.organization !== undefined
+          ? yield* namedOrganization(ctx, target.organization)
+          : undefined;
+      if (target.kind === "mcp" && target.organization !== undefined && named === undefined)
+        return yield* Effect.fail(
+          new APIError("FORBIDDEN", { message: "This organization is not available." }),
+        );
+      const resource = yield* settings.selectResource(ctx, userId, connection?.resource ?? named);
       const row = yield* authCall(() =>
         ctx.context.adapter.create({
           model: "mcpGrant",
@@ -1477,6 +1522,29 @@ export const grantOAuthPlugins = (settings: GrantOAuthOptions) => {
             const named = { ...input.value, resource };
             return { context: post ? { body: named } : { query: named } };
           }),
+        },
+        {
+          // Better Auth accepts only resources that exist. An organization's URL gets its
+          // resources here, once the organization is known to exist, so unknown handles fail
+          // as unknown resources.
+          matcher: (ctx: { path?: string }) => ctx.path === "/oauth2/authorize",
+          handler: createAuthMiddleware((ctx) =>
+            runAuth(
+              Effect.gen(function* () {
+                const input = Schema.decodeUnknownOption(OrganizationResourceRequest)(
+                  ctx.method === "POST" ? ctx.body : ctx.query,
+                );
+                if (Option.isNone(input)) return;
+                const { resource } = input.value;
+                const target = grantTarget(
+                  resourceOrigins,
+                  typeof resource === "string" ? [resource] : resource,
+                );
+                if (target?.kind !== "mcp" || target.organization === undefined) return;
+                yield* namedOrganization(ctx, target.organization);
+              }),
+            ),
+          ),
         },
         {
           matcher: (ctx: { path?: string }) => ctx.path === "/oauth2/consent",

@@ -8,6 +8,8 @@ export {
   requestedMcpAddress,
   mcpResource,
   mcpOAuthResources,
+  mcpOrganizationResources,
+  OrganizationHandle,
   type OriginList,
   type ResourceOrigins,
   singleResourceOrigin,
