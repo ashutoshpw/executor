@@ -21,7 +21,7 @@ import { resourceInventoryAtom } from "../../contracts/resource-access.ts";
 import { signOutAtom } from "../../contracts/auth.ts";
 import { signOutFailure } from "./auth.tsx";
 import { useCommandBar } from "./command-bar-context.tsx";
-import { accountItems, items, settings } from "./navigation-items.ts";
+import { accountItems, adminItems, items, settings } from "./navigation-items.ts";
 import { useOrganizationRoute, useSwitchOrganization } from "./organization.tsx";
 
 /** An organization page a host adds to the common ones. */
@@ -137,7 +137,8 @@ function OrganizationCommandBar({
   const inventoryResult = useAtomValue(resourceInventoryAtom(route.organization));
   const inventory = AsyncResult.value(inventoryResult);
   const groups = useMemo(() => {
-    const common = [...items, settings].map((item) => ({
+    const admin = route.role !== undefined && route.role !== "member";
+    const common = [...items, ...(admin ? adminItems : []), settings].map((item) => ({
       id: `page-${item.to}`,
       label: item.label,
       icon: item.icon,
@@ -151,7 +152,8 @@ function OrganizationCommandBar({
       hint: "Page",
       onSelect: item.onSelect,
     }));
-    const pages = [...common.slice(0, items.length), ...host, ...common.slice(items.length)];
+    const commonCount = items.length + (admin ? adminItems.length : 0);
+    const pages = [...common.slice(0, commonCount), ...host, ...common.slice(commonCount)];
     const apps = Option.isSome(inventory)
       ? inventory.value.apps.map((app) => ({
           id: `app-${app.id}`,
@@ -200,6 +202,7 @@ function OrganizationCommandBar({
     navigate,
     organizationSlug,
     organizations,
+    route.role,
     switchOrganization,
   ]);
   return (

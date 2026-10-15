@@ -85,6 +85,17 @@ export function parseHomeSearch(search: Record<string, unknown>): {
   return { range: Option.getOrUndefined(Schema.decodeUnknownOption(UsageRange)(search.range)) };
 }
 
+/** The Tasks page keeps its range and the opened task (by key) in the address. */
+export function parseTasksSearch(search: Record<string, unknown>): {
+  readonly range?: UsageRange | undefined;
+  readonly task?: string | undefined;
+} {
+  return {
+    ...parseHomeSearch(search),
+    task: Option.getOrUndefined(Schema.decodeUnknownOption(Schema.NonEmptyString)(search.task)),
+  };
+}
+
 /** App tabs keep their view on refresh in both hosted products. */
 export function parseAppSearch(search: Record<string, unknown>): ReturnType<
   typeof parseConnectionSearch
