@@ -376,7 +376,9 @@ expiresInSeconds?, filename? })`. It returns `{ url, expiresAt }`: a link anyone
 ordinary HTTPS GET and no other credential until it expires, so a download manager can resume it
 with byte ranges. The host clamps the lifetime to between 60 seconds and 24 hours (15 minutes by
 default), the file downloads as an attachment named `filename`, and the link stops working when the
-file expires or the user it was issued for leaves the organization. A link is a bearer secret: hand
+file expires or the user it was issued for leaves the organization; revoking an API key does not
+revoke links it minted, and a `filename` is cut to 200 characters. Upload links last at most one
+hour. A link is a bearer secret: hand
 it only to the party that should have the file, and never log it. Check
 `(await ctx.blobs.limits()).methods` for `"url"` first; a host that cannot sign links fails with
 `BlobUnavailable`.
