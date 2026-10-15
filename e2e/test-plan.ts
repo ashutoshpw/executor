@@ -4375,6 +4375,28 @@ export const scenarios = plan({
       local: na("Exercises shared OAuth through the hosted API."),
     },
   },
+  oauthServiceAccountRenewal: {
+    fixtures: "actors",
+    file: "oauth-service-account.spec.ts",
+    title:
+      "Service account JWT bearer holds a long-lived token, then renews once for concurrent reads",
+    targets: {
+      "self-host": scheduled,
+      cloud: na("Uses a scoped loopback token service."),
+      local: na("Exercises shared OAuth through the hosted API."),
+    },
+  },
+  oauthServiceAccountClock: {
+    fixtures: "actors",
+    file: "oauth-service-account.spec.ts",
+    title:
+      "Service account JWT bearer backdates its assertion for a provider clock behind the host's",
+    targets: {
+      "self-host": scheduled,
+      cloud: na("Uses a scoped loopback token service."),
+      local: na("Exercises shared OAuth through the hosted API."),
+    },
+  },
   oauthProviderConfig: {
     fixtures: "actors",
     file: "oauth-provider-config.spec.ts",

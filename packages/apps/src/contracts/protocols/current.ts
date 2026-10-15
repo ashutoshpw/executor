@@ -165,49 +165,6 @@ export const DeclaredProvider = Schema.Struct({
 /** Credential-free provider declaration; content matching remains host policy. */
 export type DeclaredProvider = typeof DeclaredProvider.Type;
 
-/**
- * The auth methods a host sends a bundle with an account. A bundle reads an account's fields and
- * placements, never how the host signs in, so a method that signs in with a service account key
- * (`jwt_bearer`) is sent as the secrets method it behaves as: the same fields, exposure and
- * placements. This keeps `accounts` readable by every bundle of this protocol, which cannot
- * declare that method.
- */
-export const SentAuthMethod = Schema.Union([
-  DeclaredAuthMethod.members[0],
-  DeclaredAuthMethod.members[1],
-  DeclaredAuthMethod.members[2],
-  DeclaredAuthMethod.members[3],
-  DeclaredAuthMethod.members[4],
-]);
-export type SentAuthMethod = typeof SentAuthMethod.Type;
-
-/** A provider as the host sends it with an account; see `SentAuthMethod`. */
-export const SentProvider = Schema.Struct({
-  ...DeclaredProvider.fields,
-  auth: Schema.Record(Schema.NonEmptyString, SentAuthMethod),
-});
-export type SentProvider = typeof SentProvider.Type;
-
-/** A declared provider as the host sends it with an account, and as a bundle matches it. */
-export const sentProvider = (provider: DeclaredProvider): SentProvider => ({
-  ...provider,
-  auth: Object.fromEntries(
-    Object.entries(provider.auth).map(([name, method]): [string, SentAuthMethod] => [
-      name,
-      method.type === "oauth2" && method.grant === "jwt_bearer"
-        ? {
-            type: "secrets",
-            label: "Service account",
-            fields: method.response,
-            ...(method.plain === undefined ? {} : { plain: method.plain }),
-            ...(method.raw === undefined ? {} : { raw: method.raw }),
-            ...(method.request === undefined ? {} : { request: method.request }),
-          }
-        : method,
-    ]),
-  ),
-});
-
 /** One requirement: its provider, how many accounts it takes, and whether it has a check. */
 export const DeclaredAccountSlot = Schema.Struct({
   definition: DeclaredProvider,
@@ -267,7 +224,7 @@ export type DeclaredRequirements = typeof DeclaredRequirements.Type;
  */
 export const ResolvedAccount = Schema.Struct({
   id: AccountId,
-  provider: SentProvider,
+  provider: DeclaredProvider,
   method: Schema.NonEmptyString,
   /**
    * Changes when the account is reconnected or its credentials replaced, not on renewal. Hosts

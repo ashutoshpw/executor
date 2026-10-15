@@ -8,7 +8,6 @@ import {
   AccountInfo,
   HostOperationFailed,
   ProviderError,
-  sentProvider,
   type HostAccount,
   type HostAccounts,
 } from "apps/contracts";
@@ -329,7 +328,7 @@ export const makeAccountHealth = (
           accounts: Redacted.make(
             checkedAccounts(target.required.scope, target.slot, {
               id: unsavedAccount,
-              provider: sentProvider(target.required.definition),
+              provider: target.required.definition,
               method: input.method,
               generation: 0,
               fields,
