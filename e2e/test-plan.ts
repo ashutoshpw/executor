@@ -4343,6 +4343,38 @@ export const scenarios = plan({
       local: na("Exercises shared OAuth through the hosted API."),
     },
   },
+  oauthServiceAccount: {
+    fixtures: "actors",
+    file: "oauth-service-account.spec.ts",
+    title:
+      "Service account JWT bearer connects with a pasted key, signs a verified assertion, caches the token and renews with the same key",
+    targets: {
+      "self-host": scheduled,
+      cloud: na("Uses a scoped loopback token service."),
+      local: na("Exercises shared OAuth through the hosted API."),
+    },
+  },
+  oauthServiceAccountErrors: {
+    fixtures: "actors",
+    file: "oauth-service-account.spec.ts",
+    title:
+      "Service account JWT bearer refuses malformed keys, mismatched token endpoints and token endpoint errors without leaking the key",
+    targets: {
+      "self-host": scheduled,
+      cloud: na("Uses a scoped loopback token service."),
+      local: na("Exercises shared OAuth through the hosted API."),
+    },
+  },
+  oauthServiceAccountReconnect: {
+    fixtures: "actors",
+    file: "oauth-service-account.spec.ts",
+    title: "Service account JWT bearer asks to reconnect when the token endpoint refuses the key",
+    targets: {
+      "self-host": scheduled,
+      cloud: na("Uses a scoped loopback token service."),
+      local: na("Exercises shared OAuth through the hosted API."),
+    },
+  },
   oauthProviderConfig: {
     fixtures: "actors",
     file: "oauth-provider-config.spec.ts",
