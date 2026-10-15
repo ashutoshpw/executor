@@ -194,19 +194,19 @@ export default defineApp({}, async (ctx) => ({
         for (const malformed of ["github", "well-known"] as const) {
           yield* upstream.publish(3, { malformed });
           expect((yield* api.request(actors.owner, "GET", `${base}/skill-bundle`)).status).toBe(
-            502,
+            422,
           );
         }
         yield* upstream.publish(3, { broken: true });
-        expect((yield* api.request(actors.owner, "GET", `${base}/skill-bundle`)).status).toBe(502);
+        expect((yield* api.request(actors.owner, "GET", `${base}/skill-bundle`)).status).toBe(422);
         yield* upstream.publish(3, { traversal: true });
-        expect((yield* api.request(actors.owner, "GET", `${base}/skill-bundle`)).status).toBe(502);
+        expect((yield* api.request(actors.owner, "GET", `${base}/skill-bundle`)).status).toBe(422);
         for (const fileFailure of ["oversized", "encoding", "redirect"] as const) {
           yield* upstream.publish(3, { fileFailure });
           expect(
             (yield* api.request(actors.owner, "GET", `${base}/skill-bundle`)).status,
             fileFailure,
-          ).toBe(502);
+          ).toBe(422);
         }
         expect((yield* upstream.requests).some((path) => path.includes("private.txt"))).toBe(false);
         yield* upstream.publish(3);
@@ -325,7 +325,7 @@ export default defineApp({}, async (ctx) => ({
         // cached catalog; its rejected token is reported against that account.
         const outsider = yield* connect(path, "Outsider", `synthetic-revoked-${randomUUID()}`);
         const rejected = yield* read(path);
-        expect(rejected.status, JSON.stringify(rejected.body)).toBe(502);
+        expect(rejected.status, JSON.stringify(rejected.body)).toBe(422);
         expect(rejected.body).toMatchObject({
           _tag: "AppProviderFailed",
           reason: "unauthorized",
@@ -338,7 +338,7 @@ export default defineApp({}, async (ctx) => ({
         const absentPath = yield* deploy([host], "synthetic/absent-skills");
         yield* connect(absentPath, "Reader", token);
         const absent = yield* read(absentPath);
-        expect(absent.status, JSON.stringify(absent.body)).toBe(502);
+        expect(absent.status, JSON.stringify(absent.body)).toBe(422);
         expect(absent.body).toMatchObject({
           _tag: "AppEvaluationFailed",
           skills: {
@@ -359,7 +359,7 @@ export default defineApp({}, async (ctx) => ({
         const elsewhere = yield* deploy(["github.com", "raw.githubusercontent.com"]);
         yield* linkAccount(actors.owner, elsewhere, "github", reader);
         const refused = yield* read(elsewhere);
-        expect(refused.status, JSON.stringify(refused.body)).toBe(502);
+        expect(refused.status, JSON.stringify(refused.body)).toBe(422);
         expect(refused.body).toMatchObject({
           _tag: "AppEvaluationFailed",
           skills: {
