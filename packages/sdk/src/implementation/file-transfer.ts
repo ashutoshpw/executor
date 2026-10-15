@@ -321,3 +321,93 @@ export const uploadResponse = (
           ),
     ),
   );
+
+/** The file is larger than the bound of the transport asking for its bytes. */
+export class FileTooLarge extends Schema.TaggedError<FileTooLarge>()("FileTooLarge", {
+  id: Schema.String,
+  size: Schema.Int,
+  maximum: Schema.Int,
+  sha256: Schema.String,
+}) {}
+
+/**
+ * Read a whole file of `owner` into memory, for a transport that returns bytes inline. The bound
+ * is checked on the stored size before any byte is read, and again while reading, so a store that
+ * yields more than it declared never fills memory.
+ */
+export const readHandleBytes = (options: {
+  readonly userContent: UserContentOptions;
+  readonly owner: string;
+  readonly id: string;
+  readonly maxBytes: number;
+}): Effect.Effect<
+  { readonly handle: BlobHandle; readonly bytes: Uint8Array },
+  BlobError | FileTooLarge
+> => {
+  const { store, handles } = options.userContent;
+  return Effect.gen(function* () {
+    const found = yield* handles.stat({ owner: options.owner, id: options.id });
+    const { handle } = found;
+    if (handle.size > options.maxBytes)
+      return yield* new FileTooLarge({
+        id: handle.id,
+        size: handle.size,
+        maximum: options.maxBytes,
+        sha256: handle.sha256,
+      });
+    const object = yield* store.stream(found.key as BlobKey).pipe(
+      Effect.mapError(() => new BlobUnavailable()),
+      Effect.flatMap(
+        Option.match({
+          onNone: () => Effect.fail(new BlobNotFound({ id: handle.id })),
+          onSome: Effect.succeed,
+        }),
+      ),
+    );
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    yield* object.body.pipe(
+      Stream.runForEach((chunk) =>
+        Effect.suspend(() => {
+          total += chunk.byteLength;
+          if (total > options.maxBytes)
+            return Effect.fail(
+              new FileTooLarge({
+                id: handle.id,
+                size: total,
+                maximum: options.maxBytes,
+                sha256: handle.sha256,
+              }),
+            );
+          chunks.push(chunk);
+          return Effect.void;
+        }),
+      ),
+      Effect.mapError((error) => (error instanceof FileTooLarge ? error : new BlobUnavailable())),
+    );
+    const bytes = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return { handle, bytes };
+  });
+};
+
+const textTypes =
+  /^(?:text\/|application\/(?:json|xml|javascript)(?:;|$)|[^;]+\+(?:json|xml)(?:;|$))/iu;
+
+/**
+ * The bytes as text when the content type says they are text and they decode as strict UTF-8, or
+ * undefined when they must travel as binary. A mislabeled binary file never becomes replacement
+ * characters.
+ */
+export const decodeUtf8Text = (contentType: string, bytes: Uint8Array): string | undefined => {
+  if (!textTypes.test(contentType.trim())) return undefined;
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    return undefined;
+  }
+};

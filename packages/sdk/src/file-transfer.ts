@@ -1,8 +1,11 @@
 /** Moving user-content files over HTTP: serving, uploading, and redeeming signed links. */
 export {
   FileLengthRequired,
+  FileTooLarge,
+  decodeUtf8Text,
   downloadHandle,
   fileTransferError,
+  readHandleBytes,
   redeemFileLink,
   uploadContentType,
   uploadHandle,

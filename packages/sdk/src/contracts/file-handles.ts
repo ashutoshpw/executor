@@ -21,6 +21,12 @@ export interface BlobPolicy {
   readonly maxFileBytes: number;
   readonly maxInlineBytes: number;
   readonly maxReadBytes: number;
+  /**
+   * The most bytes one MCP `resources/read` returns. It is a transport limit of the product's
+   * MCP server, not an app limit: `ctx.blobs.limits()` does not report it. A larger file moves
+   * over a signed link or the CLI.
+   */
+  readonly maxResourceReadBytes: number;
   readonly methods: BlobLimits["methods"];
   /**
    * The host's store cannot take a stream of unknown length, so `fromUrl` needs the upstream's
@@ -40,9 +46,12 @@ export interface BlobPolicy {
 export const defaultBlobPolicy = {
   maxInlineBytes: 256 * 1024,
   maxReadBytes: 1024 * 1024,
+  maxResourceReadBytes: 4 * 1024 * 1024,
   methods: ["fromUrl", "create", "read"],
 } as const satisfies Partial<BlobPolicy>;
 
+/** The most self-hosted and local installs return from one MCP `resources/read`. */
+export const maxLocalResourceReadBytes = 8 * 1024 * 1024;
 /** The largest file self-hosted and local installs store. */
 export const maxLocalFileBytes = 2 * 1024 * 1024 * 1024;
 /** The default lifetime of a handle when its organization has not chosen one: seven days. */
