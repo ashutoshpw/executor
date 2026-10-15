@@ -59,9 +59,16 @@ import { hostedMcpBackend } from "./mcp.ts";
 type HostedBackend = Effect.Success<typeof hostedMcpBackend>;
 type RequestError =
   | GrantForbidden
-  | Effect.Error<ReturnType<HostedBackend[keyof HostedBackend]>>
+  | Effect.Error<ReturnType<HostedBackend[Exclude<keyof HostedBackend, "files">]>>
+  | Effect.Error<ReturnType<HostedBackend["files"]["read"]>>
   | Effect.Error<ReturnType<McpAuthentication["Service"]["authenticate"]>>;
 const unavailable = () => Effect.fail(new McpUnauthorized());
+/** The server's own request, which names no caller, reaches no files. */
+const noFiles: McpBackend<RequestError>["files"] = {
+  stat: unavailable,
+  read: unavailable,
+  organization: unavailable(),
+};
 /** Calls one session object remembers the accounts of (CallStateCache); the oldest goes first. */
 const callStateLimit = 256;
 /**
@@ -100,6 +107,7 @@ const RequestBackend = Context.Reference<McpBackend<RequestError>>("hosted/McpRe
     findEventSubscription: unavailable,
     subscribeEvent: unavailable,
     unsubscribeEvent: unavailable,
+    files: noFiles,
   }),
 });
 const RequestApprovalUrl = Context.Reference<
@@ -132,6 +140,11 @@ const requestBackend: McpBackend<RequestError> = {
     Effect.flatMap(RequestBackend, (backend) => backend.subscribeEvent(input)),
   unsubscribeEvent: (input) =>
     Effect.flatMap(RequestBackend, (backend) => backend.unsubscribeEvent(input)),
+  files: {
+    stat: (input) => Effect.flatMap(RequestBackend, (backend) => backend.files.stat(input)),
+    read: (input) => Effect.flatMap(RequestBackend, (backend) => backend.files.read(input)),
+    organization: Effect.flatMap(RequestBackend, (backend) => backend.files.organization),
+  },
 };
 
 /** Build native MCP protocol state inside its host-owned scope, without a caller identity. */

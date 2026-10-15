@@ -7,6 +7,7 @@ export * from "./contracts/tools.ts";
 export { mcp, makeMcp } from "./implementation/server.ts";
 export { skills } from "./implementation/skills.ts";
 export { makeExecutions, runningPrograms } from "./implementation/executions.ts";
+export { fileBackend } from "./implementation/file-backend.ts";
 export { refusedMcpRequest } from "./implementation/diagnostics.ts";
 
 export * from "./contracts/browser.ts";
