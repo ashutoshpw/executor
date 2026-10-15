@@ -669,7 +669,11 @@ export function FilePreviewSheet({
   const shown = file ?? last;
   return (
     <Sheet open={file !== null} onOpenChange={(open) => !open && onClose()}>
-      <SheetContent aria-describedby="file-preview-description">
+      <SheetContent
+        aria-describedby="file-preview-description"
+        resizable
+        storageKey="executor.files.previewWidth"
+      >
         {shown !== null && (
           <FilePreviewContent
             file={shown}
