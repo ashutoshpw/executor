@@ -3027,6 +3027,17 @@ export const scenarios = plan({
       local: na("Local runs apps through the same workerd runner and outbound as self-host."),
     },
   },
+  credentialHostsAdded: {
+    fixtures: "actors",
+    file: "credential-hosts.spec.ts",
+    title:
+      "an account lists the hosts an app added after it was connected, the refusal says to reconnect, and reconnecting allows them",
+    targets: {
+      "self-host": scheduled,
+      cloud: na("Reaches loopback fixture hosts, which Cloud app Workers refuse as private."),
+      local: na("Hosted app routes; local shares the same account health and outbound code."),
+    },
+  },
   credentialHostsRestart: {
     fixtures: "actors",
     file: "credential-hosts.spec.ts",

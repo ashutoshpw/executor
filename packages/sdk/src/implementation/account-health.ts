@@ -24,8 +24,9 @@ import {
   type OwnerId,
 } from "../contracts/shared.ts";
 import { AppNotFound } from "../contracts/apps.ts";
+import { intersectCredentialHosts } from "./credential-handles.ts";
 import { type AccountCredential, invocationAccount, validateFields } from "./provider.ts";
-import { StoredVersion, type StoredAccount } from "../contracts/storage.ts";
+import { StoredAccount, StoredVersion } from "../contracts/storage.ts";
 import { storedAccount } from "./accounts.ts";
 import { query, type Query } from "./database.ts";
 import type { makeOAuth } from "./oauth.ts";
@@ -54,7 +55,10 @@ type ListApps = (input: {
   readonly owner?: OwnerId;
   readonly ids?: readonly AppId[];
 }) => Effect.Effect<readonly App[], StorageError>;
-type HealthAccount = Pick<StoredAccount, "id" | "provider" | "credentialGeneration">;
+type HealthAccount = Pick<StoredAccount, "id" | "provider" | "credentialGeneration"> & {
+  /** As stored; `report` and `listHealth` read the column without decoding it. */
+  readonly allowedHosts: unknown;
+};
 type CheckRow = {
   readonly account: string;
   readonly app: string;
@@ -74,6 +78,27 @@ const checkedSlot = (app: App, account: Pick<HealthAccount, "provider">) =>
     .filter(([, required]) => required.provider === account.provider && required.health === true)
     .map(([slot, required]) => ({ slot, required }))
     .sort((a, b) => (a.slot < b.slot ? -1 : a.slot > b.slot ? 1 : 0))[0];
+
+/**
+ * The hosts the app's active deployment declares for this account's provider that the account was
+ * not connected for. An account connected without hosts follows the app's declaration, so none are
+ * pending. Reconnecting grants them.
+ */
+const pendingHosts = (
+  app: App,
+  provider: StoredAccount["provider"],
+  allowed: StoredAccount["allowedHosts"],
+) => {
+  if (allowed === null) return [];
+  const declared = new Set(
+    Object.values(app.requirements.accounts).flatMap((required) =>
+      required.provider === provider ? (required.definition.hosts ?? []) : [],
+    ),
+  );
+  return [...declared]
+    .filter((host) => !intersectCredentialHosts([host], allowed).includes(host.toLowerCase()))
+    .sort();
+};
 
 const sameFields = Schema.toEquivalence(JsonObject);
 /** Unsaved credentials have no account yet; checks see this placeholder ID. */
@@ -131,6 +156,9 @@ export const makeAccountHealth = (
       const latest = rows
         .filter((row) => row.info !== null && row.infoCheckedAt !== null)
         .sort((a, b) => (b.infoCheckedAt?.getTime() ?? 0) - (a.infoCheckedAt?.getTime() ?? 0))[0];
+      const allowed = yield* Schema.decodeUnknownEffect(StoredAccount.fields.allowedHosts)(
+        account.allowedHosts,
+      ).pipe(Effect.mapError(() => new StorageError()));
       const info =
         latest === undefined ? Option.none() : Schema.decodeUnknownOption(AccountInfo)(latest.info);
       return {
@@ -153,7 +181,13 @@ export const makeAccountHealth = (
                       row.credentialGeneration === account.credentialGeneration,
                     ...(row.message === null ? {} : { message: row.message }),
                   };
-            return { app: app.id, checkable: checkedSlot(app, account) !== undefined, check };
+            const pending = pendingHosts(app, account.provider, allowed);
+            return {
+              app: app.id,
+              checkable: checkedSlot(app, account) !== undefined,
+              check,
+              ...(pending.length === 0 ? {} : { pendingHosts: pending }),
+            };
           }),
         ),
       } satisfies AccountHealth;
@@ -179,7 +213,7 @@ export const makeAccountHealth = (
     Effect.gen(function* () {
       const accounts = yield* query(() =>
         db.findMany("accounts", {
-          select: ["id", "provider", "credentialGeneration"],
+          select: ["id", "provider", "credentialGeneration", "allowedHosts"],
           where: (b) => (input.owner === undefined ? true : b("owner", "=", input.owner)),
           orderBy: ["id", "asc"],
         }),

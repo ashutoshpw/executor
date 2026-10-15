@@ -63,6 +63,12 @@ export const AccountAppHealth = Schema.Struct({
       message: Schema.optionalKey(Schema.String),
     }),
   ),
+  /**
+   * Hosts the app's active deployment now declares for the account's provider that the account
+   * was not connected for, so the app's requests to them with the account's credentials are
+   * refused until the account is reconnected. Absent when there are none.
+   */
+  pendingHosts: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 export type AccountAppHealth = typeof AccountAppHealth.Type;
 

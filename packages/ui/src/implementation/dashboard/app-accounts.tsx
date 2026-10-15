@@ -26,6 +26,7 @@ import {
 import { AppProviderIcon, ProviderIcon } from "./common.tsx";
 import { AccountAvatar, AccountCheckResult } from "./account-health.tsx";
 import { EmptyState } from "./empty-state.tsx";
+import { Alert, AlertDescription } from "../components/alert.tsx";
 import { Button } from "../components/button.tsx";
 import { Checkbox } from "../components/checkbox.tsx";
 import { Spinner } from "../components/spinner.tsx";
@@ -547,6 +548,7 @@ function ReadOnlyChoices<E>({
       <span className="min-w-0 flex-1 break-words">{accountName(account)}</span>
       <AccountStatus app={app} account={account} />
       {data.accountMenu?.(account, slot, requirement, true)}
+      <PendingHostsNotice app={app} account={account} />
     </li>
   ));
   const list = (
@@ -738,12 +740,49 @@ function ChoiceRow<E>({
         reconnect={data.reconnectAction?.(account, slot, requirement)}
       />
       {data.accountMenu?.(account, slot, requirement, linked)}
+      <PendingHostsNotice
+        app={app}
+        account={account}
+        reconnect={data.reconnectAction?.(account, slot, requirement)}
+      />
       {error && (
         <div className="basis-full text-xs">
           <Failure cause={error} />
         </div>
       )}
     </li>
+  );
+}
+
+/**
+ * Shown when the app now declares addresses for this account's provider that the account was not
+ * connected for. Until the account is reconnected, the app's requests to them are refused.
+ */
+function PendingHostsNotice({
+  app,
+  account,
+  reconnect,
+}: {
+  readonly app: App;
+  readonly account: AccountSummary;
+  readonly reconnect?: ReactNode;
+}) {
+  const hosts = account.health?.apps.find((entry) => entry.app === app.id)?.pendingHosts ?? [];
+  if (hosts.length === 0) return null;
+  return (
+    <Alert
+      data-pending-hosts={hosts.join(" ")}
+      className="basis-full border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs"
+    >
+      <AlertDescription className="col-span-2 col-start-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-foreground/85">
+        <span className="min-w-0 flex-1 break-words">
+          This app now uses this account with new addresses: {hosts.join(", ")}. Reconnect to allow
+          them.
+        </span>
+        {/* An account that needs sign-in already shows its own Reconnect button. */}
+        {!accountNeedsSignIn(account) && reconnect}
+      </AlertDescription>
+    </Alert>
   );
 }
 
