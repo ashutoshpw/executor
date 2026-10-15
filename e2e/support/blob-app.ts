@@ -99,7 +99,8 @@ export const blobApp = (
       files,
     });
     expect(deployed.status).toBe(200);
-    const app = (yield* body(App, deployed)).id;
+    const deployedApp = yield* body(App, deployed);
+    const app = deployedApp.id;
     const path = `${prefix}/${app}`;
     yield* Effect.addFinalizer(() => api.request(owner, "DELETE", path).pipe(Effect.orDie));
     const access = yield* body(
@@ -142,5 +143,5 @@ export const blobApp = (
         Effect.flatMap(({ value }) => Schema.decodeUnknownEffect(Failure)(value)),
         Effect.map((reported) => reported.error),
       );
-    return { call, capture, failure, id: app };
+    return { call, capture, failure, id: app, slug: deployedApp.slug };
   });
