@@ -13,6 +13,7 @@ import { BlobHandle } from "apps/contracts";
 import { Cause, Context, Effect, Layer, Result, Schema } from "effect";
 import { McpSchema, McpServer } from "effect/ai";
 import type { McpBackend } from "../contracts/backend.ts";
+import { fileResourceScheme, fileResourceUri } from "../contracts/file-uri.ts";
 
 /** The `resource_link` block arrived with MCP 2025-06-18; older clients get the unchanged result. */
 const linkProtocols: ReadonlySet<string> = new Set(["2025-06-18", "2025-11-25", "2026-07-28"]);
@@ -26,10 +27,8 @@ export const maxLinkBytes = 16_000;
 
 /** What a template URI names: `executor-file://<organization>/<handle id>`. */
 export const fileResourceTemplate = "executor-file://{org}/{id}";
-const scheme = "executor-file://";
-
-export const fileResourceUri = (organization: string, id: string) =>
-  `${scheme}${encodeURIComponent(organization)}/${encodeURIComponent(id)}`;
+const scheme = fileResourceScheme;
+export { fileResourceUri };
 
 /** The two segments of a file URI, or undefined when the URI is not exactly one. */
 export const parseFileResourceUri = (

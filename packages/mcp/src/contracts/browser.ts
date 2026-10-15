@@ -9,6 +9,7 @@ import {
 } from "@executor-js/sdk/core";
 import { UserFacingError } from "@executor-js/utils/user-facing-error";
 import { InteractionId, PendingInteraction, ElicitationResponseInvalid } from "./interactions.ts";
+export { fileResourceUri } from "./file-uri.ts";
 export { InteractionId, PendingInteraction, ElicitationResponseInvalid, ElicitationResponse };
 
 /** Session routing is public metadata, never an authentication credential. */

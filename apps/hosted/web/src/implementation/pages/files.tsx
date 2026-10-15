@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Delete02Icon, Download01Icon, File01Icon } from "@hugeicons/core-free-icons";
+import { fileResourceUri } from "@executor-js/mcp/browser";
 import type { AppId } from "@executor-js/sdk/core";
 import { Button } from "@executor-js/ui/components/button";
 import {
@@ -142,7 +143,7 @@ function FilesTable({
   readonly changed: () => void;
   readonly filtered: boolean;
 }) {
-  const { organization } = useOrganizationRoute();
+  const { organization, id: organizationId } = useOrganizationRoute();
   const [removing, setRemoving] = useState<FileEntry | null>(null);
   const [failure, setFailure] = useState<Cause.Cause<HostedError>>();
   const remove = useAtomSet(deleteFileAtom(organization), { mode: "promiseExit" });
@@ -178,6 +179,9 @@ function FilesTable({
       {downloadFailure && <HostedFailure cause={downloadFailure} />}
       <FilePreviewSheet
         file={previewing}
+        resourceUri={(file) =>
+          organizationId === undefined ? undefined : fileResourceUri(organizationId, file.id)
+        }
         onClose={() => setPreviewing(null)}
         onDownload={(file) => void download(file as FileEntry)}
         mintLink={async (file) => {
