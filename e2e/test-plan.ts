@@ -1055,6 +1055,48 @@ export const scenarios = plan({
       local: na("Hosted app API fixture; the Node adapter is exercised by self-host."),
     },
   },
+  mcpFileResourceLinks: {
+    fixtures: "actors",
+    file: "mcp-file-resources.spec.ts",
+    title:
+      "An app tool's file handle becomes a resource_link, and resources/read returns the exact bytes as text or base64",
+    serverEnvironment: { EXECUTOR_FILE_RESOURCE_READ_BYTES: "65536" },
+    targets: {
+      "self-host": scheduled,
+      cloud: na(
+        "Cloud's runner writes a UserContent bucket that managed local Cloud does not provide; run `bun run e2e:deployed` against a stage to cover it.",
+      ),
+      local: na("Hosted app API fixture; the Node adapter is exercised by self-host."),
+    },
+  },
+  mcpFileResourceAuthorization: {
+    fixtures: "actors",
+    file: "mcp-file-resources.spec.ts",
+    title:
+      "Resource reads are refused for other organizations, forged and deleted handles, and scoped connections get no files",
+    serverEnvironment: { EXECUTOR_FILE_RESOURCE_READ_BYTES: "65536" },
+    targets: {
+      "self-host": scheduled,
+      cloud: na(
+        "Cloud's runner writes a UserContent bucket that managed local Cloud does not provide; run `bun run e2e:deployed` against a stage to cover it.",
+      ),
+      local: na("Hosted app API fixture; the Node adapter is exercised by self-host."),
+    },
+  },
+  mcpFileResourceOversize: {
+    fixtures: "actors",
+    file: "mcp-file-resources.spec.ts",
+    title:
+      "A file over the resource read limit fails with a typed error that names a working signed link",
+    serverEnvironment: { EXECUTOR_FILE_RESOURCE_READ_BYTES: "65536" },
+    targets: {
+      "self-host": scheduled,
+      cloud: na(
+        "Cloud's runner writes a UserContent bucket that managed local Cloud does not provide; run `bun run e2e:deployed` against a stage to cover it.",
+      ),
+      local: na("Hosted app API fixture; the Node adapter is exercised by self-host."),
+    },
+  },
   fileDownloadRanges: {
     fixtures: "actors",
     file: "file-transfer.spec.ts",
