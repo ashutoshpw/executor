@@ -71,7 +71,7 @@ export class NetworkRefused extends Schema.TaggedError<NetworkRefused>()("Networ
       case "credential_host":
         return refusal.allowedHosts.length === 0
           ? `Executor refused this request: ${refusal.provider} credentials cannot be sent to ${this.host}: the provider declares no hosts.`
-          : `Executor refused this request: ${refusal.provider} credentials cannot be sent to ${this.host}. The provider allows: ${refusal.allowedHosts.join(", ")}.`;
+          : `Executor refused this request: ${refusal.provider} credentials cannot be sent to ${this.host}. The provider allows: ${refusal.allowedHosts.join(", ")}. If the app added ${this.host} after this account was connected, reconnect the ${refusal.provider} account on the app's Accounts tab to allow it.`;
       case "credential_app":
         return "Executor refused this request: it carries a credential handle that is not valid for this app. Use the account fields this invocation received.";
       case "credential_expired":

@@ -61,6 +61,22 @@ const Refusal = Schema.fromJsonString(
   }),
 );
 const handle = /^exsec_[0-9a-f]+_$/;
+/** The links an app lists, with the hosts each account's app check reports as not yet allowed. */
+const LinksWithHosts = Schema.Array(
+  Schema.Struct({
+    account: Schema.Struct({ id: Schema.String }),
+    health: Schema.optionalKey(
+      Schema.Struct({
+        apps: Schema.Array(
+          Schema.Struct({
+            app: Schema.String,
+            pendingHosts: Schema.optionalKey(Schema.Array(Schema.String)),
+          }),
+        ),
+      }),
+    ),
+  }),
+);
 
 /**
  * An app whose provider sends its token only to `host`. Its tools return the fields as app code
@@ -345,7 +361,7 @@ layer(HostedLive, { excludeTestServices: true })("Credential hosts", (it) => {
         url: `${undeclaredOrigin}/undeclared`,
       });
       expect(undeclared.status).toBe(421);
-      const refusal = `Executor refused this request: ${name} credentials cannot be sent to ${new URL(undeclaredOrigin).host}. The provider allows: ${declaredHost}.`;
+      const refusal = `Executor refused this request: ${name} credentials cannot be sent to ${new URL(undeclaredOrigin).host}. The provider allows: ${declaredHost}. If the app added ${new URL(undeclaredOrigin).host} after this account was connected, reconnect the ${name} account on the app's Accounts tab to allow it.`;
       expect(Schema.decodeUnknownSync(Refusal)(undeclared.text)).toEqual({
         _tag: "NetworkRefused",
         host: new URL(undeclaredOrigin).host,
@@ -579,6 +595,94 @@ layer(HostedLive, { excludeTestServices: true })("Credential hosts", (it) => {
             .filter((entry) => entry.url.includes("/granted"))
             .map((entry) => entry.authorization),
         ).toEqual([`Bearer ${values.token}`, `Bearer ${values.token}`]);
+      }),
+    ),
+  );
+
+  it.effect(scenarios.credentialHostsAdded.title, (context) =>
+    withHostedCase(
+      context,
+      Effect.gen(function* () {
+        const { actors, deploy, connect, call } = yield* scenario;
+        const api = yield* Api;
+        const upstream = yield* credentialUpstream;
+        const name = `Credential added ${randomUUID().slice(0, 8)}`;
+        const hostA = `127.0.0.1:${upstream.port}`;
+        const hostB = `localhost:${upstream.port}`;
+        const { path, app } = yield* deploy(
+          name,
+          credentialApp({ name, host: hostA, health: null }),
+        );
+        const values = synthetic();
+        const { account } = yield* connect(path, name, values);
+        const pending = () =>
+          Effect.gen(function* () {
+            const listed = yield* api.request(actors.owner, "GET", `${path}/accounts/user`);
+            expect(listed.status, JSON.stringify(listed.body)).toBe(200);
+            const links = yield* body(LinksWithHosts, listed);
+            const link = links.find((item) => item.account.id === account);
+            expect(link, JSON.stringify(links)).toBeDefined();
+            return link?.health?.apps.find((item) => item.app === app.id)?.pendingHosts ?? [];
+          });
+        expect(yield* pending()).toEqual([]);
+
+        // The app now declares a second address. The account keeps the hosts it was connected for.
+        const redeployed = yield* api.request(actors.owner, "POST", `${path}/deploy`, {
+          files: [
+            {
+              path: "index.ts",
+              content: credentialApp({ name, host: [hostA, hostB], health: null }),
+            },
+            appsManifest,
+          ],
+        });
+        expect(redeployed.status, JSON.stringify(redeployed.body)).toBe(200);
+        expect(yield* pending()).toEqual([hostB]);
+
+        // The refusal names the address, the hosts the account allows and how to fix it.
+        const refused = yield* call(path, Sent, "send", {
+          url: `${upstream.undeclaredOrigin}/added`,
+        });
+        expect(refused.status).toBe(421);
+        const refusal = Schema.decodeUnknownSync(Refusal)(refused.text);
+        expect(refusal.refusal.allowedHosts).toEqual([hostA]);
+        expect(refusal.message).toContain(`cannot be sent to ${hostB}`);
+        expect(refusal.message).toContain(`The provider allows: ${hostA}.`);
+        expect(refusal.message).toContain(
+          `reconnect the ${name} account on the app's Accounts tab`,
+        );
+        expect((yield* upstream.received).filter((entry) => entry.url.includes("/added"))).toEqual(
+          [],
+        );
+
+        // Reconnecting, as the dashboard does, grants the new address. Credentials are saved
+        // again with it, so the same values are entered.
+        const started = yield* api.request(
+          actors.owner,
+          "POST",
+          connectionsPath(path, "user", "service"),
+          { account },
+        );
+        expect(started.status, JSON.stringify(started.body)).toBe(200);
+        const saved = yield* api.request(
+          actors.owner,
+          "POST",
+          `/api/organizations/${actors.organization.id}/connections/${(yield* body(Resource, started)).id}/submit`,
+          { method: "key", label: name, fields: values },
+        );
+        expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+        expect((yield* body(Resource, saved)).id).toBe(account);
+        expect(yield* pending()).toEqual([]);
+
+        const reached = yield* call(path, Sent, "send", {
+          url: `${upstream.undeclaredOrigin}/added`,
+        });
+        expect(reached.status).toBe(200);
+        expect(
+          (yield* upstream.received)
+            .filter((entry) => entry.url.includes("/added"))
+            .map((entry) => entry.authorization),
+        ).toEqual([`Bearer ${values.token}`]);
       }),
     ),
   );
