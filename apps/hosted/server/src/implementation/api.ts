@@ -32,6 +32,7 @@ import { hostedAppHandlers } from "./apps.ts";
 import { hostedSkillHandlers } from "./skills.ts";
 import { hostedGroupHandlers } from "./groups.ts";
 import { hostedBlobSettingsHandlers } from "./blob-settings.ts";
+import { fileCreatorsOf, hostedOrganizationFilesHandlers } from "./organization-files.ts";
 import { hostedMcpConnectionHandlers } from "./mcp-connections.ts";
 import { hostedFeedbackHandlers } from "./feedback.ts";
 import { hostedUsageHandlers } from "./usage-report.ts";
@@ -74,7 +75,7 @@ export const hostedHandlers = Layer.mergeAll(
   ),
   // Each host provides FrameworkDocumentation from its packaged authoring assets.
   frameworkHandlers(HostedFrameworkApi, HostedApi.identifier).pipe(Layer.provide(hostedAppAccess)),
-  fileTransferHandlers(HostedFileTransferApi, HostedApi.identifier).pipe(
+  fileTransferHandlers(HostedFileTransferApi, HostedApi.identifier, fileCreatorsOf).pipe(
     Layer.provide(hostedAppAccess),
   ),
   hostedAppAccountHandlers,
@@ -85,6 +86,7 @@ export const hostedHandlers = Layer.mergeAll(
   hostedOrganizationHandlers,
   hostedGroupHandlers,
   hostedBlobSettingsHandlers,
+  hostedOrganizationFilesHandlers,
   hostedResourceAccessHandlers,
   hostedOAuthClientHandlers,
   hostedWebhookSetupHandlers,
