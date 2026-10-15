@@ -21,6 +21,7 @@ import { OrganizationTombstones } from "./contracts/organization-removal.ts";
 import {
   OrganizationReference,
   CurrentOrganization,
+  PublishingDomain,
   publishingScope,
 } from "./contracts/organization.ts";
 
@@ -70,6 +71,7 @@ export const hostedAppAccess = Layer.effect(
     const api = yield* ApiAuthentication;
     const auth = yield* Authentication;
     const tombstones = yield* OrganizationTombstones;
+    const domain = yield* PublishingDomain;
     return (response, { endpoint }) =>
       withOrganizationRequest(
         (namespace) =>
@@ -125,6 +127,7 @@ export const hostedAppAccess = Layer.effect(
         Effect.provideService(Authentication, auth),
         Effect.provideService(ApiAuthentication, api),
         Effect.provideService(OrganizationTombstones, tombstones),
+        Effect.provideService(PublishingDomain, domain),
       );
   }),
 );
@@ -134,6 +137,7 @@ export const hostedAppGitAccess = Layer.effect(
   AppGitAccess,
   Effect.gen(function* () {
     const api = yield* ApiAuthentication;
+    const domain = yield* PublishingDomain;
     return AppGitAccess.of({
       authenticate: (request, scope) =>
         Effect.gen(function* () {
@@ -164,7 +168,7 @@ export const hostedAppGitAccess = Layer.effect(
             actor: grant.userId,
             readOwner: grant.access.owner,
             scope: grant.access.organization,
-            namespace: publishingScope(grant.organizationSlug),
+            namespace: publishingScope(grant.organizationSlug, domain),
             canWrite: permitsAction(grant.policy, "manage"),
             appIds: permittedAppIds(grant.policy),
             protectedApps: [],

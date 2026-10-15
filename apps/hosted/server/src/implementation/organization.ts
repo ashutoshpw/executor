@@ -48,6 +48,7 @@ import {
   OrganizationRole,
   RequireOrganization,
   organizationOwner,
+  PublishingDomain,
   publishingScope,
 } from "../contracts/organization.ts";
 
@@ -125,6 +126,7 @@ export const withOrganizationRequest = <E, R>(
     const api = yield* ApiAuthentication;
     const request = yield* HttpServerRequest.HttpServerRequest;
     const headers = new Headers(request.headers);
+    const domain = yield* PublishingDomain;
     const params = yield* HttpRouter.params;
     const reference = yield* Schema.decodeUnknownEffect(OrganizationReference)(
       params.organization,
@@ -149,7 +151,7 @@ export const withOrganizationRequest = <E, R>(
           "executor.api_key.id": grant.key.id,
           "executor.user.id": grant.userId,
         });
-      const scope = Effect.succeed(publishingScope(grant.organizationSlug));
+      const scope = Effect.succeed(publishingScope(grant.organizationSlug, domain));
       return (yield* response(scope).pipe(
         Effect.tapCause(ErrorReporter.report),
         Effect.provideService(CurrentAuthorization, grant.policy),
@@ -180,7 +182,9 @@ export const withOrganizationRequest = <E, R>(
       owner: organizationOwner(organization),
       role: membership.role,
     };
-    const scope = auth.organizationSlug(headers, organization).pipe(Effect.map(publishingScope));
+    const scope = auth
+      .organizationSlug(headers, organization)
+      .pipe(Effect.map((slug) => publishingScope(slug, domain)));
     return (yield* response(scope).pipe(
       Effect.tapCause(ErrorReporter.report),
       Effect.provideService(CurrentOrganization, access),
@@ -199,6 +203,7 @@ export const requireOrganizationLive = Layer.effect(
     const auth = yield* Authentication;
     const api = yield* ApiAuthentication;
     const tombstones = yield* OrganizationTombstones;
+    const domain = yield* PublishingDomain;
     return (response, { endpoint, group }) =>
       withOrganizationRequest(
         () => {
@@ -220,6 +225,7 @@ export const requireOrganizationLive = Layer.effect(
         Effect.provideService(Authentication, auth),
         Effect.provideService(ApiAuthentication, api),
         Effect.provideService(OrganizationTombstones, tombstones),
+        Effect.provideService(PublishingDomain, domain),
       );
   }),
 );

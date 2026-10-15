@@ -102,14 +102,22 @@ export class CurrentOrganization extends Context.Service<CurrentOrganization, Or
 ) {}
 /** Public packages are published under the organization's current slug on this domain. */
 export const publishingDomain = "executor.community";
+/**
+ * The domain this host publishes under. Cloud keeps the default; a self-hosted server provides its
+ * own, and the layers that build publishing scopes capture it once when they start.
+ */
+export const PublishingDomain = Context.Reference<string>("hosted/PublishingDomain", {
+  defaultValue: () => publishingDomain,
+});
 /** An organization's publishing scope. It follows renames; the slug it had is free to reuse. */
-export const publishingScope = (slug: string) => `${slug}.${publishingDomain}`;
+export const publishingScope = (slug: string, domain: string = publishingDomain) =>
+  `${slug}.${domain}`;
 /** The slug a publishing scope names, or undefined for a scope on another domain. */
-export const publishingSlug = (scope: string) =>
-  scope.endsWith(`.${publishingDomain}`) ? scope.slice(0, -publishingDomain.length - 1) : undefined;
+export const publishingSlug = (scope: string, domain: string = publishingDomain) =>
+  scope.endsWith(`.${domain}`) ? scope.slice(0, -domain.length - 1) : undefined;
 
 /**
- * Lazy, authenticated publishing scope, `<slug>.executor.community`; routes that do not need it
+ * Lazy, authenticated publishing scope, `<slug>.<publishing domain>`; routes that do not need it
  * make no slug lookup.
  */
 export class CurrentOrganizationNamespace extends Context.Service<
