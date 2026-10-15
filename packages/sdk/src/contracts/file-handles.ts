@@ -4,7 +4,7 @@
  * module decides who may reach them, for how long, and what happens when two apps store the same
  * file. Apps see none of it: `ctx.blobs` returns handles.
  */
-import { Schema, type Effect } from "effect";
+import { Config, Schema, type Effect } from "effect";
 import {
   BlobError,
   BlobHandle,
@@ -52,6 +52,21 @@ export const defaultBlobPolicy = {
 
 /** The most self-hosted and local installs return from one MCP `resources/read`. */
 export const maxLocalResourceReadBytes = 8 * 1024 * 1024;
+/** The ceiling an operator may raise the resource read limit to: reads buffer the file in memory. */
+export const maxConfigurableResourceReadBytes = 64 * 1024 * 1024;
+
+/**
+ * `EXECUTOR_FILE_RESOURCE_READ_BYTES`: a positive whole number of bytes no larger than
+ * `maxConfigurableResourceReadBytes`. Anything else fails startup, because NaN or a negative value
+ * would silently disable or break the bound that protects memory.
+ */
+export const resourceReadBytesConfig = Config.schema(
+  Schema.FiniteFromString.check(
+    Schema.isInt(),
+    Schema.isBetween({ minimum: 1, maximum: maxConfigurableResourceReadBytes }),
+  ),
+  "EXECUTOR_FILE_RESOURCE_READ_BYTES",
+).pipe(Config.withDefault(maxLocalResourceReadBytes));
 /** The largest file self-hosted and local installs store. */
 export const maxLocalFileBytes = 2 * 1024 * 1024 * 1024;
 /** The default lifetime of a handle when its organization has not chosen one: seven days. */

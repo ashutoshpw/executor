@@ -364,33 +364,40 @@ export const readHandleBytes = (options: {
         }),
       ),
     );
-    const chunks: Uint8Array[] = [];
+    // The stat'd size is already within the bound, so one buffer holds the file; a store that
+    // yields more than it declared fails below, before any write past the bound.
+    const capacity = Math.min(handle.size, options.maxBytes);
+    let buffer = new Uint8Array(capacity);
     let total = 0;
     yield* object.body.pipe(
       Stream.runForEach((chunk) =>
         Effect.suspend(() => {
-          total += chunk.byteLength;
-          if (total > options.maxBytes)
+          const next = total + chunk.byteLength;
+          if (next > options.maxBytes)
             return Effect.fail(
               new FileTooLarge({
                 id: handle.id,
-                size: total,
+                size: next,
                 maximum: options.maxBytes,
                 sha256: handle.sha256,
               }),
             );
-          chunks.push(chunk);
+          if (next > buffer.byteLength) {
+            // The store yielded more than the handle declared, within the bound: grow once.
+            const grown = new Uint8Array(
+              Math.min(options.maxBytes, Math.max(next, buffer.byteLength * 2)),
+            );
+            grown.set(buffer.subarray(0, total));
+            buffer = grown;
+          }
+          buffer.set(chunk, total);
+          total = next;
           return Effect.void;
         }),
       ),
       Effect.mapError((error) => (error instanceof FileTooLarge ? error : new BlobUnavailable())),
     );
-    const bytes = new Uint8Array(total);
-    let offset = 0;
-    for (const chunk of chunks) {
-      bytes.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
+    const bytes = total === buffer.byteLength ? buffer : buffer.slice(0, total);
     return { handle, bytes };
   });
 };
