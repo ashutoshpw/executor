@@ -35,6 +35,7 @@ import {
   startSignIn,
 } from "./connection-state.ts";
 import { requireTargetProvider } from "./connection-target.ts";
+import { importSigningKey, parseServiceAccountKey } from "./service-account-key.ts";
 import { Account } from "../contracts/account.ts";
 import {
   OAuthClientUnavailable,
@@ -54,6 +55,8 @@ import {
   isFirstPartyGrant,
   OAuthClientId,
   OAuthGrant,
+  isMachineGrant,
+  type OAuthJwtBearerKey,
   OAuthReconnectRequired,
   OAuthRegistration,
   OAuthRenewalFailed,
@@ -77,6 +80,7 @@ import {
   OAuthClientNotFound,
   OAuthClientReference,
   OAuthClientsUnsupported,
+  OAuthServiceAccountEntry,
 } from "../contracts/oauth-clients.ts";
 import {
   AuthMethodInvalid,
@@ -479,6 +483,33 @@ const clientCredentialsFailed = (error: OAuthProtocolFailed) => {
   });
 };
 
+/**
+ * A failed service account sign-in. The token endpoint refusing the assertion (`invalid_grant`,
+ * such as a bad signature or a key that was disabled, `unauthorized_client` when delegation was
+ * not granted, `invalid_scope`) is a rejected credential, reported with the provider's code; a key
+ * that cannot sign never reached the endpoint.
+ */
+const jwtBearerFailed = (error: OAuthProtocolFailed) => {
+  const reason =
+    error.reason === "unsupported"
+      ? error.reason
+      : error.reason === "invalid_client"
+        ? ("invalid_service_account_key" as const)
+        : Match.value(outcome(error)).pipe(
+            Match.when("unavailable", () => "service_unavailable" as const),
+            Match.when("limited", () => "rate_limited" as const),
+            Match.when("incompatible", () => "incompatible_response" as const),
+            Match.whenOr("blocked", "rejected", "unanswered", () => "token_exchange" as const),
+            Match.exhaustive,
+          );
+  return new OAuthSetupFailed({
+    cause: causeOf("jwtBearer", error),
+    ...serviceErrorOf(error),
+    ...retryAfterOf(reason, error),
+    reason,
+  });
+};
+
 /** A failed token exchange. Callback validation runs first, so every failure here reached the token endpoint or failed before sending. */
 const exchangeFailed = (error: OAuthProtocolFailed) => {
   const reason =
@@ -656,13 +687,13 @@ export const makeOAuth = (
    */
   const refreshOf = (
     protocol: ReturnType<typeof makeOAuthProtocol>,
-    grant: Exclude<OAuthGrant, { readonly grant: "client_credentials" }>,
+    grant: Exclude<OAuthGrant, { readonly grant: "client_credentials" | "jwt_bearer" }>,
   ) =>
     Effect.gen(function* () {
       const operating = yield* operatingGrant(grant);
       return grant.refreshToken === undefined ||
         operating === undefined ||
-        operating.grant === "client_credentials"
+        isMachineGrant(operating)
         ? undefined
         : protocol.refresh({ ...operating, refreshToken: grant.refreshToken });
     });
@@ -767,11 +798,14 @@ export const makeOAuth = (
       if (method === undefined || method.type !== "oauth2")
         return yield* new AuthMethodInvalid({ provider: input.provider, method: input.method });
       const redirect =
-        method.grant === "client_credentials" || input.redirectUri === undefined
+        method.grant === "client_credentials" ||
+        method.grant === "jwt_bearer" ||
+        input.redirectUri === undefined
           ? undefined
           : parseEndpoint(input.redirectUri, options.urlPolicy);
       if (
         method.grant !== "client_credentials" &&
+        method.grant !== "jwt_bearer" &&
         (redirect === undefined ||
           ["code", "state", "error", "error_description", "error_uri", "iss"].some((key) =>
             redirect.searchParams.has(key),
@@ -801,7 +835,11 @@ export const makeOAuth = (
       const issuer = oauthClientIssuer(discovered.server);
       return { method, redirect, discovered, registration, previous, issuer };
     });
-  type Resolved = Effect.Success<ReturnType<typeof resolveSetup>>;
+  type SetupResolution = Effect.Success<ReturnType<typeof resolveSetup>>;
+  /** A resolution for a method that signs in with an OAuth client; a service account has none. */
+  type Resolved = Omit<SetupResolution, "discovered"> & {
+    readonly discovered: Exclude<SetupResolution["discovered"], { readonly grant: "jwt_bearer" }>;
+  };
 
   /**
    * What a registered client was registered for, as its registration request said it: the
@@ -1086,8 +1124,17 @@ export const makeOAuth = (
    */
   const oauthSetup = (input: typeof CheckOAuthSetup.Type) =>
     Effect.gen(function* () {
-      const resolved = yield* resolveSetup(input);
-      const { discovered, method, registration } = resolved;
+      const resolution = yield* resolveSetup(input);
+      const { discovered, method, registration } = resolution;
+      // The key is entered for each connection, so the form never waits on a client.
+      if (discovered.grant === "jwt_bearer")
+        return {
+          mode: "automatic",
+          scopes: discovered.scopes,
+          grant: "jwt_bearer",
+          subject: discovered.subject,
+        } satisfies OAuthClientSetup;
+      const resolved: Resolved = { ...resolution, discovered };
       // A registered client the caller is refused still counts, as a start finds it too.
       const existing = yield* existingAutomatic(input.owner, resolved);
       // The operator's own client, after the owner's registered clients and before CIMD and DCR.
@@ -1259,7 +1306,11 @@ export const makeOAuth = (
       if (row === null) return yield* new ProviderNotFound({ provider: input.provider });
       const provider = yield* decode(Provider, row);
       const methods = Object.entries(provider.definition.auth).flatMap(([name, method]) =>
-        method.type === "oauth2" && method.grant !== "client_credentials" ? [{ name, method }] : [],
+        method.type === "oauth2" &&
+        method.grant !== "client_credentials" &&
+        method.grant !== "jwt_bearer"
+          ? [{ name, method }]
+          : [],
       );
       if (methods.length === 0)
         return yield* new OAuthClientsUnsupported({ provider: input.provider });
@@ -1445,6 +1496,7 @@ export const makeOAuth = (
         const reusable =
           previous === undefined ||
           isFirstPartyGrant(previous) ||
+          previous.grant === "jwt_bearer" ||
           (previous.grant ?? "authorization_code") !== discovered.grant
             ? undefined
             : previous;
@@ -1510,6 +1562,9 @@ export const makeOAuth = (
       }
       if (Schema.is(OAuthAutomaticClient)(choice))
         return yield* automaticChoice(input, resolved, reconnecting);
+      // A service account key belongs to a JWT bearer method, which signs in with no client.
+      if (Schema.is(OAuthServiceAccountEntry)(choice))
+        return yield* new OAuthSetupFailed({ reason: "invalid_client" });
       if (choice.save === true && discovered.grant === "client_credentials")
         return yield* new OAuthSetupFailed({ reason: "invalid_client" });
       const client = yield* enteredClient(
@@ -1541,6 +1596,179 @@ export const makeOAuth = (
       };
     });
 
+  /**
+   * Complete a connection for a machine grant, which signs in with no user: save the account, its
+   * encrypted credentials and its encrypted grant in one transaction, as every sign-in does.
+   * `grantOf` builds the grant from the projected fields and the completion time.
+   */
+  const completeMachine = (
+    input: typeof StartConnectionOAuth.Type & {
+      readonly owner: OwnerId;
+      readonly provider: ProviderId;
+    },
+    existing: Account | undefined,
+    response: JsonObject,
+    tokens: unknown,
+    grantOf: (fields: JsonObject, completedAt: number) => unknown,
+    projectionFailed: OAuthSetupFailed,
+  ) =>
+    Effect.gen(function* () {
+      const fields = yield* project(response, tokens).pipe(Effect.mapError(() => projectionFailed));
+      const completedAt = yield* Clock.currentTimeMillis;
+      const account = existing ?? {
+        id: AccountId.make(`acc_${yield* nextId}`),
+        owner: input.owner,
+        provider: input.provider,
+        method: input.method,
+        createdAt: new Date(completedAt),
+      };
+      const grant = yield* decode(OAuthGrant, grantOf(fields, completedAt));
+      const encryptedCredentials = yield* encrypt(account.id, fields);
+      const encryptedGrant = yield* encrypt(account.id, grant);
+      const ready = `ready_${yield* nextId}`;
+      const saved = yield* transaction(db, (tx) =>
+        Effect.gen(function* () {
+          const current = yield* lockConnection(tx, input, crypto);
+          if (current.state.status === "completed") return current.state.account;
+          const claimed = yield* requireOpen(input, current);
+          const stored =
+            existing === undefined
+              ? undefined
+              : yield* ownedAccount(tx, { account: account.id, owner: input.owner });
+          const saved = stored ?? {
+            ...account,
+            label: input.label ?? (yield* defaultLabel(tx, input.owner, input.provider)),
+            description: null,
+          };
+          if (stored === undefined) {
+            yield* query(() => tx.create("accounts", { ...saved, encryptedCredentials }));
+            if (lifecycle) yield* lifecycle.accountCreated(saved);
+          } else
+            // Connecting an existing account again starts a new credential generation.
+            yield* query(() =>
+              tx.updateMany("accounts", {
+                where: (b) => b("id", "=", stored.id),
+                set: {
+                  encryptedCredentials,
+                  credentialGeneration: stored.credentialGeneration + 1,
+                },
+              }),
+            );
+          const state = {
+            encrypted: encryptedGrant,
+            status: ready,
+            updatedAt: new Date(completedAt),
+          };
+          yield* query(() =>
+            tx.upsert("oauthGrants", {
+              where: (b) => b("id", "=", saved.id),
+              create: { id: saved.id, ...state },
+              update: state,
+            }),
+          );
+          if (lifecycle)
+            yield* lifecycle.connectionCompleting({
+              id: current.id,
+              owner: current.owner,
+              reconnectAccount: current.reconnectAccount,
+              target: { app: current.target.app, requirement: current.target.requirement },
+            });
+          yield* finishConnection(tx, claimed, saved, lifecycle);
+          return saved;
+        }),
+      );
+      return { status: "completed" as const, account: saved };
+    });
+
+  /**
+   * Connect a service account (JWT bearer). The key is checked before anything is sent: it must
+   * be a key file, sign, and name the token endpoint the provider declared. A reconnect that
+   * enters no key signs in again with the key its grant holds. The key lives only encrypted on
+   * the grant and in memory while signing; the account's fields hold the access token alone.
+   */
+  const beginServiceAccount = (
+    input: typeof StartConnectionOAuth.Type & {
+      readonly owner: OwnerId;
+      readonly provider: ProviderId;
+    },
+    existing: Account | undefined,
+    discovered: Extract<SetupResolution["discovered"], { readonly grant: "jwt_bearer" }>,
+    response: JsonObject,
+  ) =>
+    Effect.gen(function* () {
+      if (protocol === undefined) return yield* new OAuthClientUnavailable(input);
+      const choice = input.client;
+      const sameUrl = (a: string, b: string) => new URL(a).href === new URL(b).href;
+      const entered: { readonly key: OAuthJwtBearerKey; readonly subject: string | undefined } =
+        choice === undefined
+          ? yield* Effect.gen(function* () {
+              const row =
+                existing === undefined
+                  ? null
+                  : yield* query(() =>
+                      db.findFirst("oauthGrants", { where: (b) => b("id", "=", existing.id) }),
+                    );
+              const previous =
+                existing === undefined || row === null
+                  ? undefined
+                  : yield* decrypt(existing.id, row.encrypted, OAuthGrant);
+              if (previous === undefined || previous.grant !== "jwt_bearer")
+                return yield* new OAuthSetupFailed({ reason: "invalid_client" });
+              if (!sameUrl(previous.tokenUrl, discovered.tokenUrl))
+                return yield* new OAuthSetupFailed({ reason: "token_url_mismatch" });
+              return { key: previous.key, subject: previous.subject };
+            })
+          : Schema.is(OAuthServiceAccountEntry)(choice)
+            ? yield* Effect.gen(function* () {
+                const parsed = yield* parseServiceAccountKey(
+                  Redacted.value(choice.serviceAccountKey),
+                ).pipe(
+                  Effect.mapError(
+                    () => new OAuthSetupFailed({ reason: "invalid_service_account_key" }),
+                  ),
+                );
+                if (!sameUrl(parsed.tokenUri, discovered.tokenUrl))
+                  return yield* new OAuthSetupFailed({ reason: "token_url_mismatch" });
+                const { tokenUri: _tokenUri, ...key } = parsed;
+                return { key, subject: choice.subject };
+              })
+            : yield* new OAuthSetupFailed({ reason: "invalid_client" });
+      if (entered.subject === undefined && discovered.subject === "required")
+        return yield* new OAuthSetupFailed({ reason: "subject_required" });
+      yield* importSigningKey(entered.key.privateKey).pipe(
+        Effect.mapError(() => new OAuthSetupFailed({ reason: "invalid_service_account_key" })),
+      );
+      const tokens = yield* protocol
+        .jwtBearer({
+          tokenUrl: discovered.tokenUrl,
+          key: entered.key,
+          subject: entered.subject,
+          scopes: discovered.scopes,
+          scopeSeparator: discovered.scopeSeparator,
+        })
+        .pipe(Effect.mapError(jwtBearerFailed));
+      return yield* completeMachine(
+        input,
+        existing,
+        response,
+        tokens,
+        (fields, completedAt) => ({
+          grant: "jwt_bearer",
+          tokenUrl: discovered.tokenUrl,
+          key: entered.key,
+          ...(entered.subject === undefined ? {} : { subject: entered.subject }),
+          scopes: discovered.scopes,
+          ...(discovered.scopeSeparator === undefined
+            ? {}
+            : { scopeSeparator: discovered.scopeSeparator }),
+          fields,
+          response,
+          ...expiry(completedAt, tokens.expires_in),
+        }),
+        new OAuthSetupFailed({ reason: "incompatible_response" }),
+      );
+    }).pipe(Effect.withSpan("oauth.beginServiceAccount"));
+
   const beginOAuth = (
     input: typeof StartConnectionOAuth.Type & {
       readonly owner: OwnerId;
@@ -1551,8 +1779,11 @@ export const makeOAuth = (
     Effect.gen(function* () {
       if (protocol === undefined || options === undefined)
         return yield* new OAuthClientUnavailable(input);
-      const resolved = yield* resolveSetup(input);
-      const { method, discovered } = resolved;
+      const resolution = yield* resolveSetup(input);
+      const { method, discovered } = resolution;
+      if (discovered.grant === "jwt_bearer")
+        return yield* beginServiceAccount(input, existing, discovered, method.response);
+      const resolved: Resolved = { ...resolution, discovered };
       const chosen = yield* chooseClient(input, resolved, existing);
       if (chosen.kind === "firstParty")
         return yield* beginFirstParty(
@@ -1579,79 +1810,20 @@ export const makeOAuth = (
         const tokens = yield* protocol
           .clientCredentials({ ...discovered, client: confidential })
           .pipe(Effect.mapError(clientCredentialsFailed));
-        const fields = yield* project(method.response, tokens).pipe(
-          Effect.mapError(() => new OAuthSetupFailed({ reason: "invalid_client" })),
-        );
-        const completedAt = yield* Clock.currentTimeMillis;
-        const account = existing ?? {
-          id: AccountId.make(`acc_${yield* nextId}`),
-          owner: input.owner,
-          provider: input.provider,
-          method: input.method,
-          createdAt: new Date(completedAt),
-        };
-        const grant = yield* decode(OAuthGrant, {
-          ...discovered,
-          client: confidential,
-          fields,
-          response: method.response,
-          ...expiry(completedAt, tokens.expires_in),
-        });
-        const encryptedCredentials = yield* encrypt(account.id, fields);
-        const encryptedGrant = yield* encrypt(account.id, grant);
-        const ready = `ready_${yield* nextId}`;
-        const saved = yield* transaction(db, (tx) =>
-          Effect.gen(function* () {
-            const current = yield* lockConnection(tx, input, crypto);
-            if (current.state.status === "completed") return current.state.account;
-            const claimed = yield* requireOpen(input, current);
-            const stored =
-              existing === undefined
-                ? undefined
-                : yield* ownedAccount(tx, { account: account.id, owner: input.owner });
-            const saved = stored ?? {
-              ...account,
-              label: input.label ?? (yield* defaultLabel(tx, input.owner, input.provider)),
-              description: null,
-            };
-            if (stored === undefined) {
-              yield* query(() => tx.create("accounts", { ...saved, encryptedCredentials }));
-              if (lifecycle) yield* lifecycle.accountCreated(saved);
-            } else
-              // Connecting an existing account again starts a new credential generation.
-              yield* query(() =>
-                tx.updateMany("accounts", {
-                  where: (b) => b("id", "=", stored.id),
-                  set: {
-                    encryptedCredentials,
-                    credentialGeneration: stored.credentialGeneration + 1,
-                  },
-                }),
-              );
-            const state = {
-              encrypted: encryptedGrant,
-              status: ready,
-              updatedAt: new Date(completedAt),
-            };
-            yield* query(() =>
-              tx.upsert("oauthGrants", {
-                where: (b) => b("id", "=", saved.id),
-                create: { id: saved.id, ...state },
-                update: state,
-              }),
-            );
-            if (lifecycle)
-              yield* lifecycle.connectionCompleting({
-                id: current.id,
-                owner: current.owner,
-                reconnectAccount: current.reconnectAccount,
-                target: { app: current.target.app, requirement: current.target.requirement },
-              });
-            yield* finishConnection(tx, claimed, saved, lifecycle);
-            return saved;
+        return yield* completeMachine(
+          input,
+          existing,
+          method.response,
+          tokens,
+          (fields, at) => ({
+            ...discovered,
+            client: confidential,
+            fields,
+            response: method.response,
+            ...expiry(at, tokens.expires_in),
           }),
+          new OAuthSetupFailed({ reason: "invalid_client" }),
         );
-        return { status: "completed" as const, account: saved };
       }
       if (redirect === undefined)
         return yield* new OAuthSetupFailed({ reason: "invalid_redirect" });
@@ -2306,7 +2478,7 @@ export const makeOAuth = (
         // Renew again from the saved grant, as it would have. See renewalLease.
         const abandoned = claimed;
         const grant = yield* decrypt(account.id, row.encrypted, OAuthGrant);
-        const renewable = grant.grant === "client_credentials" || grant.refreshToken !== undefined;
+        const renewable = isMachineGrant(grant) || grant.refreshToken !== undefined;
         // The service refused exactly the credentials this grant still holds. A grant another
         // call has renewed since then holds different ones, which this call uses instead.
         const refused = rejected !== undefined && sameFields(grant.fields, rejected);
@@ -2326,11 +2498,18 @@ export const makeOAuth = (
         )
           return held(grant.fields);
         if (protocol === undefined) return yield* reconnect("not_renewable");
-        const stage = grant.grant === "client_credentials" ? "clientCredentials" : "refresh";
+        const stage =
+          grant.grant === "client_credentials"
+            ? "clientCredentials"
+            : grant.grant === "jwt_bearer"
+              ? "jwtBearer"
+              : "refresh";
         const renewal =
           grant.grant === "client_credentials"
             ? protocol.clientCredentials(grant)
-            : yield* refreshOf(protocol, grant);
+            : grant.grant === "jwt_bearer"
+              ? protocol.jwtBearer(grant)
+              : yield* refreshOf(protocol, grant);
         if (renewal === undefined) return yield* reconnect("not_renewable");
         const claim = `refresh_${yield* nextId}`;
         /**
@@ -2458,17 +2637,14 @@ export const makeOAuth = (
            * The grant with this renewal's tokens. The renewed token's lifetime replaces the
            * previous one, including when it states none.
            */
-          const refreshToken =
-            grant.grant === "client_credentials"
-              ? undefined
-              : (tokens.refresh_token ?? grant.refreshToken);
+          const refreshToken = isMachineGrant(grant)
+            ? undefined
+            : (tokens.refresh_token ?? grant.refreshToken);
           const renewedFrom = (base: OAuthGrant) =>
             decode(OAuthGrant, {
               ...Struct.omit(base, ["expiresAt"]),
               fields,
-              ...(base.grant === "client_credentials" || refreshToken === undefined
-                ? {}
-                : { refreshToken }),
+              ...(isMachineGrant(base) || refreshToken === undefined ? {} : { refreshToken }),
               ...expiry(updatedAt.getTime(), tokens.expires_in),
             }).pipe(Effect.flatMap((updated) => encrypt(account.id, updated)));
           const renewed = yield* renewedFrom(grant);
@@ -2720,7 +2896,7 @@ export const makeOAuth = (
       if (!row.status.startsWith("ready_")) return;
       const now = yield* Clock.currentTimeMillis;
       const grant = yield* decrypt(account.id, row.encrypted, OAuthGrant);
-      const renewable = grant.grant === "client_credentials" || grant.refreshToken !== undefined;
+      const renewable = isMachineGrant(grant) || grant.refreshToken !== undefined;
       if (
         grant.expiresAt === undefined ||
         grant.expiresAt > now + 30_000 ||
@@ -2958,7 +3134,8 @@ export const makeOAuth = (
         const stored = yield* decrypt(removed.account, removed.encrypted, OAuthGrant);
         // A grant to the operator's client is revoked at the client's configured endpoint.
         const grant = yield* operatingGrant(stored);
-        if (grant === undefined) return "unsupported" as const;
+        // A service account key has no token to revoke; deleting the key revokes it at the provider.
+        if (grant === undefined || grant.grant === "jwt_bearer") return "unsupported" as const;
         return yield* revokeTokens(grant, {
           refreshToken: grant.grant === "client_credentials" ? undefined : grant.refreshToken,
           accessToken: grant.fields["access_token"],
@@ -2999,7 +3176,8 @@ export const makeOAuth = (
       );
       if (row === null) return { revocation: "manual" as const };
       const grant = yield* operatingGrant(yield* decrypt(account, row.encrypted, OAuthGrant));
-      if (grant === undefined) return { revocation: "manual" as const };
+      if (grant === undefined || grant.grant === "jwt_bearer")
+        return { revocation: "manual" as const };
       const accessToken = grant.fields["access_token"];
       const token =
         (grant.grant !== "client_credentials" && grant.refreshToken !== undefined) ||
@@ -3059,6 +3237,9 @@ export const makeOAuth = (
         method: input.method,
         redirectUri: input.redirectUri,
       });
+      // Another product's grants are never service account keys.
+      if (discovered.grant === "jwt_bearer")
+        return yield* new OAuthSetupFailed({ reason: "unsupported" });
       const { renewal } = input;
       const firstParty =
         "firstParty" in input

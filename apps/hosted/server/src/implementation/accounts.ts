@@ -152,9 +152,9 @@ export const oauthSetup = (
     )
       return yield* new OrganizationForbidden();
     const setup = yield* executor.accountConnections.oauthSetup({ ...input, owner });
-    // Client credentials clients are each account's own; only browser sign-in shares clients.
+    // Machine grants hold their own credentials; only browser sign-in shares clients.
     const clients =
-      setup.grant === "client_credentials"
+      setup.grant === "client_credentials" || setup.grant === "jwt_bearer"
         ? []
         : yield* usableOAuthClients(executor, owner, yield* currentResourceAuthority, setup.issuer);
     return { ...setup, clients };
