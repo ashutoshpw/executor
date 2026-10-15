@@ -144,14 +144,15 @@ export default defineApp({user: { accounts:{service} }},async({user: { accounts 
             sub: delegate,
             scope: scopes.join(" "),
             aud: issuer.tokenUrl,
-            issuedSkew: expect.any(Number),
-            lifetime: expect.any(Number),
+            issuedAge: expect.any(Number),
+            lifetime: 3300,
           },
         ]);
         const [assertion] = connected.observed;
-        expect(assertion?.issuedSkew).toBeLessThanOrEqual(60);
-        expect(assertion?.lifetime).toBeGreaterThan(0);
-        expect(assertion?.lifetime).toBeLessThanOrEqual(3600);
+        // The assertion is backdated so a host clock a little ahead is not refused, and it stays
+        // within the hour providers allow. The service refuses any other window.
+        expect(assertion?.issuedAge).toBeGreaterThanOrEqual(60);
+        expect(assertion?.issuedAge).toBeLessThan(120);
 
         // The app sees the access token and nothing of the key, and the token is cached.
         const shown: unknown[] = [started.body];
@@ -331,6 +332,109 @@ export default defineApp({user: { accounts:{service} }},async({user: { accounts 
         expect(refused.status, JSON.stringify(refused.body)).toBe(409);
         expect((yield* body(Failure, refused))._tag).toBe("OAuthReconnectRequired");
         expect(JSON.stringify(refused.body).includes("PRIVATE KEY")).toBe(false);
+      }),
+    ),
+  );
+
+  it.effect(scenarios.oauthServiceAccountRenewal.title, (context) =>
+    withHostedCase(
+      context,
+      Effect.gen(function* () {
+        const api = yield* Api,
+          actors = yield* Actors;
+        const issuer = yield* serviceAccountIssuer;
+        const prefix = `/api/organizations/${actors.organization.id}`;
+        const app = yield* deployApp(issuer.tokenUrl, issuer.origin, "optional", "Renewal");
+        const call = () =>
+          Effect.gen(function* () {
+            const read = yield* api.request(
+              actors.owner,
+              "POST",
+              `${prefix}/apps/${app.id}/tools/call`,
+              {
+                tool: "read",
+                kind: "query",
+                input: {},
+              },
+            );
+            expect(read.status, JSON.stringify(read.body)).toBe(200);
+            return yield* body(Read, read);
+          });
+
+        // A token that lives an hour is held, however often it is read.
+        yield* issuer.configure({ expiresIn: 3600 });
+        const first = yield* connect(app.id, { client: { serviceAccountKey: issuer.keyJson() } });
+        expect(first.started.status, JSON.stringify(first.started.body)).toBe(200);
+        const completed = yield* body(Completed, first.started);
+        yield* Effect.addFinalizer(() =>
+          api
+            .request(actors.owner, "DELETE", `${prefix}/accounts/${completed.account.id}`)
+            .pipe(Effect.orDie),
+        );
+        for (let attempt = 0; attempt < 5; attempt++) expect((yield* call()).generation).toBe(1);
+        expect((yield* issuer.metrics).requests).toBe(1);
+
+        // Reconnecting with a token the host must renew at once, then reading concurrently:
+        // one assertion reaches the service, and every read sees the token it issued.
+        yield* issuer.configure({ expiresIn: 20 });
+        const again = yield* connect(app.id, {}, completed.account.id);
+        expect(again.started.status, JSON.stringify(again.started.body)).toBe(200);
+        const before = yield* issuer.metrics;
+        expect(before.requests).toBe(2);
+        yield* issuer.configure({ expiresIn: 3600 });
+        const reads = yield* Effect.all(
+          Array.from({ length: 6 }, () => call()),
+          { concurrency: "unbounded" },
+        );
+        const after = yield* issuer.metrics;
+        expect(after.requests).toBe(before.requests + 1);
+        expect(reads.every((read) => read.authenticated)).toBe(true);
+        expect(new Set(reads.map((read) => read.generation)).size).toBe(1);
+        expect(reads[0]?.generation).toBe(before.generation + 1);
+        // The renewed token is the long-lived one: later reads send nothing.
+        expect((yield* call()).generation).toBe(before.generation + 1);
+        expect((yield* issuer.metrics).requests).toBe(after.requests);
+      }),
+    ),
+  );
+
+  it.effect(scenarios.oauthServiceAccountClock.title, (context) =>
+    withHostedCase(
+      context,
+      Effect.gen(function* () {
+        const api = yield* Api,
+          actors = yield* Actors;
+        const issuer = yield* serviceAccountIssuer;
+        const prefix = `/api/organizations/${actors.organization.id}`;
+        const app = yield* deployApp(issuer.tokenUrl, issuer.origin, "optional", "Clock");
+
+        // A provider clock 30 seconds behind the host's would refuse an assertion issued "now".
+        yield* issuer.configure({ clockOffset: -30 });
+        const behind = yield* connect(app.id, { client: { serviceAccountKey: issuer.keyJson() } });
+        expect(behind.started.status, JSON.stringify(behind.started.body)).toBe(200);
+        const completed = yield* body(Completed, behind.started);
+        yield* Effect.addFinalizer(() =>
+          api
+            .request(actors.owner, "DELETE", `${prefix}/accounts/${completed.account.id}`)
+            .pipe(Effect.orDie),
+        );
+        const accepted = (yield* issuer.metrics).observed.at(-1);
+        expect(accepted?.issuedAge).toBeGreaterThanOrEqual(30);
+
+        // One far behind is refused with the provider's own answer, and nothing is saved.
+        yield* issuer.configure({ clockOffset: -600 });
+        const far = yield* connect(
+          app.id,
+          { client: { serviceAccountKey: issuer.keyJson() } },
+          completed.account.id,
+        );
+        expect(far.started.status, JSON.stringify(far.started.body)).toBe(422);
+        expect(far.started.body).toMatchObject({
+          _tag: "OAuthSetupFailed",
+          reason: "token_exchange",
+          cause: { stage: "jwtBearer", status: 400, providerError: "invalid_grant" },
+        });
+        expect((yield* issuer.metrics).observed.at(-1)?.issuedAge).toBeLessThan(0);
       }),
     ),
   );

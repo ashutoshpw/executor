@@ -25,8 +25,8 @@ export interface ObservedAssertion {
   readonly sub: unknown;
   readonly scope: unknown;
   readonly aud: unknown;
-  /** Seconds between the assertion's `iat` and the service's clock. */
-  readonly issuedSkew: number | undefined;
+  /** Seconds the assertion's `iat` is behind the service's clock; negative when it is ahead. */
+  readonly issuedAge: number | undefined;
   /** Seconds the assertion is valid for. */
   readonly lifetime: number | undefined;
 }
@@ -52,14 +52,27 @@ const decodeSegment = (segment: string): Record<string, unknown> => {
   }
 };
 
-/** Token issuance and resource access use actual HTTP; renewal is visible through the token generation. */
+/** Seconds an `iat` may be ahead of the service's clock, as providers allow for clock drift. */
+const futureTolerance = 5;
+/** The longest an assertion may be valid for, as providers allow. */
+const maxLifetime = 3600;
+
+/**
+ * Token issuance and resource access use actual HTTP; renewal is visible through the token
+ * generation. Like a real provider it refuses an assertion that is expired, issued in its future,
+ * valid for over an hour, or addressed to another audience or issuer.
+ */
 export const serviceAccountIssuer = Effect.gen(function* () {
   const address = yield* Deferred.make<string>();
   const trusted = pair();
   const unrelated = pair();
   const publicKey = createPublicKey(trusted.publicKey);
   let expiresIn = 3600;
+  /** The token endpoint's own URL, which an assertion must name as its audience. */
+  let tokenUrl = "";
   let reject: "invalid_grant" | "unauthorized_client" | "server_error" | undefined;
+  /** The service's clock minus the host's, in seconds; negative is a provider behind the host. */
+  let clockOffset = 0;
   let requests = 0;
   let generation = 0;
   const tokens = new Map<string, { generation: number; expiresAt: number }>();
@@ -73,6 +86,7 @@ export const serviceAccountIssuer = Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
         const parameters = new URLSearchParams(yield* request.text);
         const now = yield* Clock.currentTimeMillis;
+        const serviceSeconds = Math.floor(now / 1000) + clockOffset;
         const [header = "", claims = "", signature = ""] = (
           parameters.get("assertion") ?? ""
         ).split(".");
@@ -103,7 +117,7 @@ export const serviceAccountIssuer = Effect.gen(function* () {
           sub: body["sub"],
           scope: body["scope"],
           aud: body["aud"],
-          issuedSkew: iat === undefined ? undefined : Math.abs(iat - Math.floor(now / 1000)),
+          issuedAge: iat === undefined ? undefined : serviceSeconds - iat,
           lifetime: iat === undefined || exp === undefined ? undefined : exp - iat,
         };
         observations.push(observed);
@@ -114,13 +128,27 @@ export const serviceAccountIssuer = Effect.gen(function* () {
             { error: reject, error_description: "Rejected by the synthetic token service." },
             { status: 400 },
           );
-        if (
+        const refusal =
           observed.grantType !== "urn:ietf:params:oauth:grant-type:jwt-bearer" ||
           !observed.signatureValid ||
           observed.alg !== "RS256"
-        )
+            ? "Invalid JWT Signature."
+            : iat === undefined || exp === undefined
+              ? "Invalid JWT: missing iat or exp."
+              : exp <= serviceSeconds
+                ? "Invalid JWT: expired."
+                : iat > serviceSeconds + futureTolerance
+                  ? "Invalid JWT: iat is not within a reasonable timeframe."
+                  : exp - iat > maxLifetime
+                    ? "Invalid JWT: exp is more than an hour after iat."
+                    : observed.aud !== tokenUrl
+                      ? "Invalid JWT: wrong audience."
+                      : observed.iss !== serviceAccountEmail
+                        ? "Invalid JWT: unknown issuer."
+                        : undefined;
+        if (refusal !== undefined)
           return yield* HttpServerResponse.json(
-            { error: "invalid_grant", error_description: "Invalid JWT Signature." },
+            { error: "invalid_grant", error_description: refusal },
             { status: 400 },
           );
         const token = `synthetic-sa-${++generation}`;
@@ -155,7 +183,7 @@ export const serviceAccountIssuer = Effect.gen(function* () {
   if (!("port" in server.address)) return yield* Effect.die("Token fixture needs a TCP listener");
   const origin = `http://127.0.0.1:${server.address.port}`;
   yield* Deferred.succeed(address, origin);
-  const tokenUrl = `${origin}/token`;
+  tokenUrl = `${origin}/token`;
   return {
     origin,
     tokenUrl,
@@ -191,9 +219,15 @@ export const serviceAccountIssuer = Effect.gen(function* () {
       trusted.privateKey.split("\n")[1] ?? "",
       unrelated.privateKey.split("\n")[1] ?? "",
     ],
-    configure: (input: { expiresIn?: number; reject?: typeof reject | "none" }) =>
+    configure: (input: {
+      expiresIn?: number;
+      reject?: typeof reject | "none";
+      /** Seconds the service's clock is ahead (positive) of or behind (negative) the host's. */
+      clockOffset?: number;
+    }) =>
       Effect.sync(() => {
         if (input.expiresIn !== undefined) expiresIn = input.expiresIn;
+        if (input.clockOffset !== undefined) clockOffset = input.clockOffset;
         if (input.reject !== undefined) reject = input.reject === "none" ? undefined : input.reject;
       }),
     metrics: Effect.sync(() => ({

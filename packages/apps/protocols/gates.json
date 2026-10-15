@@ -18,7 +18,12 @@
     {
       "message": "accounts",
       "protocols": [6, 7, 8, 9, 10, 11, 12],
-      "adapter": "Every adapter for protocols 1 to 12 sends a bundle its invocation's user accounts as the flat record it reads, in the invocation (whose accounts protocols 1 to 5 carry only there) and in workflow step contexts. Such a bundle declares no app requirements, so it has no app accounts."
+      "adapter": "Every adapter for protocols 1 to 12 sends a bundle its invocation's user accounts as the flat record it reads, in the invocation (whose accounts protocols 1 to 5 carry only there) and in workflow step contexts. Such a bundle declares no app requirements, so it has no app accounts. Their accounts also carry a jwt_bearer provider as the secrets method it behaves as, like protocol 13's."
+    },
+    {
+      "message": "accounts",
+      "protocols": [13],
+      "adapter": "The protocol 13 adapter sends an account whose provider signs in with a service account key (the oauth2 method with grant jwt_bearer) as the secrets method it behaves as: the same fields, exposure and placements, labelled Service account. Its bundles never declare that method, so the invocation and workflow step contexts carry no member they reject."
     }
   ],
   "additions": [

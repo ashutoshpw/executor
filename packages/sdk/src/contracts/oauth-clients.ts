@@ -58,14 +58,29 @@ export const OAuthClientReference = Schema.Struct({ id: OAuthClientId });
  */
 export const OAuthAutomaticClient = Schema.Struct({ automatic: Schema.Literal(true) });
 
+/** The longest service account key file Executor accepts, in characters. Real keys are about 2.4 KiB. */
+export const maxServiceAccountKeyLength = 16 * 1024;
+
+/**
+ * The user a service account acts for (domain-wide delegation): an email address, at most 320
+ * characters, with no surrounding or inner whitespace. Refused at the contract so every product
+ * gives the same answer, instead of a provider's opaque `invalid_grant` later.
+ */
+export const OAuthServiceAccountSubject = Schema.String.check(
+  Schema.isMaxLength(320),
+  Schema.isPattern(/^[^\s@]+@[^\s@]+$/u),
+);
+
 /**
  * A service account key entered for one connection of a JWT bearer method, with the user it acts
  * for when the method allows one. Write-only like a client secret: it lives only encrypted on the
  * account's grant, is never stored as a client, and no operation returns it.
  */
 export const OAuthServiceAccountEntry = Schema.Struct({
-  serviceAccountKey: Schema.RedactedFromValue(Schema.NonEmptyString),
-  subject: Schema.optional(Schema.NonEmptyString),
+  serviceAccountKey: Schema.RedactedFromValue(
+    Schema.NonEmptyString.check(Schema.isMaxLength(maxServiceAccountKeyLength)),
+  ),
+  subject: Schema.optional(OAuthServiceAccountSubject),
 });
 export type OAuthServiceAccountEntry = typeof OAuthServiceAccountEntry.Type;
 
