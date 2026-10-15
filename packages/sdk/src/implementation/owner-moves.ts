@@ -249,7 +249,12 @@ export const makeOwnerMoves = (db: Query, credentials: Credentials): OwnerMoves 
             ),
           );
           // A grant to the operator's client holds no copy of it.
-          if (Option.isSome(grant) && !isFirstPartyGrant(grant.value))
+          // A service account key is not a client's credentials, so no copy of one moves.
+          if (
+            Option.isSome(grant) &&
+            !isFirstPartyGrant(grant.value) &&
+            grant.value.grant !== "jwt_bearer"
+          )
             copies.push({
               owner: account.owner,
               issuer: oauthClientIssuer(grant.value.server),

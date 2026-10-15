@@ -59,6 +59,17 @@ export const OAuthClientReference = Schema.Struct({ id: OAuthClientId });
 export const OAuthAutomaticClient = Schema.Struct({ automatic: Schema.Literal(true) });
 
 /**
+ * A service account key entered for one connection of a JWT bearer method, with the user it acts
+ * for when the method allows one. Write-only like a client secret: it lives only encrypted on the
+ * account's grant, is never stored as a client, and no operation returns it.
+ */
+export const OAuthServiceAccountEntry = Schema.Struct({
+  serviceAccountKey: Schema.RedactedFromValue(Schema.NonEmptyString),
+  subject: Schema.optional(Schema.NonEmptyString),
+});
+export type OAuthServiceAccountEntry = typeof OAuthServiceAccountEntry.Type;
+
+/**
  * The client a connection signs in with: a stored client of its owner, the automatic client, or
  * one entered for this connection alone. An entered client lives only on the account's grant
  * unless `save` registers it, under the connection's owner, once sign-in succeeds. Client
@@ -68,6 +79,7 @@ export const OAuthClientChoice = Schema.Union([
   OAuthClientReference,
   OAuthAutomaticClient,
   Schema.Struct({ ...OAuthClientInput.fields, save: Schema.optional(Schema.Boolean) }),
+  OAuthServiceAccountEntry,
 ]);
 export type OAuthClientChoice = typeof OAuthClientChoice.Type;
 
@@ -76,6 +88,7 @@ export const OAuthClientSelection = Schema.Union([
   OAuthClientReference,
   OAuthAutomaticClient,
   OAuthClientInput,
+  OAuthServiceAccountEntry,
 ]);
 export type OAuthClientSelection = typeof OAuthClientSelection.Type;
 
@@ -87,6 +100,7 @@ const clients = { clients: Schema.Array(OAuthClient) };
 export const OAuthConnectOptions = Schema.Union([
   Schema.Struct({ ...OAuthClientSetup.members[0].fields, ...clients }),
   Schema.Struct({ ...OAuthClientSetup.members[1].fields, ...clients }),
+  Schema.Struct({ ...OAuthClientSetup.members[2].fields, ...clients }),
 ]);
 export type OAuthConnectOptions = typeof OAuthConnectOptions.Type;
 

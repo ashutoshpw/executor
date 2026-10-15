@@ -76,6 +76,15 @@ export const OAuthClientSetup = Schema.Union([
     grant: Schema.Literal("client_credentials"),
     tokenEndpointAuthMethod: OAuthSecretClientAuth,
   }),
+  /**
+   * A service account key is pasted for each connection; no client is asked for or stored.
+   * `subject` says whether the form asks for a user to impersonate.
+   */
+  Schema.Struct({
+    ...clientSetup,
+    grant: Schema.Literal("jwt_bearer"),
+    subject: Schema.Literals(["optional", "required"]),
+  }),
 ]);
 export type OAuthClientSetup = typeof OAuthClientSetup.Type;
 /** Inspect the sign-in method for one provider and callback; stored clients are listed separately. */
@@ -142,6 +151,7 @@ export const OAuthFailureCause = Schema.Struct({
     "authorize",
     "exchange",
     "clientCredentials",
+    "jwtBearer",
     "refresh",
   ]),
   status: Schema.optional(Schema.Int),
@@ -505,6 +515,9 @@ export const OAuthSetupFailed = UserFacingError.define({
       "invalid_redirect",
       "token_exchange",
       "unsupported",
+      "invalid_service_account_key",
+      "token_url_mismatch",
+      "subject_required",
     ]),
     /** Executor's own public callback, which some services must approve. Forms show it with client entry. */
     callbackUrl: Schema.optional(HttpUrl),
@@ -653,6 +666,39 @@ export const OAuthSetupFailed = UserFacingError.define({
                 "Inspect the app’s OAuth token endpoint, client authentication method, callback configuration, and authorization flow. Check for an expired or already-used authorization code without printing it. Fix verified configuration errors and start a fresh user sign-in when needed; never replay a consumed code.",
             },
             retryable: true,
+          },
+          invalid_service_account_key: {
+            title: "Service account key not valid",
+            description:
+              "The pasted key is not a service account key Executor can sign with. Executor never shows it back.",
+            recovery: {
+              action: "Download a new JSON key for the service account and paste all of it.",
+              instructions:
+                "The pasted text must be the service account's JSON key file: type service_account, with client_email and a PKCS#8 RSA private_key. Create a new JSON key for the service account in the provider's console and paste the whole file. Never print or ask for the key's contents in chat.",
+            },
+            agentFixable: false,
+          },
+          token_url_mismatch: {
+            title: "Service account key is for another token endpoint",
+            description:
+              "The key names a different token endpoint than the one this app signs in at.",
+            recovery: {
+              action:
+                "Use a key for this service, or ask the app’s author to declare its endpoint.",
+              instructions:
+                "Compare the key's token_uri with the tokenUrl the app's provider declares. They must be the same URL. Keys created long ago may name an older endpoint; if so, the app's declaration must use that URL. Do not weaken the check.",
+            },
+            agentFixable: false,
+          },
+          subject_required: {
+            title: "User to impersonate needed",
+            description: "This app needs the email of the user the service account acts for.",
+            recovery: {
+              action: "Enter the user’s email and connect again.",
+              instructions:
+                "The app's provider declares subject: required, so domain-wide delegation needs the email address of the user to impersonate. Ask the person for it and connect again with that subject.",
+            },
+            agentFixable: false,
           },
           unsupported: {
             title: "Sign-in method unavailable",
@@ -1366,6 +1412,19 @@ const grantFields = {
  * current generation, since every sign-in since then records it.
  */
 const grantGeneration = Schema.optional(Schema.Int);
+/**
+ * A service account key as the grant keeps it: only what signing needs. The rest of the key file,
+ * such as its project and client IDs, is dropped. Stored encrypted with the grant, never in the
+ * account's fields.
+ */
+export const OAuthJwtBearerKey = Schema.Struct({
+  clientEmail: Schema.NonEmptyString,
+  /** PKCS#8 PEM of an RSA private key. */
+  privateKey: Schema.NonEmptyString,
+  privateKeyId: Schema.optionalKey(Schema.NonEmptyString),
+});
+export type OAuthJwtBearerKey = typeof OAuthJwtBearerKey.Type;
+
 /** Private renewal context; machine grants retain scopes and exchange client credentials again. */
 export const OAuthGrant = Schema.Union([
   Schema.Struct({
@@ -1397,6 +1456,20 @@ export const OAuthGrant = Schema.Union([
     generation: grantGeneration,
   }),
   /**
+   * A service account key signing RFC 7523 assertions. It has no refresh token: renewal signs a new
+   * assertion with the key. `subject` is the user it acts for, when the connection named one.
+   */
+  Schema.Struct({
+    ...grantFields,
+    grant: Schema.Literal("jwt_bearer"),
+    tokenUrl: HttpUrl,
+    key: OAuthJwtBearerKey,
+    subject: Schema.optionalKey(Schema.NonEmptyString),
+    scopes: Schema.Array(Schema.String),
+    scopeSeparator: Schema.optional(Schema.NonEmptyString),
+    generation: grantGeneration,
+  }),
+  /**
    * A grant issued to the operator's client named by `firstParty`; its access token is managed. It
    * keeps no server or client; renewal and revocation read both from the operator's current
    * configuration. Without them, a server that knows no operator clients cannot decode the grant,
@@ -1418,6 +1491,14 @@ export const OAuthGrant = Schema.Union([
   }),
 ]);
 export type OAuthGrant = typeof OAuthGrant.Type;
+/** A grant that has no refresh token and signs in again from what it keeps: no user is involved. */
+export type OAuthMachineGrant = Extract<
+  OAuthGrant,
+  { readonly grant: "client_credentials" | "jwt_bearer" }
+>;
+/** Whether a grant renews by exchanging what it keeps, rather than a refresh token. */
+export const isMachineGrant = (grant: OAuthGrant): grant is OAuthMachineGrant =>
+  grant.grant === "client_credentials" || grant.grant === "jwt_bearer";
 /** A grant issued to the operator's client. */
 export type OAuthFirstPartyGrant = Extract<
   OAuthGrant,

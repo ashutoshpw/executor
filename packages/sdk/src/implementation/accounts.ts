@@ -8,7 +8,7 @@ import {
   type AccountSignIn,
   type ManagedAccountInputs,
 } from "../contracts/account.ts";
-import { OAuthGrant } from "../contracts/oauth.ts";
+import { isMachineGrant, OAuthGrant } from "../contracts/oauth.ts";
 import type { Executor, ResourceLifecycle } from "../contracts/executor.ts";
 import { Provider, ProviderNotFound } from "../contracts/provider.ts";
 import { AccountId, StorageError, type OwnerId, type ProviderId } from "../contracts/shared.ts";
@@ -321,9 +321,7 @@ export const makeAccounts = (
       if (decoded._tag === "None") return unavailable;
       const saved = decoded.value;
       const reconnectAt =
-        saved.grant !== "client_credentials" &&
-        saved.refreshToken === undefined &&
-        saved.expiresAt !== undefined
+        !isMachineGrant(saved) && saved.refreshToken === undefined && saved.expiresAt !== undefined
           ? new Date(saved.expiresAt)
           : null;
       const now = yield* Clock.currentTimeMillis;

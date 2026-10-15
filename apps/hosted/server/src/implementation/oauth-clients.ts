@@ -45,9 +45,11 @@ const administrator = Effect.gen(function* () {
   return actor;
 });
 
-/** A browser sign-in method: an OAuth method other than client credentials. */
+/** A browser sign-in method: an OAuth method other than the machine grants. */
 const signsInWithClient = (method: { readonly type: string; readonly grant?: string }) =>
-  method.type === "oauth2" && method.grant !== "client_credentials";
+  method.type === "oauth2" &&
+  method.grant !== "client_credentials" &&
+  method.grant !== "jwt_bearer";
 
 /**
  * Every client of the organization with its policy, and the authorization servers its apps sign in

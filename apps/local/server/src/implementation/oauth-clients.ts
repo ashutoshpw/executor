@@ -5,6 +5,7 @@
 import {
   OAuthAutomaticClient,
   OAuthClientReference,
+  OAuthServiceAccountEntry,
   type AccountConnection,
   type Executor,
   type OAuthClientChoice,
@@ -19,9 +20,9 @@ export const connectOptions = (
 ) =>
   Effect.gen(function* () {
     const setup = yield* executor.accountConnections.oauthSetup(input);
-    // Automatic clients are offered as the automatic choice; machine clients are never kept.
+    // Automatic clients are offered as the automatic choice; machine credentials are never kept.
     const clients =
-      setup.grant === "client_credentials"
+      setup.grant === "client_credentials" || setup.grant === "jwt_bearer"
         ? []
         : (yield* executor.oauthClients.list({
             owner: input.owner,
@@ -43,7 +44,8 @@ export const connectionClient = (
     if (
       selected === undefined ||
       Schema.is(OAuthAutomaticClient)(selected) ||
-      Schema.is(OAuthClientReference)(selected)
+      Schema.is(OAuthClientReference)(selected) ||
+      Schema.is(OAuthServiceAccountEntry)(selected)
     )
       return selected;
     const method = Object.hasOwn(connection.provider.definition.auth, input.method)

@@ -20,6 +20,7 @@ import type { AccountSlots, BoundAccounts, ScopedSlots } from "../contracts/app.
 import type { AppIcons } from "../contracts/icons.ts";
 import {
   DeclaredProvider,
+  sentProvider,
   DeclaredRequirements,
   type DeclaredAccountSlots,
   InvocationDeadline,
@@ -302,7 +303,7 @@ function bindScope(
         ids.add(account.id);
         if (
           canonical(withoutGrants(account.provider)) !==
-            canonical(withoutGrants(requirement.definition)) ||
+            canonical(withoutGrants(sentProvider(requirement.definition))) ||
           !Object.hasOwn(provider.auth, account.method)
         )
           return yield* Effect.fail(new HostAccountsInvalid());

@@ -27,10 +27,13 @@ export const secrets = <Fields extends Schema.Decoder<unknown>>(options: {
  * discovered or declared endpoints by `discover`. Only that form explains an invalid declaration.
  */
 const clientCredentials = Schema.is(Schema.Struct({ grant: Schema.Literal("client_credentials") }));
+const jwtBearer = Schema.is(Schema.Struct({ grant: Schema.Literal("jwt_bearer") }));
 const oauth2Form = (config: unknown) => {
-  const [discovered, declared, discoveredMachine, declaredMachine] = OAuth2Config.members;
+  const [discovered, declared, discoveredMachine, declaredMachine, serviceAccount] =
+    OAuth2Config.members;
   const discovers =
     typeof config === "object" && config !== null && Object.hasOwn(config, "discover");
+  if (jwtBearer(config)) return serviceAccount;
   if (clientCredentials(config)) return discovers ? discoveredMachine : declaredMachine;
   return discovers ? discovered : declared;
 };
