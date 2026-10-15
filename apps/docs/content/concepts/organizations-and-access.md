@@ -49,9 +49,44 @@ provider when one is configured.
 ## Slugs
 
 An organization has a slug: lowercase letters, numbers and hyphens, up to 80
-characters. Dashboard URLs are built from it, as `/org/<slug>/...`. If the slug
+characters. Dashboard URLs are built from it (see [Dashboard URLs](#dashboard-urls)). If the slug
 you want is taken, Executor adds a short random suffix. Changing a slug does not
 leave a redirect behind, so old links stop working.
+
+## Dashboard URLs
+
+Every dashboard page lives under `https://<host>/org/<slug>`. There is no
+`/apps/<id>` dashboard path: an app's page is `/org/<slug>/apps/<appId>`. Use a
+URL that a tool or API returned when you have one. Otherwise build it from the
+table. On Executor Cloud, a bare `/apps` is the marketing site, not the
+dashboard.
+
+The slug is the organization's `slug`, shown on the organization page
+(`/org/<slug>/organization`) and as the segment after `/org/` in any dashboard
+URL you are already on. For an app's own page, the `appUi.location` tool returns
+`https://<app>.<org-slug>.executor.website` on Cloud, which is the app's UI and
+not its dashboard page.
+
+| Page | Path after `/org/<slug>` |
+| --- | --- |
+| Home | `/` |
+| Apps | `/apps` |
+| An app | `/apps/<appId>` (`?view=accounts` for its accounts tab) |
+| An app's setup | `/apps/<appId>/setup` |
+| Add an app | `/apps/add`, and `/apps/add/custom` for a custom app |
+| Accounts | `/accounts` |
+| Connect | `/connect` |
+| A connection | `/connections/<connectionId>` |
+| Approvals | `/approvals`, and `/approvals/<runId>` for one run |
+| Files | `/files` |
+| Groups | `/groups`, and `/groups/<groupId>` for one group |
+| API keys | `/api-keys` |
+| Members and settings | `/organization` |
+| A webhook subscription | `/webhooks/<appId>/<subscriptionId>` |
+| Billing (Cloud only) | `/billing` |
+
+Pages outside an organization have no prefix: `/account/*` (profile, security,
+tokens), `/login`, `/invite` and `/device`.
 
 ## Access is never implicit
 

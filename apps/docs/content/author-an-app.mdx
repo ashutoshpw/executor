@@ -601,7 +601,9 @@ return await tools.executor.appUi.location({
 });
 ```
 
-Open the returned `url` in a browser. Executor Cloud uses
+Open the returned `url` in a browser. It is the app's own page, not its dashboard
+page, which is `/org/<slug>/apps/<appId>` (see
+[Dashboard URLs](/concepts/organizations-and-access#dashboard-urls)). Executor Cloud uses
 `https://<app-slug>.<org-slug>.executor.website`; self-host uses its configured
 app domain. Use the returned URL instead of guessing it. A null URL with
 `status: "unavailable"` gives a `reason`: `"no_ui"` when the app has no UI, or

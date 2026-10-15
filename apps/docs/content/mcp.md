@@ -153,7 +153,7 @@ connect it through a scoped connection instead.
 ## Scoped connections
 
 A **scoped connection** is a named MCP URL that reaches only what you turned on.
-Create one under **Scoped connections** on the dashboard's Connect page. For
+Create one under **Scoped connections** on the dashboard's Connect page (`/org/<slug>/connect`). For
 each app, choose which of the accounts you linked to it the connection runs as,
 or none for an app without accounts, and which tools it exposes: all tools, read-only tools, or the tools
 you pick. All and read-only include tools the app adds later. Approval rules
