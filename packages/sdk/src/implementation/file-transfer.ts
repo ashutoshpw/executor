@@ -124,7 +124,11 @@ export const downloadHandle = (options: {
 > => {
   const { store, handles } = options.userContent;
   return Effect.gen(function* () {
-    const found = yield* handles.stat({ owner: options.owner, id: options.id });
+    const found = yield* handles.stat({
+      owner: options.owner,
+      id: options.id,
+      visible: options.visible,
+    });
     if (options.expectedSha256 !== undefined && options.expectedSha256 !== found.handle.sha256)
       return yield* new BlobNotFound({ id: options.id });
     if (options.visible !== undefined && !options.visible(found.creator))
