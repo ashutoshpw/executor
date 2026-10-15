@@ -1,7 +1,7 @@
 /**
  * The organization's task insights setting: stored per organization, with arguments off by default.
- * The recorder reads it for every tool call through a short cache, so a change reaches new calls
- * within seconds.
+ * The recorder reads it for every tool call through a short cache; a save replaces the cached value
+ * at once, so a change reaches new calls immediately on this server.
  */
 import { Clock, Effect, Schema } from "effect";
 import { SqlClient } from "effect/sql";
@@ -74,23 +74,36 @@ const cacheMillis = 30_000;
 const failureCacheMillis = 10_000;
 const cached = new Map<
   string,
-  { readonly until: number; readonly settings: TaskInsightsSettingsFields }
+  { readonly until: number; readonly settings: TaskInsightsSettingsFields | undefined }
 >();
+/**
+ * Bumped for an organization each time its setting is saved. A reader that started before a save
+ * must not write its older value over the saved one, so it caches only if the number is unchanged.
+ */
+const generations = new Map<string, number>();
+const generationOf = (organizationId: string) => generations.get(organizationId) ?? 0;
 
-/** Drop a cached setting so the next call reads the saved one. */
-export const forgetTaskInsightsSettings = (organizationId: string) => {
-  cached.delete(organizationId);
-};
+/** A saved setting is what the recorder applies from now on, not after the cache expires. */
+const publishTaskInsightsSettings = (
+  organizationId: string,
+  settings: TaskInsightsSettingsFields,
+) =>
+  Effect.gen(function* () {
+    const now = yield* Clock.currentTimeMillis;
+    generations.set(organizationId, generationOf(organizationId) + 1);
+    cached.set(organizationId, { until: now + cacheMillis, settings });
+  });
 
 /**
- * The setting the recorder applies to a call. Read through a short cache; a database that cannot
- * be read means arguments are not recorded.
+ * The setting the recorder applies to a call, read through a short cache, or undefined when the
+ * database cannot be read.
  */
-export const recordingSettings = (organizationId: string) =>
+export const readableRecordingSettings = (organizationId: string) =>
   Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
     const hit = cached.get(organizationId);
     if (hit !== undefined && hit.until > now) return hit.settings;
+    const started = generationOf(organizationId);
     const database = yield* Effect.serviceOption(GroupDatabase);
     const settings: TaskInsightsSettingsFields | undefined =
       database._tag === "None"
@@ -99,12 +112,19 @@ export const recordingSettings = (organizationId: string) =>
             Effect.flatMap((sql) => readTaskInsightsSettings(sql, organizationId)),
             Effect.orElseSucceed(() => undefined),
           );
-    cached.set(organizationId, {
-      until: now + (settings === undefined ? failureCacheMillis : cacheMillis),
-      settings: settings ?? defaultTaskInsightsSettings,
-    });
-    return settings ?? defaultTaskInsightsSettings;
+    if (generationOf(organizationId) === started)
+      cached.set(organizationId, {
+        until: now + (settings === undefined ? failureCacheMillis : cacheMillis),
+        settings,
+      });
+    return settings;
   });
+
+/** The setting the recorder applies to a call; a database that cannot be read means not recording. */
+export const recordingSettings = (organizationId: string) =>
+  readableRecordingSettings(organizationId).pipe(
+    Effect.map((settings) => settings ?? defaultTaskInsightsSettings),
+  );
 
 /** Trim, drop empty and repeated names (in any case), and check the bounds. */
 export const normalizeMaskedKeys = (keys: ReadonlyArray<string>) => {
@@ -201,9 +221,12 @@ export const hostedTaskInsightsSettingsHandlers = HttpApiBuilder.group(
               }),
             )
             .pipe(unavailable);
-          forgetTaskInsightsSettings(access.organization);
+          yield* publishTaskInsightsSettings(access.organization, next);
           const store = yield* UsageStore;
-          // A shorter retention applies now, not at the next scheduled sweep.
+          // Turning recording off removes what was stored, now rather than after retention.
+          if (before.recordArguments && !next.recordArguments)
+            yield* store.scrubArguments({ byOrganization: new Map([[access.organization, 0]]) });
+          else // A shorter retention applies now, not at the next scheduled sweep.
           if (next.retentionDays < before.retentionDays)
             yield* store.scrubArguments({
               byOrganization: new Map([[access.organization, next.retentionDays]]),
