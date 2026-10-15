@@ -296,7 +296,13 @@ export function PublishApp<E>({
     >
       {(metadata) =>
         metadata.canPublish ? (
-          <PublishAction app={app} atoms={atoms} Failure={Failure} />
+          <PublishAction
+            app={app}
+            atoms={atoms}
+            Failure={Failure}
+            // The scope is `<slug>.<domain>`; the slug has no dots.
+            domain={metadata.namespace?.slice(metadata.namespace.indexOf(".") + 1) ?? null}
+          />
         ) : (
           <Button variant="outline" disabledReason="Publishing is not available on this server.">
             Publish
@@ -312,8 +318,11 @@ function PublishAction<E>({
   app,
   atoms,
   Failure,
+  domain,
 }: AppManagementProps<E> & {
   readonly app: App;
+  /** The domain this server publishes under, from the organization's publishing scope. */
+  readonly domain: string | null;
 }) {
   const [open, setOpen] = useState(false);
   // After an in-dialog rename, review the saved revision instead of the one first opened.
@@ -343,8 +352,9 @@ function PublishAction<E>({
                 Anyone can find it in Add app and make their own copy.
               </DialogDescription>
               <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                For now, apps can only be published under executor.community. Claiming your own
-                domain is coming soon.
+                {domain === null || domain === "executor.community"
+                  ? "For now, apps can only be published under executor.community. Claiming your own domain is coming soon."
+                  : `Apps from this server are published under ${domain}.`}
               </p>
             </div>
             <QueryView

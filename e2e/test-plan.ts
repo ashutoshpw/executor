@@ -202,7 +202,9 @@ export const scenarios = plan({
     targets: {
       // Publishing needs app Git storage, which a local Cloud Worker cannot reach.
       cloud: { status: "scheduled", runtime: "attached" },
-      "self-host": na("Self-host does not publish apps."),
+      "self-host": na(
+        "This scenario cleans up with organization removal, which self-host lacks; self-host publishing is covered by selfHostPublishing.",
+      ),
       local: na("Local does not publish apps."),
     },
   },
@@ -3815,7 +3817,7 @@ export const scenarios = plan({
     fixtures: "actors",
     file: "app-public-files.spec.ts",
     title:
-      "Binary ui/public files saved through the API as base64 are served per version, an older version serves its own files, reads keep their blobs, and on Cloud a published commit installs with them",
+      "Binary ui/public files saved through the API as base64 are served per version, an older version serves its own files, reads keep their blobs, and a published commit installs with them",
     targets: {
       "self-host": scheduled,
       cloud: sourceStorageCloud,
@@ -7717,6 +7719,26 @@ export const scenarios = plan({
         "Cloud's Worker reads its collector address at start; only self-host starts a scenario-owned server.",
       ),
       local: na("Local uses the same relay; only self-host starts a scenario-owned server."),
+    },
+  },
+  selfHostPublishing: {
+    file: "self-host-publishing.spec.ts",
+    title:
+      "Self-host organizations publish apps to the server's own public catalog, which Add app shows beside the upstream registry",
+    targets: {
+      "self-host": scheduled,
+      cloud: na("Cloud publishing is covered by packageScopes; it has no upstream registry."),
+      local: na("Local does not publish apps."),
+    },
+  },
+  selfHostPublishingDomain: {
+    file: "self-host-publishing.spec.ts",
+    title:
+      "A self-host server publishes under its configured domain and refuses to start with an invalid one",
+    targets: {
+      "self-host": scheduled,
+      cloud: na("Cloud always publishes under executor.community."),
+      local: na("Local does not publish apps."),
     },
   },
   addAppRegistry: {

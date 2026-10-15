@@ -28,7 +28,9 @@ promise indefinite support for every past version.
 
 `defineApp` declares behavior and does not take a name. Set the package name
 in `package.json`, such as `"name": "@team.executor.community/calendar"` when
-publishing under the organization `team`. The name
+publishing under the organization `team` on Executor Cloud. A self-hosted server
+publishes under its own domain (`@team.<domain>/calendar`; see
+`EXECUTOR_PUBLISHING_DOMAIN`). The name
 you choose when creating or renaming an installed app is its editable display label.
 
 Write ordinary async TypeScript. You do not import Effect and you do not import
