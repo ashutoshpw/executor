@@ -383,6 +383,10 @@ it only to the party that should have the file, and never log it. Check
 `(await ctx.blobs.limits()).methods` for `"url"` first; a host that cannot sign links fails with
 `BlobUnavailable`.
 
+Return the handle from the tool and nothing else of the file. An agent reaches the file through
+the `resource_link` the MCP result carries (`resources/read`, up to the host's read limit), the
+signed link from `ctx.blobs.url`, or `executor files get`; never put file bytes in a result.
+
 Files are the organization's: two apps that store the same bytes share one handle, and another
 organization's handle reads as `BlobNotFound`. Files expire after the lifetime an organization
 owner or admin sets under Blob in the organization settings (seven days by default); an
