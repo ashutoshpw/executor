@@ -107,6 +107,9 @@ const get = Command.make("get", {
         return;
       }
       const path = args.output.value;
+      // The validator of the bytes a partial file holds, kept beside it so a resume can ask the
+      // host to continue only if the file is unchanged (`If-Range`).
+      const validatorPath = `${path}.etag`;
       const exists = yield* fs.exists(path);
       if (exists && !args.resume) return yield* new FilesFailed({ reason: "exists" });
       // Each attempt either completes the file or learns that the partial one cannot be continued.
@@ -118,26 +121,40 @@ const get = Command.make("get", {
         FileSystem.FileSystem
       > =>
         Effect.gen(function* () {
+          const validator =
+            offset > 0 && (yield* fs.exists(validatorPath))
+              ? (yield* fs.readFileString(validatorPath)).trim()
+              : "";
           const response = yield* client.execute(
             offset === 0
               ? HttpClientRequest.get(url)
-              : HttpClientRequest.get(url, { headers: { range: `bytes=${offset}-` } }),
+              : HttpClientRequest.get(url, {
+                  headers:
+                    validator === ""
+                      ? { range: `bytes=${offset}-` }
+                      : { range: `bytes=${offset}-`, "if-range": validator },
+                }),
           );
           if (response.status === 416 && offset > 0) {
             // The partial file is as long as the file, or longer: the first means it is complete.
             const size = /^bytes \*\/(\d+)$/u.exec(response.headers["content-range"] ?? "")?.[1];
             if (size !== undefined && Number(size) === offset) return response;
             yield* fs.remove(path);
+            yield* fs.remove(validatorPath, { force: true });
             return yield* download(0);
           }
           const ok = yield* HttpClientResponse.filterStatusOk(response);
-          // A host that ignored the range answered with the whole file.
+          // A host that ignored the range, or whose file changed since the partial was started
+          // (`If-Range`), answered with the whole file.
           const resumed = ok.status === 206 && offset > 0;
+          const etag = ok.headers.etag;
+          if (etag !== undefined) yield* fs.writeFileString(validatorPath, etag);
           yield* ok.stream.pipe(Stream.run(fs.sink(path, { flag: resumed ? "a" : "w" })));
           return ok;
         });
       const response = yield* download(exists ? yield* existingSize(path) : 0);
       const sha256 = yield* fileSha256(path);
+      yield* fs.remove(validatorPath, { force: true });
       const expected = checksumOf(response.headers.etag);
       if (expected !== undefined && expected !== sha256)
         return yield* new FilesFailed({ reason: "checksum" });

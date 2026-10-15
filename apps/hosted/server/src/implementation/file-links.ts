@@ -13,25 +13,43 @@ import { Effect, Schema } from "effect";
 import { HttpRouter } from "effect/http";
 import { HostedExecutor } from "../contracts/executor.ts";
 import { OrganizationId } from "../contracts/organization.ts";
+import { OrganizationTombstones } from "../contracts/organization-removal.ts";
 import { resourceAuthority } from "./resource-policy.ts";
 
 const organizationOwner = "organization:";
 const userSubject = "user:";
 const appSubject = "app:";
 
-/** Whether the user a link was issued for is still a member of the organization that owns it. */
+/**
+ * Whether the organization that owns a link is live and the user it was issued for is still a
+ * member. A removed organization is erased asynchronously, so its tombstone stands in for the
+ * records its workflow has not deleted yet, for user and app subjects alike. A tombstone read that
+ * fails refuses the link rather than serving an organization that is being erased.
+ */
 const stillAuthorized = (claims: { readonly owner: string; readonly subject: string }) => {
-  if (claims.subject.startsWith(appSubject)) return Effect.succeed(true);
-  if (!claims.subject.startsWith(userSubject) || !claims.owner.startsWith(organizationOwner))
+  const isApp = claims.subject.startsWith(appSubject);
+  if (
+    !claims.owner.startsWith(organizationOwner) ||
+    (!isApp && !claims.subject.startsWith(userSubject))
+  )
     return Effect.succeed(false);
   return Schema.decodeUnknownEffect(OrganizationId)(
     claims.owner.slice(organizationOwner.length),
   ).pipe(
     Effect.flatMap((organization) =>
-      resourceAuthority(organization, claims.subject.slice(userSubject.length)),
+      Effect.flatMap(OrganizationTombstones, (removed) => removed(organization)).pipe(
+        Effect.flatMap((gone) =>
+          gone
+            ? Effect.succeed(false)
+            : isApp
+              ? Effect.succeed(true)
+              : resourceAuthority(organization, claims.subject.slice(userSubject.length)).pipe(
+                  Effect.as(true),
+                  Effect.catchTag("OrganizationForbidden", () => Effect.succeed(false)),
+                ),
+        ),
+      ),
     ),
-    Effect.as(true),
-    Effect.catchTag("OrganizationForbidden", () => Effect.succeed(false)),
     Effect.catch(() => Effect.fail(new BlobUnavailable())),
   );
 };
