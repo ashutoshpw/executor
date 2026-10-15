@@ -256,15 +256,15 @@ layer(TestLive, { excludeTestServices: true })("Legacy targetless hosted connect
         yield* legacyStorage([
           // Step 9 runs again with steps 7 and 8; it creates the link table and converts profiles
           // idempotently, and none are left to convert.
-          { sql: `DELETE FROM private_hosted_migrations WHERE migration_id = 9` },
+          { sql: `DELETE FROM private_hosted_migrations WHERE migration_id >= 9` },
           // Before step 8 no client had an audience, whose rows name stored clients.
           { sql: `DROP TABLE hosted_oauth_client_groups, hosted_oauth_client_access` },
-          { sql: `DELETE FROM private_hosted_migrations WHERE migration_id = 8` },
+          { sql: `DELETE FROM private_hosted_migrations WHERE migration_id >= 8` },
           ...legacyRows(connection, ids),
           // Before step 7 the product's access rows could have no target either.
           { sql: `ALTER TABLE hosted_connection_access ALTER COLUMN target DROP NOT NULL` },
           {
-            sql: `DELETE FROM private_hosted_migrations WHERE migration_id = 7`,
+            sql: `DELETE FROM private_hosted_migrations WHERE migration_id >= 7`,
           },
           ...legacy.map((id) => ({
             sql: `INSERT INTO hosted_connection_access (connection_id, organization_id, creator_id, destination, target)
