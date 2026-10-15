@@ -82,13 +82,14 @@ export default defineApp({}, async ctx => ({
 ];
 
 /**
- * Deploy the file app to `organization` as `owner`, open to everyone there, and remove it with the
- * scope. With `database`, the app owns a database, so its calls run in its data facet.
+ * Deploy the file app to `organization` as `owner`, open to everyone there unless `audience` is
+ * `"private"` (usable by `owner` alone), and remove it with the scope. With `database`, the app owns
+ * a database, so its calls run in its data facet.
  */
 export const blobApp = (
   owner: Session,
   organization: string,
-  options: { readonly database?: boolean } = {},
+  options: { readonly database?: boolean; readonly audience?: "everyone" | "private" } = {},
 ) =>
   Effect.gen(function* () {
     const files = [...source, ...databaseFiles(options.database)];
@@ -110,7 +111,7 @@ export const blobApp = (
     expect(
       (yield* api.request(owner, "PATCH", `${path}/access`, {
         revision: access.revision,
-        audience: { kind: "everyone" },
+        audience: { kind: options.audience ?? "everyone" },
       })).status,
     ).toBe(200);
     /** The size of the JSON a call returned, for the claim that a tool result stays small. */

@@ -14,7 +14,7 @@ import { migrateOrganizationRemovals } from "./organization-removal-schema.ts";
 import { migrateApiKeyMemberships } from "./api-key-membership-schema.ts";
 import { queueExecutorAppUpgrades } from "./executor-app-upgrades.ts";
 import { migrateAppAccountLinks } from "./app-account-schema.ts";
-import { migrateFileHandles } from "./file-handle-schema.ts";
+import { migrateFileHandleListing, migrateFileHandles } from "./file-handle-schema.ts";
 
 /**
  * Migration failures stop startup; callers must not log the driver's secret-bearing cause. The
@@ -113,6 +113,8 @@ const hostedProductMigrations = migrateProductSteps("private_hosted_migrations",
   // Additive: user-content file handles and the organization's lifetime setting; the running
   // server never reads them.
   "10_file_handles": migrateFileHandles,
+  // Additive: an index for the Files page's newest-first listing; the running server never reads it.
+  "11_file_handle_listing": migrateFileHandleListing,
 });
 
 /**

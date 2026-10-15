@@ -109,6 +109,17 @@ export interface ClaimedFileHandle {
   readonly key: BlobKey;
 }
 
+/** A file as the Files page lists it. */
+export interface ListedFileHandle {
+  readonly handle: BlobHandle;
+  /** The app that stored it; undefined for an upload over HTTP or the CLI. */
+  readonly creator: string | undefined;
+  /** When the file was first stored, as an ISO-8601 string. */
+  readonly createdAt: string;
+  /** The time at full precision, so a page can continue exactly after this row. */
+  readonly createdAtExact: string;
+}
+
 /** Product-owned handle metadata. Every method fails with `BlobUnavailable` when storage does. */
 export interface FileHandleStore {
   /** Reserve a handle for `owner`. Nothing reads it until `commit`. */
@@ -159,6 +170,26 @@ export interface FileHandleStore {
     readonly id: string;
     readonly appId: string | undefined;
   }) => Effect.Effect<ClaimedFileHandle, BlobNotFound | BlobUnavailable>;
+  /**
+   * Administrative removal: hide a complete, unexpired file of `owner` whoever created it and
+   * return the row for removal. `BlobNotFound` when `owner` has no such file.
+   */
+  readonly retireAny: (input: {
+    readonly owner: string;
+    readonly id: string;
+  }) => Effect.Effect<ClaimedFileHandle, BlobNotFound | BlobUnavailable>;
+  /**
+   * The complete, unexpired files of `owner`, newest first. `creators` limits them to files stored
+   * by those apps (a file with no creator matches only `"any"`); `app` narrows further to one app.
+   * `after` continues behind a row of a previous page.
+   */
+  readonly list: (input: {
+    readonly owner: string;
+    readonly creators: ReadonlyArray<string> | "any";
+    readonly app?: string | undefined;
+    readonly limit: number;
+    readonly after?: { readonly createdAtExact: string; readonly id: string } | undefined;
+  }) => Effect.Effect<ReadonlyArray<ListedFileHandle>, BlobUnavailable>;
   /** Forget a row whose object is gone. */
   readonly finish: (id: string) => Effect.Effect<void, BlobUnavailable>;
   /**
