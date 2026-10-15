@@ -6,7 +6,9 @@
  * The fixture rebuilds the database as step 9 finds it inside the upgrade transaction. The
  * product's migration ledger is per step: SDK schema versions in FumaDB's settings and hosted
  * steps in `private_hosted_migrations`, which runs every step above its latest recorded one. The
- * fixture removes step 9's ledger row and the table step 9 creates, and writes the profiles an
+ * fixture removes step 9's ledger row and those of the later steps (10 and 11, which only create
+ * tables and an index with `if not exists`, so running them again is safe), and the table step 9
+ * creates, and writes the profiles an
  * older version left in `executor_installations`. SDK 4.0.13 and 4.0.14 stay applied because, in
  * a real upgrade, they have already run when step 9 starts, and 4.0.13 keeps
  * `executor_installations` unchanged for step 9. Step 9 reads only that table, apps, deployments,
@@ -58,6 +60,8 @@ const ledger = [
   "require_connection_targets",
   "oauth_client_access",
   "app_account_links",
+  "file_handles",
+  "file_handle_listing",
 ].map((name, index) => ({ migration_id: index + 1, name }));
 
 const AuthSession = Schema.Struct({ user: Schema.Struct({ id: Schema.String }) });
@@ -225,11 +229,12 @@ layer(HostedLive, { excludeTestServices: true })("Legacy profile links", (it) =>
         );
         yield* evidence.json("fixture.json", fixture);
 
-        // The database as step 9 finds it: profiles, no links, ledger through step 8.
+        // The database as step 9 finds it: profiles, no links, ledger through step 8. Later steps
+        // run again after it, as they would in an upgrade that reaches them for the first time.
         const [recorded, rolledBack] = yield* legacyStorage([
           { sql: "SELECT migration_id, name FROM private_hosted_migrations ORDER BY migration_id" },
           {
-            sql: "DELETE FROM private_hosted_migrations WHERE migration_id = 9 RETURNING migration_id",
+            sql: "DELETE FROM private_hosted_migrations WHERE migration_id >= 9 RETURNING migration_id",
           },
           { sql: "DROP TABLE hosted_app_account_links" },
           profile({
@@ -325,9 +330,12 @@ layer(HostedLive, { excludeTestServices: true })("Legacy profile links", (it) =>
             createdAt: "2026-01-08 00:00:00",
           }),
         ]);
-        // The fixture is an upgrade while step 9 is the latest hosted step.
+        // The fixture is an upgrade whose hosted steps from 9 on are pending.
         expect(recorded, "current hosted ledger").toEqual(ledger);
-        expect(rolledBack, "step 9 is pending again").toEqual([{ migration_id: 9 }]);
+        expect(
+          (rolledBack ?? []).map((row) => Number(row.migration_id)).toSorted((a, b) => a - b),
+          "steps 9 on are pending again",
+        ).toEqual([9, 10, 11]);
         yield* serverControl("start");
 
         const converted = Effect.gen(function* () {
@@ -445,7 +453,7 @@ layer(HostedLive, { excludeTestServices: true })("Legacy profile links", (it) =>
             sql: "SELECT app, requirement, subject, account, linked_by FROM hosted_app_account_links",
           },
         ]);
-        expect(after, "step 9 is recorded once").toEqual(ledger);
+        expect(after, "steps 9 on are recorded once").toEqual(ledger);
         const order = (rows: ReadonlyArray<Record<string, unknown>>) =>
           rows.map((row) => JSON.stringify(row)).toSorted();
         expect(order(stored ?? []), "no other link was stored").toEqual(

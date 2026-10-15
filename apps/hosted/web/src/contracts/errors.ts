@@ -51,6 +51,7 @@ const errorMessage = Match.type<HostedError>().pipe(
       })[reason],
     BlobTtlOutOfRange: () => "Choose a file lifetime between 1 hour and 365 days.",
     FileNotFound: () => "This file no longer exists.",
+    FilesCursorInvalid: () => "The file list changed. Reload the page to start again.",
     FileExpired: () => "This file has expired.",
     FilesUnavailable: () => "Files could not be stored or linked right now. Try again.",
     RegistryError: registryErrorMessage,

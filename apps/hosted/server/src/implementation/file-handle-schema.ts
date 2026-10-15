@@ -31,3 +31,15 @@ export const migrateFileHandles = Effect.gen(function* () {
     updated_at timestamptz not null default now()
   )`;
 });
+
+/**
+ * Additive: the Files page lists an organization's complete files newest first. The index is
+ * partial, so it holds only readable files, and only the Files page reads it. It builds inside the
+ * migration transaction, whose lock and statement timeouts fail the deploy instead of waiting
+ * behind live writes; the table is at most one release old, so the build is short.
+ */
+export const migrateFileHandleListing = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  yield* sql`create index if not exists hosted_file_handles_owner_created
+    on hosted_file_handles (owner, created_at desc, id desc) where state = 'complete'`;
+});

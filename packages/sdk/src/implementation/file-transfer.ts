@@ -115,6 +115,8 @@ export const downloadHandle = (options: {
   readonly id: string;
   readonly expectedSha256?: string | undefined;
   readonly filename?: string | undefined;
+  /** Whether the caller may read a file by this creator app; a file they may not reads as missing. */
+  readonly visible?: ((creator: string | undefined) => boolean) | undefined;
 }): Effect.Effect<
   HttpServerResponse.HttpServerResponse,
   never,
@@ -124,6 +126,8 @@ export const downloadHandle = (options: {
   return Effect.gen(function* () {
     const found = yield* handles.stat({ owner: options.owner, id: options.id });
     if (options.expectedSha256 !== undefined && options.expectedSha256 !== found.handle.sha256)
+      return yield* new BlobNotFound({ id: options.id });
+    if (options.visible !== undefined && !options.visible(found.creator))
       return yield* new BlobNotFound({ id: options.id });
     const key = found.key as BlobKey;
     return yield* serveRangedFile(
