@@ -350,9 +350,17 @@ export const startManagedServer = (
               // the startup diagnostic before failure closes the reader's scope.
               Fiber.join(output).pipe(
                 Effect.timeoutOption("3 seconds"),
+                // The log's tail names why startup stopped, such as a rejected setting.
                 Effect.andThen(
-                  Effect.fail(
-                    new ServerFailed({ message: `Server exited before readiness (${code})` }),
+                  fs.readFileString(`${target.directory}/server.log`).pipe(
+                    Effect.orElseSucceed(() => ""),
+                    Effect.flatMap((log) =>
+                      Effect.fail(
+                        new ServerFailed({
+                          message: `Server exited before readiness (${code})\n${log.slice(-2000)}`,
+                        }),
+                      ),
+                    ),
                   ),
                 ),
               ),

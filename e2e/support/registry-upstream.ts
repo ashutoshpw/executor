@@ -62,6 +62,8 @@ export const registryUpstream = Effect.gen(function* () {
   yield* Effect.addFinalizer(() => release.pipe(Effect.andThen(Scope.close(listener, Exit.void))));
   const paths = yield* Ref.make<ReadonlyArray<string>>([]);
   const down = yield* Ref.make(false);
+  // Listings the upstream gains while a scenario runs, beside `registryPublication`.
+  const extra = yield* Ref.make<ReadonlyArray<typeof registryPublication>>([]);
   const list = HttpServerResponse.jsonUnsafe([registryPublication]);
   const routes = Layer.mergeAll(
     HttpRouter.add(
@@ -90,8 +92,13 @@ export const registryUpstream = Effect.gen(function* () {
               { _tag: "RegistryError", reason: "not-found" },
               { status: 400 },
             );
-          default:
-            return list;
+          default: {
+            const name = url.searchParams.get("name");
+            const all = [registryPublication, ...(yield* Ref.get(extra))];
+            return HttpServerResponse.jsonUnsafe(
+              name === null ? all : all.filter((listing) => listing.name === name),
+            );
+          }
         }
       }),
     ),
@@ -140,6 +147,8 @@ export const registryUpstream = Effect.gen(function* () {
     }),
     release,
     outage: (on: boolean) => Ref.set(down, on),
+    /** List another publication, such as a name a server's organization already published. */
+    list: (listing: typeof registryPublication) => Ref.update(extra, (all) => [...all, listing]),
     close: Scope.close(listener, Exit.void),
   };
 });
