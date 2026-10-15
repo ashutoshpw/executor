@@ -32,7 +32,8 @@ These settings override the defaults:
 | `EXECUTOR_APP_WORKER_IDLE_SECONDS` | no | Unload an app or data Worker not called for this long; `0` keeps idle Workers loaded up to the limit. The default is `300`. See below. |
 | `EXECUTOR_OAUTH_CLIENT_METADATA_URL` | no       | Identify Executor to OAuth services by a client metadata document instead of registering a client. Off by default. See below. |
 | `EXECUTOR_CATALOG_URL`               | no       | `index.json` of the official app feed that **Add app** lists. Without it, Add app lists only the built-in Executor app. |
-| `EXECUTOR_REGISTRY_URL`              | no       | Origin of the public app registry. The default is `https://api.executor.sh`. |
+| `EXECUTOR_REGISTRY_URL`              | no       | Origin of the upstream app registry whose apps **Add app** lists beside the ones published on this server. It is read-only: this server never republishes it. The default is `https://api.executor.sh`. |
+| `EXECUTOR_PUBLISHING_DOMAIN`         | no       | Domain after an organization's slug in the package names it publishes, `@<slug>.<domain>/<app>`. Lowercase letters, digits, dots and hyphens, up to 70 characters. The default is `executor.community`. A value that is not a domain stops the server at startup. |
 | `EXECUTOR_TOOL_LISTING_FRESH_SECONDS` | no     | Reuse an app's evaluated tool list this long before refreshing it in the background. The default is `30`. |
 | `EXECUTOR_TOOL_LISTING_MAX_AGE_SECONDS` | no  | Never serve an evaluated tool list older than this; `0` evaluates every list. The default is `86400`. |
 | `EXECUTOR_TOOL_LISTING_LOAD_SECONDS` | no     | Stop evaluating an app's tool list after this long when no request is waiting for it; capped at the maximum age. The default is `45`. |
@@ -42,6 +43,11 @@ These settings override the defaults:
 | `SSO_DISCOVERY_URL`                  | no       | OIDC discovery document. Leave it empty to keep SSO off.                 |
 | `SSO_CLIENT_ID`, `SSO_CLIENT_SECRET` | no       | Credentials for that identity provider.                                  |
 | `SSO_ALLOWED_DOMAINS`                | no       | Comma-separated email domains allowed to join through SSO.               |
+
+Organization admins can publish apps from this server. Its public catalog is served at
+`/api/registry/apps` and lists only apps published here, so other servers and the CLI can
+read it without signing in. Changing `EXECUTOR_PUBLISHING_DOMAIN` renames every listing, because
+names follow the organization's current scope; apps already installed keep their source.
 
 App code runs in an isolate whose `fetch` reaches only public addresses, the same
 as Executor Cloud. Requests to your own `BETTER_AUTH_URL` origin go straight to
