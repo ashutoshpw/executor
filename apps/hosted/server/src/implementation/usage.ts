@@ -65,9 +65,10 @@ export const recordToolCall = (call: {
                 : fallback,
             ];
     const task = yield* CurrentTask;
-    // The setting is read only for a call that has arguments, and a failed read means not recorded.
+    // Only MCP tool calls are recorded with arguments. The setting is read only for a call that
+    // has some, and a failed read means not recorded.
     const settings =
-      call.arguments === undefined
+      call.arguments === undefined || task === undefined
         ? undefined
         : yield* recordingSettings(organization.value.organization);
     const kept =
@@ -153,7 +154,7 @@ export const automationUsage = (
       const result = automationResult(call);
       if (result?.outcome === undefined) return;
       store.record({
-        at: new Date(),
+        at: new Date(Date.now() - call.durationMs),
         organizationId: call.owner.slice("organization:".length),
         userId: call.actor ?? "",
         agentKey: `${call.source}:${call.automation.id}`,
