@@ -10,8 +10,8 @@ a second copy.
 There are two kinds of credential, and the provider decides which it accepts:
 
 - **Secrets**: fields you paste, such as an API token, or an email and a key.
-- **OAuth**: browser sign-in or a client ID and secret for machine-to-machine access.
-  Executor stores and renews the resulting tokens.
+- **OAuth**: browser sign-in, a client ID and secret for machine-to-machine access, or a
+  service account key. Executor stores and renews the resulting tokens.
 
 ## From the dashboard
 
@@ -37,6 +37,12 @@ The dialog asks only for a client ID
 and, when required, a client secret. For browser sign-in, copy the fixed redirect
 URL into the OAuth app's settings. Machine-to-machine connections complete in the
 dialog and need no browser redirect.
+
+A provider that signs in with a service account, such as a Google service account, asks
+for the account's JSON key instead, and for the email of a user to impersonate when it
+uses domain-wide delegation. Executor signs in with the key, stores it encrypted, and
+never shows it to apps or back to you. The key must belong to the provider's token
+endpoint; a key for another one is refused before anything is sent.
 
 If saved OAuth client details are wrong, open **Advanced** below the Connect button,
 choose **Change** next to OAuth client, and enter the replacement. Executor saves manual client details
