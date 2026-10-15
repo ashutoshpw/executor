@@ -45,8 +45,12 @@ export function McpAuthorizePage() {
   const [error, setError] = useState<string | null>(null);
   const available = AsyncResult.isSuccess(organizations) ? organizations.value : [];
   const organization = selected || available[0]?.id || "";
-  // A scoped connection belongs to one organization; the server binds consent to it.
-  const scoped = target?.kind === "mcp" && target.connection !== undefined;
+  // A scoped connection or an organization's URL belongs to one organization; the server binds
+  // the grant to it. The organization's URL must name one the user belongs to.
+  const named: string | undefined = target?.kind === "mcp" ? target.organization : undefined;
+  const pinned = available.find((item) => item.slug === named || item.id === named);
+  const scoped = (target?.kind === "mcp" && target.connection !== undefined) || named !== undefined;
+  const missing = named !== undefined && pinned === undefined;
   const decide = async (accept: boolean) => {
     const action = accept ? "approve_connection" : "decline_connection";
     reportBrowserUsage({ area: "mcp", action, outcome: "started" });
@@ -109,6 +113,16 @@ export function McpAuthorizePage() {
           </Select>
         </div>
       )}
+      {pinned !== undefined && (
+        <p className="m-0 text-[13px]">
+          Organization: <strong>{pinned.name}</strong>
+        </p>
+      )}
+      {missing && (
+        <p role="alert" className="auth-error text-destructive text-[13px]">
+          You are not a member of the organization this URL names.
+        </p>
+      )}
       {available.length === 0 ? (
         <EmptyState size="compact" title="No organizations">
           Ask an organization admin for an invitation, then return here to connect.
@@ -127,7 +141,7 @@ export function McpAuthorizePage() {
         </Button>
         {available.length > 0 && (
           <Button
-            disabled={(!scoped && organization === "") || state.waiting}
+            disabled={(!scoped && organization === "") || missing || state.waiting}
             loading={state.waiting}
             onClick={() => decide(true)}
           >
