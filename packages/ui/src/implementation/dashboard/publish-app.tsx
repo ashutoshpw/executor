@@ -285,7 +285,8 @@ export function PublishApp<E>({
   app,
   atoms,
   Failure,
-}: AppManagementProps<E> & { readonly app: App }) {
+  listingHref,
+}: AppManagementProps<E> & { readonly app: App; readonly listingHref?: string | undefined }) {
   return (
     <QueryView
       query={atoms.authoring(app.id)}
@@ -300,6 +301,7 @@ export function PublishApp<E>({
             app={app}
             atoms={atoms}
             Failure={Failure}
+            listingHref={listingHref}
             // The scope is `<slug>.<domain>`; the slug has no dots.
             domain={metadata.namespace?.slice(metadata.namespace.indexOf(".") + 1) ?? null}
           />
@@ -319,8 +321,11 @@ function PublishAction<E>({
   atoms,
   Failure,
   domain,
+  listingHref,
 }: AppManagementProps<E> & {
   readonly app: App;
+  /** Where this product lists published apps; omitted, the public page on the marketing site. */
+  readonly listingHref?: string | undefined;
   /** The domain this server publishes under, from the organization's publishing scope. */
   readonly domain: string | null;
 }) {
@@ -382,6 +387,7 @@ function PublishAction<E>({
                     source={{ ...source, publication: source.publication }}
                     atoms={atoms}
                     Failure={Failure}
+                    listingHref={listingHref}
                     onClose={() => {
                       setOpen(false);
                       setRenamed(null);
@@ -406,10 +412,13 @@ function PublishDialog<E>({
   source: initialSource,
   atoms,
   Failure,
+  listingHref,
   onClose,
   onRenamed,
 }: AppManagementProps<E> & {
   readonly app: App;
+  /** Where this product lists published apps; omitted, the public page on the marketing site. */
+  readonly listingHref?: string | undefined;
   readonly source: PublishableSource;
   readonly onClose: () => void;
   readonly onRenamed: (commit: string) => void;
@@ -510,6 +519,7 @@ function PublishDialog<E>({
               }
               atoms={atoms}
               Failure={Failure}
+              listingHref={listingHref}
               onClose={onClose}
             />
           )}
@@ -527,9 +537,12 @@ function PublicationActions<E>({
   publishedCommit,
   atoms,
   Failure,
+  listingHref,
   onClose,
 }: AppManagementProps<E> & {
   readonly app: App;
+  /** Where this product lists published apps; omitted, the public page on the marketing site. */
+  readonly listingHref?: string | undefined;
   readonly source: PublishableSource;
   readonly name: string;
   readonly publishedCommit: string | undefined;
@@ -580,12 +593,17 @@ function PublicationActions<E>({
       {publishedCommit !== undefined && completed !== "unpublished" && (
         <div className="px-7 pb-5 max-[740px]:px-5">
           <a
-            href={registryPublicationPath(name)}
-            target="_blank"
-            rel="noopener noreferrer"
+            href={listingHref ?? registryPublicationPath(name)}
+            {...(listingHref === undefined ? { target: "_blank", rel: "noopener noreferrer" } : {})}
             className="inline-flex min-h-9 items-center gap-2 text-sm font-medium underline underline-offset-4 hover:text-muted-foreground"
           >
-            View public listing <span aria-hidden>↗</span>
+            {listingHref === undefined ? (
+              <>
+                View public listing <span aria-hidden>↗</span>
+              </>
+            ) : (
+              "View in Add app"
+            )}
           </a>
         </div>
       )}

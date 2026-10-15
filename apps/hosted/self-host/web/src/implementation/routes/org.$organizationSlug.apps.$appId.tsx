@@ -12,7 +12,7 @@ export const Route = createFileRoute("/org/$organizationSlug/apps/$appId")({
   component: AppPage,
 });
 function AppPage() {
-  const { appId } = Route.useParams();
+  const { appId, organizationSlug } = Route.useParams();
   const { view, tool, connection, client } = Route.useSearch();
   const navigate = Route.useNavigate();
   return (
@@ -22,6 +22,7 @@ function AppPage() {
         view={view}
         tool={tool}
         openApp={(app) => <OpenAppAction app={app} />}
+        listingHref={`/org/${organizationSlug}/apps/add`}
       />
       <AccountConnectionDialog
         connectionId={connection}

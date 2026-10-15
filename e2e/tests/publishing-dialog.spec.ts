@@ -286,6 +286,49 @@ layer(HostedLive, { excludeTestServices: true })("Publishing dialog", (it) => {
         );
         yield* Effect.scoped(
           Effect.gen(function* () {
+            yield* publishingPreview(
+              app.id,
+              { status: "ready", manifest: { name: suggestedName, description: "A ready app" } },
+              [
+                {
+                  name: suggestedName,
+                  commit: "b".repeat(40),
+                  description: "A ready app",
+                  publishedAt: "2026-01-01T00:00:00.000Z",
+                },
+              ],
+            );
+            yield* openThroughBrowser(
+              "Open the app that already has a public version",
+              `/org/${actors.organization.slug}/apps/${app.id}`,
+            );
+            yield* browser.use("Open Publish for the listed app", (page) =>
+              page.getByRole("button", { name: "Publish", exact: true }).click(),
+            );
+            // This server has no public page for an app; its listing is the organization's Add app page.
+            const listing = yield* browser.use("Find the listing link", (page) =>
+              page
+                .getByRole("dialog")
+                .getByRole("link", { name: "View in Add app" })
+                .evaluate((link) => ({
+                  href: link.getAttribute("href"),
+                  target: link.getAttribute("target"),
+                })),
+            );
+            expect(listing).toEqual({
+              href: `/org/${actors.organization.slug}/apps/add`,
+              target: null,
+            });
+            yield* browser.use("Follow the listing link", (page) =>
+              page.getByRole("dialog").getByRole("link", { name: "View in Add app" }).click(),
+            );
+            yield* browser.use("The Add app page opens", (page) =>
+              page.waitForURL(`**/org/${actors.organization.slug}/apps/add`),
+            );
+          }),
+        );
+        yield* Effect.scoped(
+          Effect.gen(function* () {
             yield* publishingPreview(app.id, {
               status: "ready",
               manifest: { name: suggestedName, description: "A ready app" },
