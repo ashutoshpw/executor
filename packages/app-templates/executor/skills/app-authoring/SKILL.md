@@ -75,7 +75,7 @@ in browser code. Put shared schemas in a separate file. Read the relevant
 reference for return shapes and behavior instead of deploying probe apps.
 
 Deploying compiles TypeScript but does not replace a type check or prove that
-the page renders. Verify the requested behavior on the authenticated app page.
+the page renders. Verify the requested behavior on the authenticated app page (`/org/<slug>/apps/<appId>`).
 If browser access is unavailable, report exactly what remains unverified.
 Never put credentials in source, browser code or tool arguments. Use the secure
 account connection flow described in `accounts.md`.
