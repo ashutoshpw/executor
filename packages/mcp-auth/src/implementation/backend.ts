@@ -1,5 +1,5 @@
 /** Apply one grant at every shared MCP operation; hosts retain their existing resource checks. */
-import type { McpBackend } from "@executor-js/mcp";
+import { FileForbidden, type McpBackend } from "@executor-js/mcp";
 import {
   ElicitationFailed,
   invocationAccounts,
@@ -253,7 +253,19 @@ export const restrictMcpBackend = <E extends Error, G extends Error>(
         ),
       ),
     );
+  // No file permission exists, and a handle's id alone must not widen a scoped grant: only a grant
+  // that reaches every app, such as an API key or the local administrator, reaches files.
+  const filesAllowed = current.pipe(
+    Effect.flatMap((grant) =>
+      grant.policy.kind === "all" ? Effect.void : Effect.fail(new FileForbidden()),
+    ),
+  );
   return {
+    files: {
+      stat: (input) => filesAllowed.pipe(Effect.andThen(() => backend.files.stat(input))),
+      read: (input) => filesAllowed.pipe(Effect.andThen(() => backend.files.read(input))),
+      organization: backend.files.organization,
+    },
     eventDefinitions: (input) =>
       Effect.gen(function* () {
         const policy = yield* authority;
