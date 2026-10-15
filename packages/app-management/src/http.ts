@@ -350,7 +350,7 @@ export const appManagementHandlers = <I extends HttpApiMiddleware.AnyId, S, Id e
       .handle("catalog", ({ query }) =>
         Effect.gen(function* () {
           const host = yield* Effect.flatten(AppManagementHost);
-          return yield* host.executor.registry.list(query);
+          return yield* host.executor.publications.catalog(query);
         }),
       )
       .handle("published", () =>

@@ -1,5 +1,6 @@
 /** Self-host storage configuration shared by the database, retained builds and diagnostics. */
 import { AppUiBaseUrl } from "@executor-js/hosted-server/app-ui/contracts";
+import { publishingDomain as defaultPublishingDomain } from "@executor-js/hosted-server/organization";
 import { Config, Effect, Option, Schema } from "effect";
 
 /** One persistent root; Docker supplies /app/data and source development uses .local/hosted. */
@@ -47,3 +48,28 @@ export const appsFrameworkDirectory = Config.String("EXECUTOR_APPS_FRAMEWORK_DIR
 export const appsFrameworkDisabled = Config.Boolean("EXECUTOR_APPS_FRAMEWORK_DISABLED").pipe(
   Config.withDefault(false),
 );
+
+const publishingDomainProblem =
+  "EXECUTOR_PUBLISHING_DOMAIN must be a lowercase domain name such as executor.community: letters, digits, dots and hyphens, up to 70 characters, with no label starting or ending in a hyphen and no leading or trailing dot.";
+
+/** The domain after the organization slug in public package names, `@<slug>.<domain>/<app>`. */
+export const PublishingDomainSetting = Schema.String.check(
+  Schema.makeFilter(
+    (value) =>
+      (value.length <= 70 &&
+        /^[a-z0-9]+(?:-+[a-z0-9]+)*(?:\.[a-z0-9]+(?:-+[a-z0-9]+)*)*$/u.test(value)) ||
+      publishingDomainProblem,
+  ),
+);
+
+/**
+ * Where this server's organizations publish. The default matches Executor Cloud, whose names this
+ * server's catalog can sit beside; a different one keeps this server's names from looking like
+ * Cloud's. A value that cannot be a domain stops the host rather than naming every package wrongly.
+ */
+export const publishingDomain = Effect.gen(function* () {
+  const value = yield* Config.String("EXECUTOR_PUBLISHING_DOMAIN").pipe(
+    Config.withDefault(defaultPublishingDomain),
+  );
+  return yield* Schema.decodeUnknownEffect(PublishingDomainSetting)(value);
+});
