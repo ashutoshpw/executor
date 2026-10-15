@@ -61,6 +61,43 @@ type Bytes =
   | { readonly status: "error"; readonly message: string };
 
 /**
+ * Read a response body, stopping as soon as it passes `limit` bytes so the cap bounds the memory
+ * used, not just the final size. Returns undefined when the body is larger than the limit.
+ */
+async function readWithin(
+  response: Response,
+  limit: number,
+  signal: AbortSignal,
+): Promise<ArrayBuffer | undefined> {
+  if (response.body === null) {
+    const whole = await response.arrayBuffer();
+    return whole.byteLength > limit ? undefined : whole;
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (!signal.aborted) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > limit) return undefined;
+      chunks.push(value);
+    }
+  } finally {
+    // Stops the transfer when the cap or an abort ended the read early.
+    void reader.cancel().catch(() => undefined);
+  }
+  const joined = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    joined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return joined.buffer;
+}
+
+/**
  * Fetch a file's bytes through a freshly minted link. The request is aborted and the bytes
  * dropped when the drawer closes; nothing is cached across openings.
  */
@@ -85,8 +122,16 @@ function useFileBytes(file: PreviewFile, limit: number, mintLink: () => Promise<
         // The link is a bearer secret, so no cookies or other credentials go with it.
         const response = await fetch(url, { credentials: "omit", signal: controller.signal });
         if (!response.ok) return fail(`The file could not be loaded (HTTP ${response.status}).`);
-        const bytes = await response.arrayBuffer();
-        if (bytes.byteLength > limit) return fail("Too large to preview.");
+        const declared = Number(response.headers.get("content-length"));
+        if (Number.isFinite(declared) && declared > limit) {
+          controller.abort();
+          return setState({ status: "error", message: "Too large to preview." });
+        }
+        const bytes = await readWithin(response, limit, controller.signal);
+        if (bytes === undefined) {
+          controller.abort();
+          return setState({ status: "error", message: "Too large to preview." });
+        }
         if (!controller.signal.aborted) setState({ status: "ready", bytes });
       } catch (cause) {
         if (controller.signal.aborted) return;
@@ -123,6 +168,14 @@ function Notice({ children }: { readonly children: React.ReactNode }) {
 
 const zoomSteps = [0.5, 0.75, 1, 1.25, 1.5, 2, 2.5] as const;
 
+/** Pages beyond this many are not mounted; the rest of the file is a download away. */
+const maxPreviewPages = 300;
+/** Canvas pixels allowed per page, so zoom and an extreme page shape cannot exhaust memory. */
+const maxCanvasPixels = 16 * 1024 * 1024;
+
+const isCancelledRender = (cause: unknown) =>
+  cause instanceof Error && cause.name === "RenderingCancelledException";
+
 /** One PDF page. It renders only while near the viewport and gives its canvas back when far away. */
 function PdfPage({
   pdf,
@@ -142,8 +195,11 @@ function PdfPage({
   const box = useRef<HTMLDivElement>(null);
   const canvas = useRef<HTMLCanvasElement>(null);
   const [near, setNear] = useState(false);
-  const [height, setHeight] = useState(width * zoom * ratio);
+  // This page's own height over width once known; until then the first page's.
+  const [measured, setMeasured] = useState<number>();
+  const [failed, setFailed] = useState(false);
   const cssWidth = Math.max(1, Math.floor(width * zoom));
+  const height = Math.max(1, Math.round(cssWidth * (measured ?? ratio)));
 
   useEffect(() => {
     const element = box.current;
@@ -183,12 +239,16 @@ function PdfPage({
         if (cancelled) return;
         const base = page.getViewport({ scale: 1 });
         const viewport = page.getViewport({ scale: cssWidth / base.width });
-        const density = Math.min(window.devicePixelRatio || 1, 2);
+        setMeasured(base.height / base.width);
+        setFailed(false);
+        // Lower the density, down to one pixel per CSS pixel, when the canvas would be too big.
+        const wanted = Math.min(window.devicePixelRatio || 1, 2);
+        const fit = Math.sqrt(maxCanvasPixels / Math.max(1, viewport.width * viewport.height));
+        const density = Math.max(Math.min(wanted, fit), 0.1);
         target.width = Math.floor(viewport.width * density);
         target.height = Math.floor(viewport.height * density);
         target.style.width = `${viewport.width}px`;
         target.style.height = `${viewport.height}px`;
-        setHeight(viewport.height);
         task = page.render({
           canvas: target,
           viewport,
@@ -197,8 +257,9 @@ function PdfPage({
           transform: density === 1 ? undefined : [density, 0, 0, density, 0, 0],
         });
         await task.promise;
-      } catch {
+      } catch (cause) {
         // A cancelled render is the normal end of a page that scrolled away or resized.
+        if (!cancelled && !isCancelledRender(cause)) setFailed(true);
       }
     })();
     return () => {
@@ -215,6 +276,11 @@ function PdfPage({
       data-page={number}
     >
       <canvas ref={canvas} aria-label={`Page ${number}`} role="img" className="block" />
+      {failed && (
+        <p role="alert" className="p-3 text-center text-xs text-muted-foreground">
+          This page could not be rendered.
+        </p>
+      )}
     </div>
   );
 }
@@ -316,7 +382,7 @@ function PdfViewer({ bytes }: { readonly bytes: ArrayBuffer }) {
       </div>
       <div ref={scroller} className="min-h-0 flex-1 overflow-auto bg-muted/40 p-4">
         {width > 0 &&
-          Array.from({ length: pdf.numPages }, (_, index) => (
+          Array.from({ length: Math.min(pdf.numPages, maxPreviewPages) }, (_, index) => (
             <PdfPage
               key={index + 1}
               pdf={pdf}
@@ -327,6 +393,11 @@ function PdfViewer({ bytes }: { readonly bytes: ArrayBuffer }) {
               onCurrent={setCurrent}
             />
           ))}
+        {pdf.numPages > maxPreviewPages && (
+          <p className="pb-2 text-center text-xs text-muted-foreground">
+            Showing the first {maxPreviewPages} pages. Download the file to read the rest.
+          </p>
+        )}
       </div>
     </>
   );
@@ -343,6 +414,22 @@ const markdownViews = [
 function MarkdownViewer({ bytes }: { readonly bytes: ArrayBuffer }) {
   const [view, setView] = useState<MarkdownView>("preview");
   const source = useMemo(() => new TextDecoder("utf-8").decode(bytes), [bytes]);
+  // A radiogroup is one tab stop; the arrow keys move the choice, as a native radio group does.
+  const onViewKey = (event: React.KeyboardEvent<HTMLButtonElement>, current: MarkdownView) => {
+    const step =
+      event.key === "ArrowRight" || event.key === "ArrowDown"
+        ? 1
+        : event.key === "ArrowLeft" || event.key === "ArrowUp"
+          ? -1
+          : 0;
+    if (step === 0) return;
+    event.preventDefault();
+    const index = markdownViews.findIndex((option) => option.value === current);
+    const next = markdownViews[(index + step + markdownViews.length) % markdownViews.length]!;
+    setView(next.value);
+    const buttons = event.currentTarget.parentElement?.parentElement?.querySelectorAll("button");
+    (buttons?.[markdownViews.indexOf(next)] as HTMLButtonElement | undefined)?.focus();
+  };
   return (
     <>
       <div className="flex items-center justify-end border-b px-4 py-2">
@@ -359,7 +446,8 @@ function MarkdownViewer({ bytes }: { readonly bytes: ArrayBuffer }) {
                     type="button"
                     role="radio"
                     aria-checked={view === option.value}
-                    aria-pressed={view === option.value}
+                    tabIndex={view === option.value ? 0 : -1}
+                    onKeyDown={(event) => onViewKey(event, option.value)}
                     aria-label={option.label}
                     onClick={() => setView(option.value)}
                     className={`rounded px-2 py-1 transition-colors ${
@@ -436,11 +524,16 @@ export function FilePreviewSheet({
   readonly mintLink: (file: PreviewFile) => Promise<string>;
   readonly onDownload: (file: PreviewFile) => void;
 }) {
+  // The last file stays rendered while the drawer slides out, then the content unmounts, which
+  // aborts any fetch and destroys the PDF document.
+  const [last, setLast] = useState<PreviewFile | null>(file);
+  if (file !== null && file !== last) setLast(file);
+  const shown = file ?? last;
   return (
     <Sheet open={file !== null} onOpenChange={(open) => !open && onClose()}>
       <SheetContent aria-describedby="file-preview-description">
-        {file !== null && (
-          <FilePreviewContent file={file} mintLink={mintLink} onDownload={onDownload} />
+        {shown !== null && (
+          <FilePreviewContent file={shown} mintLink={mintLink} onDownload={onDownload} />
         )}
       </SheetContent>
     </Sheet>
