@@ -46,7 +46,7 @@ export const requestedRange = (
   if (first === "" && last === "") return undefined;
   if (first === "") {
     const suffix = Number(last);
-    if (suffix === 0) return "unsatisfiable" as const;
+    if (suffix === 0 || size === 0) return "unsatisfiable" as const;
     return { start: Math.max(0, size - suffix), end: size - 1 };
   }
   const start = Number(first);

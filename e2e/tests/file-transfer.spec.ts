@@ -361,6 +361,44 @@ layer(HostedLive, { excludeTestServices: true })("File transfer", (it) => {
         expect(new TextDecoder().decode(encoded.bytes)).toBe(text);
         expect(encoded.headers["content-type"]).toBe("text/plain");
 
+        // A content type that is not a media type cannot make a file unservable: it is stored
+        // as an opaque download.
+        const hostile = yield* app.capture("captureText", {
+          text: "hostile type",
+          contentType: "text/plain\r\nX-Evil: 1",
+        });
+        expect(hostile.handle.contentType).toBe("application/octet-stream");
+        const hostileLink = yield* body(
+          Link,
+          yield* api.request(
+            actors.owner,
+            "POST",
+            `${prefix}/files/${hostile.handle.id}/download-url`,
+            {},
+          ),
+        );
+        const hostileRead = yield* raw("GET", hostileLink.url);
+        expect(hostileRead.status).toBe(200);
+        expect(hostileRead.headers["content-type"]).toBe("application/octet-stream");
+        expect(hostileRead.headers["x-evil"]).toBeUndefined();
+
+        // An empty file has no byte to range over, from either end.
+        const nothing = yield* app.capture("captureText", { text: "" });
+        const nothingLink = yield* body(
+          Link,
+          yield* api.request(
+            actors.owner,
+            "POST",
+            `${prefix}/files/${nothing.handle.id}/download-url`,
+            {},
+          ),
+        );
+        for (const header of ["bytes=-5", "bytes=0-"]) {
+          const empty = yield* raw("GET", nothingLink.url, { headers: { range: header } });
+          expect(empty.status, header).toBe(416);
+          expect(empty.headers["content-range"], header).toBe("bytes */0");
+        }
+
         // A handle another organization holds is not this one's to link.
         const other = yield* createOrganization("Files ranges other");
         const crossed = yield* api.request(
@@ -714,6 +752,22 @@ layer(HostedLive, { excludeTestServices: true })("File transfer", (it) => {
         expect((yield* Schema.decodeUnknownEffect(Refused)(refused.text)).error.code).toBe(
           "FilesFailed",
         );
+        // A partial whose recorded validator is not this file's restarts from the first byte
+        // instead of continuing other bytes.
+        const changed = path.join(home, "changed.bin");
+        yield* fs.writeFile(changed, new Uint8Array(700_001).fill(7));
+        yield* fs.writeFileString(`${changed}.etag`, '"sha256-not-this-file"');
+        const restarted = yield* run([
+          "get",
+          handle.id,
+          "--output",
+          changed,
+          "--resume",
+          ...connection,
+        ]);
+        expect(restarted.code, restarted.stderr).toBe(0);
+        same(yield* fs.readFile(changed), bytes);
+        expect(yield* fs.exists(`${changed}.etag`)).toBe(false);
         // The host's own error reaches the caller with its code and status.
         const missing = yield* run([
           "get",
