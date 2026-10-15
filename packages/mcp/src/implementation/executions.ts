@@ -49,7 +49,7 @@ import {
   type ResumeUnavailableReason,
 } from "../contracts/execute.ts";
 import type { BrowserApprovalView, BrowserApprovalAcknowledgement } from "../contracts/browser.ts";
-import { CurrentTask, type TaskContext } from "../contracts/task.ts";
+import { CurrentResumedRun, CurrentTask, type TaskContext } from "../contracts/task.ts";
 import { programScheduler } from "./program-scheduler.ts";
 import { reportFailure } from "./diagnostics.ts";
 import {
@@ -843,6 +843,8 @@ export const makeExecutions = (
             return unavailable(caller, input.requestId);
           const response = yield* pending.respond(input.response);
           const run = pending.run;
+          const resumed = yield* CurrentResumedRun;
+          if (resumed !== undefined && run.task !== undefined) resumed.runId = run.task.runId;
           yield* Effect.annotateCurrentSpan("executor.execution.id", run.id);
           if (pending.request.expiresAt <= (yield* Clock.currentTimeMillis)) {
             forget(pending, "expired");

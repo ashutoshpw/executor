@@ -2,7 +2,7 @@
  * Task IDs group the tool calls an agent makes for one piece of work. The client chooses the ID,
  * it is not unique, and an unusable one is ignored rather than failing the call.
  */
-import { Context, Schema } from "effect";
+import { Context, Effect, Option, Schema } from "effect";
 
 /** The MCP request `_meta` key a client sets the task ID under. */
 export const taskIdMetaKey = "executor/taskId";
@@ -11,24 +11,37 @@ export const runIdMetaKey = "executor/runId";
 export const maxTaskIdLength = 128;
 
 /**
- * The optional `taskId` argument of the entry tools. Any JSON is accepted so that an unusable
- * value is dropped by `parseTaskId` instead of rejecting the call.
+ * The optional `taskId` argument of the entry tools. It is advertised as a string of up to 128
+ * characters, but an unusable value of any type is dropped while decoding instead of rejecting the
+ * call; `parseTaskId` then applies the printable-character check.
  */
-export const TaskIdArgument = Schema.optionalKey(Schema.Unknown).annotate({
-  description:
-    "Optional task ID (up to 128 printable characters) that groups the tool calls made for one task, such as a ticket number. Reuse the same value on every call for that task. Ignored when the request _meta sets executor/taskId.",
-});
+export const TaskIdArgument = Schema.optionalKey(
+  Schema.String.check(Schema.isMaxLength(maxTaskIdLength))
+    .annotate({
+      description:
+        "Optional task ID (up to 128 printable characters) that groups the tool calls made for one task, such as a ticket number. Reuse the same value on every call for that task. Ignored when the request _meta sets executor/taskId.",
+    })
+    .pipe(Schema.catchDecoding(() => Effect.succeed(Option.none()))),
+);
 
 // Printable characters: no control characters, line or paragraph separators, or unassigned format marks.
 const unprintable = /[\p{Cc}\p{Cs}\p{Zl}\p{Zp}​-‏⁠﻿￾￿]/u;
 
-/** The trimmed ID when it is a string of 1 to 128 printable characters, otherwise undefined. */
-export const parseTaskId = (value: unknown): string | undefined => {
+const printableText = (value: unknown, maxLength: number): string | undefined => {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
-  if (trimmed === "" || Array.from(trimmed).length > maxTaskIdLength) return undefined;
+  if (trimmed === "" || Array.from(trimmed).length > maxLength) return undefined;
   return unprintable.test(trimmed) ? undefined : trimmed;
 };
+
+/** The trimmed ID when it is a string of 1 to 128 printable characters, otherwise undefined. */
+export const parseTaskId = (value: unknown): string | undefined =>
+  printableText(value, maxTaskIdLength);
+
+export const maxSessionIdLength = 256;
+/** The `mcp-session-id` header as stored: up to 256 printable characters, otherwise undefined. */
+export const parseSessionId = (value: unknown): string | undefined =>
+  printableText(value, maxSessionIdLength);
 
 /**
  * The ID for a tool call: the request `_meta` value first, else the tool's `taskId` argument. Each
@@ -61,3 +74,17 @@ export interface TaskContext {
 export const CurrentTask = Context.Reference<TaskContext | undefined>("mcp/CurrentTask", {
   defaultValue: () => undefined,
 });
+
+/**
+ * Set by a resume to the run ID of the program it continues, so the result's `_meta` names the run
+ * its records use. The `tools/call` decorator provides a fresh holder for each call.
+ */
+export interface ResumedRun {
+  runId: string | undefined;
+}
+export const CurrentResumedRun = Context.Reference<ResumedRun | undefined>(
+  "mcp/CurrentResumedRun",
+  {
+    defaultValue: () => undefined,
+  },
+);
