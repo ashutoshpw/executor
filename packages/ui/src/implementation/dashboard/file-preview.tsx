@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
   Add01Icon,
@@ -183,6 +183,7 @@ function PdfPage({
   width,
   zoom,
   ratio,
+  scroller,
   onCurrent,
 }: {
   readonly pdf: PDFDocumentProxy;
@@ -190,6 +191,8 @@ function PdfPage({
   readonly width: number;
   readonly zoom: number;
   readonly ratio: number;
+  /** The drawer's scroll container; observers measure against it, not the page viewport. */
+  readonly scroller: RefObject<HTMLDivElement | null>;
   readonly onCurrent: (page: number) => void;
 }) {
   const box = useRef<HTMLDivElement>(null);
@@ -206,13 +209,13 @@ function PdfPage({
     if (element === null) return;
     const nearObserver = new IntersectionObserver(
       (entries) => setNear(entries.some((entry) => entry.isIntersecting)),
-      { rootMargin: "800px 0px" },
+      { root: scroller.current, rootMargin: "800px 0px" },
     );
     const currentObserver = new IntersectionObserver(
       (entries) => {
         if (entries.some((entry) => entry.isIntersecting)) onCurrent(number);
       },
-      { rootMargin: "-45% 0px -45% 0px" },
+      { root: scroller.current, rootMargin: "-45% 0px -45% 0px" },
     );
     nearObserver.observe(element);
     currentObserver.observe(element);
@@ -220,7 +223,7 @@ function PdfPage({
       nearObserver.disconnect();
       currentObserver.disconnect();
     };
-  }, [number, onCurrent]);
+  }, [number, onCurrent, scroller]);
 
   useEffect(() => {
     const target = canvas.current;
@@ -390,6 +393,7 @@ function PdfViewer({ bytes }: { readonly bytes: ArrayBuffer }) {
               width={width}
               zoom={zoom}
               ratio={ratio}
+              scroller={scroller}
               onCurrent={setCurrent}
             />
           ))}
