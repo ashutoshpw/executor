@@ -393,14 +393,14 @@ const forgedTags = {
  * throws (`ToolCallFailed`) and an approval its policy asks for (`ToolApprovalRequired`).
  */
 const afterTheApp = {
-  ToolCallFailed: { status: 502 },
+  ToolCallFailed: { status: 422 },
   // A skill source that answered 404: its own advice, for a read, is to try again once fixed.
   AppEvaluationFailed: {
-    status: 502,
+    status: 422,
     reply: { _tag: "SkillLoadFailed", reason: "request", status: 404 },
   },
   AppProviderFailed: {
-    status: 502,
+    status: 422,
     reply: { _tag: "ProviderError", reason: "unavailable", status: 503 },
   },
   ToolElicitationFailed: {
@@ -1425,7 +1425,7 @@ layer(HostedLive, { excludeTestServices: true })("Hosted MCP execute failures", 
         const whole = yield* hostedApp("Throwing app", throwingAppSource);
         // The HTTP error keeps the thrown error's name, code and fields as data.
         const index = yield* api.request(actors.owner, "GET", `${whole.path}/tools/index`);
-        expect(index.status).toBe(502);
+        expect(index.status).toBe(422);
         const failure = yield* body(
           Schema.Struct({
             _tag: Schema.Literal("AppEvaluationFailed"),
@@ -2047,7 +2047,7 @@ export default defineApp({}, async () => ({ tools: await mcpRouter({ url: ${JSON
           mcpAppFiles((yield* refusingMcpServer).url),
         );
         const index = yield* api.request(actors.owner, "GET", `${refusing.path}/tools/index`);
-        expect(index.status).toBe(502);
+        expect(index.status).toBe(422);
         expect(index.body).toMatchObject({
           _tag: "AppEvaluationFailed",
           mcp: {
@@ -2101,7 +2101,7 @@ export default defineApp({}, async () => ({ tools: await mcpRouter({ url: ${JSON
           tool: "lookup",
           input: {},
         });
-        expect(called.status, JSON.stringify(called.body)).toBe(502);
+        expect(called.status, JSON.stringify(called.body)).toBe(422);
         expect(called.body).toMatchObject({
           _tag: "ToolCallFailed",
           mcp: {
@@ -2162,7 +2162,7 @@ export default defineApp({}, async () => ({ tools: await mcpRouter({ url: ${JSON
           tool: "lookup",
           input: {},
         });
-        expect(called.status, JSON.stringify(called.body)).toBe(502);
+        expect(called.status, JSON.stringify(called.body)).toBe(422);
         expect(called.body).toMatchObject({
           _tag: "ToolCallFailed",
           mcp: { phase: "call", reason: "timeout" },
@@ -2193,7 +2193,7 @@ export default defineApp({}, async () => ({ tools: await mcpRouter({ url: ${JSON
           executed.structured,
         )).execution.error;
         expect(message).toBe(
-          `ToolCallFailed (HTTP 502): The app’s MCP server did not answer the tool call in time, so Executor stopped waiting. The server may still finish it. Recovery: ${unknownOutcomeAction} Retryable (unchanged call): no.`,
+          `ToolCallFailed (HTTP 422): The app’s MCP server did not answer the tool call in time, so Executor stopped waiting. The server may still finish it. Recovery: ${unknownOutcomeAction} Retryable (unchanged call): no.`,
         );
         expect(message).not.toContain("The app threw");
         expect(response).toMatchObject({ code: "ToolCallFailed", retryable: false });
@@ -2265,7 +2265,7 @@ try { return await call(); } catch (error) {
           tool: "lookup",
           input: {},
         });
-        expect(called.status, JSON.stringify(called.body)).toBe(502);
+        expect(called.status, JSON.stringify(called.body)).toBe(422);
         expect(called.body).toMatchObject({
           _tag: "ToolCallFailed",
           mcp: { phase: "call", reason: "request" },
@@ -2291,7 +2291,7 @@ try { return await call(); } catch (error) {
           "For a call that only reads, the advice for this failure is: “Retry at most once.",
         );
         expect(write.message).toBe(
-          `ToolCallFailed (HTTP 502): The request to the app’s MCP server failed before the server answered the tool call, so Executor cannot tell whether the server ran it. Recovery: ${unknownOutcomeAction} Retryable (unchanged call): no.`,
+          `ToolCallFailed (HTTP 422): The request to the app’s MCP server failed before the server answered the tool call, so Executor cannot tell whether the server ran it. Recovery: ${unknownOutcomeAction} Retryable (unchanged call): no.`,
         );
         expect(write.message).not.toContain("Try again");
 
@@ -2383,7 +2383,7 @@ try { return await call(); } catch (error) {
           tool: "save",
           input: { name: "third", status: "429" },
         });
-        expect(called.status, JSON.stringify(called.body)).toBe(502);
+        expect(called.status, JSON.stringify(called.body)).toBe(422);
         expect(called.body).toMatchObject({
           _tag: "AppProviderFailed",
           reason: "rate_limited",
@@ -2433,7 +2433,7 @@ try { return await call(); } catch (error) {
           tool: "sync",
           input: { name: "first" },
         });
-        expect(called.status, JSON.stringify(called.body)).toBe(502);
+        expect(called.status, JSON.stringify(called.body)).toBe(422);
         expect(called.body).toMatchObject({
           _tag: "AppEvaluationFailed",
           mcp: { phase: "transport", reason: "request" },
@@ -2457,7 +2457,7 @@ try { return await call(); } catch (error) {
           ),
         );
         expect(write.message).toBe(
-          `AppEvaluationFailed (HTTP 502): ${unreachable} Recovery: ${unknownOutcomeAction} Retryable (unchanged call): no.`,
+          `AppEvaluationFailed (HTTP 422): ${unreachable} Recovery: ${unknownOutcomeAction} Retryable (unchanged call): no.`,
         );
         // Both calls saved their record before the MCP connection failed.
         expect(yield* service.saved).toEqual(["first", "second"]);
@@ -2509,7 +2509,7 @@ try { return await call(); } catch (error) {
           kind: "mutation",
           input: {},
         });
-        expect(called.status, JSON.stringify(called.body)).toBe(502);
+        expect(called.status, JSON.stringify(called.body)).toBe(422);
         expect(called.body).toMatchObject({
           _tag: "AppEvaluationFailed",
           failure: { errorName: "McpOptionsInvalid", code: "invalid_option" },
@@ -2533,7 +2533,7 @@ try { return await call(); } catch (error) {
           "For a call that only reads, the advice for this failure is: “Try again. If this continues, investigate this error and fix its cause.",
         );
         expect(configure.message).toBe(
-          `AppEvaluationFailed (HTTP 502): ${optionsFailure} Recovery: ${unknownOutcomeAction} Retryable (unchanged call): no.`,
+          `AppEvaluationFailed (HTTP 422): ${optionsFailure} Recovery: ${unknownOutcomeAction} Retryable (unchanged call): no.`,
         );
         // One record for each call: the agent was not told to repeat either.
         expect(yield* service.saved).toEqual(["configure", "configure"]);
@@ -2654,7 +2654,7 @@ try { return await call(); } catch (error) {
             ...Object.keys(forgedTags).map((tool) => ({
               tool,
               code: "AppEvaluationFailed",
-              status: 502,
+              status: 422,
             })),
           ];
           for (const { tool, code, status } of cases) {
@@ -2987,7 +2987,7 @@ try { return await call(); } catch (error) {
         // a record, before the catalog named the tool a query. The query's cache failure keeps
         // the write warning and is not offered as a retry.
         const unnamed = yield* call();
-        expect(unnamed.status, JSON.stringify(unnamed.body)).toBe(502);
+        expect(unnamed.status, JSON.stringify(unnamed.body)).toBe(422);
         const failure = yield* Schema.decodeUnknownEffect(RestFailure)(unnamed.body);
         expect(unnamed.body).toMatchObject({
           _tag: "ToolCallFailed",
@@ -3007,7 +3007,7 @@ try { return await call(); } catch (error) {
 
         // The same call named a query keeps the query's own advice.
         const named = yield* call("query");
-        expect(named.status, JSON.stringify(named.body)).toBe(502);
+        expect(named.status, JSON.stringify(named.body)).toBe(422);
         expect(named.body).toMatchObject({
           _tag: "ToolCallFailed",
           recovery: {

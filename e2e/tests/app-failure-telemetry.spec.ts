@@ -454,7 +454,7 @@ layer(HostedLive, { excludeTestServices: true })("App failure telemetry", (it) =
         // The app's own error reaches its caller, named as the app's: its name, code, field and
         // message, with the line shaped like a frame.
         for (const failed of [thrown, rewritten]) {
-          expect(failed.response.status).toBe(502);
+          expect(failed.response.status).toBe(422);
           const toolFailure = yield* body(ToolFailed, failed.response);
           expect(toolFailure.failure).toEqual({
             source: "app",
@@ -470,7 +470,7 @@ layer(HostedLive, { excludeTestServices: true })("App failure telemetry", (it) =
         // A rejected call and a reply that fails decoding: the caller is told no usable result
         // arrived, not that the app's tools could not load.
         for (const failed of [rejected, malformed]) {
-          expect(failed.response.status).toBe(502);
+          expect(failed.response.status).toBe(422);
           expect(yield* body(ResultLost, failed.response)).toMatchObject({
             reason: "Executor did not receive a usable result from this tool call.",
             message:
@@ -482,7 +482,7 @@ layer(HostedLive, { excludeTestServices: true })("App failure telemetry", (it) =
         // declaration: the caller is told no usable result arrived, not that the app's tools
         // could not load.
         for (const failed of [unanswered, rewrittenLog]) {
-          expect(failed.response.status).toBe(502);
+          expect(failed.response.status).toBe(422);
           expect(yield* body(ResultLost, failed.response)).toMatchObject({
             reason:
               "Executor did not receive a usable result from this tool call. The app’s framework reported an invalid declaration or an unexpected failure while handling it.",
@@ -492,7 +492,7 @@ layer(HostedLive, { excludeTestServices: true })("App failure telemetry", (it) =
           expect(JSON.stringify(failed.response.body)).not.toContain(marker);
         }
         // The MCP failure's caller reads the status the app's reply named.
-        expect(mcp.response.status).toBe(502);
+        expect(mcp.response.status).toBe(422);
         const mcpFailure = yield* body(McpCallFailed, mcp.response);
         expect(mcpFailure.mcp).toEqual({ phase: "call", reason: "request", status });
         expect(mcpFailure.reason).toContain(`(HTTP ${status})`);

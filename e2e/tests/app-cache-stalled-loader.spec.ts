@@ -29,7 +29,7 @@ layer(HostedLive, { excludeTestServices: true })("App caching", (it) => {
         // When the holder ends without publishing, its lease is released and the next caller
         // publishes a value every later caller reuses.
         yield* call("stalledRelease");
-        expect((yield* Fiber.join(holder).pipe(Effect.timeout("15 seconds"))).status).toBe(502);
+        expect((yield* Fiber.join(holder).pipe(Effect.timeout("15 seconds"))).status).toBe(422);
         const published = yield* call("stalledReader").pipe(Effect.timeout("10 seconds"));
         expect(readers).not.toContain(published);
         expect(yield* call("stalledReader").pipe(Effect.timeout("5 seconds"))).toBe(published);

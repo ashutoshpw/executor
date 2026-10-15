@@ -689,7 +689,7 @@ layer(HostedLive, { excludeTestServices: true })("Apps from before routers", (it
         // Protocol 3 carries the app's own error name and message, with or without a kind.
         for (const kind of [undefined, "query"] as const) {
           const failed = yield* call("queries.fail", {}, kind);
-          expect(failed.status, JSON.stringify(failed.body)).toBe(502);
+          expect(failed.status, JSON.stringify(failed.body)).toBe(422);
           expect((yield* body(ToolFailed, failed)).failure).toEqual({
             source: "app",
             errorName: "ConversationMissing",

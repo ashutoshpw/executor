@@ -412,7 +412,7 @@ layer(HostedLive, { excludeTestServices: true })("MCP cache", (it) => {
         const accountless = yield* deploy(`${origin}/mcp`, true, false, true);
         const before = (yield* control(origin)).counters;
         const refused = yield* accountless.call("fixture_0000");
-        expect(refused.status).toBe(502);
+        expect(refused.status).toBe(422);
         expect(
           (yield* body(Schema.Struct({ mcp: Schema.Struct({ reason: Schema.String }) }), refused))
             .mcp.reason,

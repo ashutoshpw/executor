@@ -196,7 +196,7 @@ layer(HostedLive, { excludeTestServices: true })("App evaluation reporting", (it
           Effect.gen(function* () {
             const response = yield* api.request(actors.owner, "GET", path);
             const trace = yield* latestTrace;
-            expect(response.status, JSON.stringify(response.body)).toBe(502);
+            expect(response.status, JSON.stringify(response.body)).toBe(422);
             return { trace, error: yield* body(Failure, response) };
           });
 

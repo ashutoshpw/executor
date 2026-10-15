@@ -36,7 +36,7 @@ layer(HostedLive, { excludeTestServices: true })("Live OpenAPI YAML", (it) => {
         // Aliases that expand without bound are refused as an invalid definition, not expanded.
         const bomb = yield* fixture.deploy("bomb");
         const refused = yield* bomb.tools;
-        expect(refused.status).toBe(502);
+        expect(refused.status).toBe(422);
         expect(yield* body(Refusal, refused)).toMatchObject({
           _tag: "AppEvaluationFailed",
           failure: { errorName: "OpenapiError", code: "invalid_definition" },

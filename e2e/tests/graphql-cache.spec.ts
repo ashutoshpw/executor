@@ -335,7 +335,7 @@ layer(HostedLive, { excludeTestServices: true })("GraphQL cache", (it) => {
         ).toBe(200);
         expect((yield* upstream.stats).lastQuery).toContain("$value: Int!");
         yield* upstream.configure({ version: 2, fail: true });
-        expect((yield* app.call("refresh", { id: alpha })).status).toBe(502);
+        expect((yield* app.call("refresh", { id: alpha })).status).toBe(422);
         expect(
           (yield* app.call("query_alpha_revision_2", { accountId: alpha, input: {} })).status,
         ).toBe(200);

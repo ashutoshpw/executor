@@ -426,7 +426,7 @@ layer(HostedLive, { excludeTestServices: true })("Executor API-key account", (it
         ).toEqual(expect.arrayContaining([account, manual.id]));
         // Calls now run with the manual key, whose synthetic token the API refuses.
         const manualCall = yield* call(actors.owner);
-        expect(manualCall.status, JSON.stringify(manualCall.body)).toBe(502);
+        expect(manualCall.status, JSON.stringify(manualCall.body)).toBe(422);
         expect(manualCall.body).toMatchObject({
           _tag: "AppProviderFailed",
           reason: "unauthorized",
