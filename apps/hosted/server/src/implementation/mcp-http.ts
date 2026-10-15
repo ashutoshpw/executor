@@ -172,14 +172,8 @@ export const makeHostedMcp = (
   }).pipe(Effect.orDie);
 
 /** An organization-pathed MCP URL names its organization; bare /mcp leaves the choice to the token. */
-export const requestedMcpOrganization = (url: URL): OrganizationReference | undefined => {
-  const match = /^\/org\/([^/]+)\/mcp$/.exec(url.pathname);
-  if (match === null) return undefined;
-  const reference = Schema.decodeUnknownOption(OrganizationReference)(
-    decodeURIComponent(match[1] ?? ""),
-  );
-  return Option.getOrUndefined(reference);
-};
+export const requestedMcpOrganization = (address: McpAddress): OrganizationReference | undefined =>
+  Option.getOrUndefined(Schema.decodeUnknownOption(OrganizationReference)(address.organization));
 
 /** A session belongs to a user/client/organization grant, never to a browser's active organization. */
 export const mcpSessionKey = ({ userId, clientId, access, grant }: McpAccess) =>
@@ -477,7 +471,11 @@ export const authenticatedMcp = <E, R>(
     // The request's tool calls recheck the same token; they reuse its hash (see BearerHashes).
     const hashes = new Map<string, string>();
     const access = yield* Effect.result(
-      auth.authenticate(new Headers(request.headers), address.mode, requestedMcpOrganization(url)),
+      auth.authenticate(
+        new Headers(request.headers),
+        address.mode,
+        requestedMcpOrganization(address),
+      ),
     ).pipe(Effect.provideService(BearerHashes, hashes));
     if (Result.isSuccess(access))
       return yield* handle(access.success, address).pipe(

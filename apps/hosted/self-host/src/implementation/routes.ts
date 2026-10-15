@@ -143,6 +143,11 @@ export const selfHostRouteMap = <DashboardE, DashboardR>(options: {
       HttpRouter.add("*", "/org/:organization/mcp", mcp.http),
       HttpRouter.add("GET", "/.well-known/oauth-protected-resource", mcpProtectedResource),
       HttpRouter.add("GET", "/.well-known/oauth-protected-resource/mcp", mcpProtectedResource),
+      HttpRouter.add(
+        "GET",
+        "/.well-known/oauth-protected-resource/org/:organization/mcp",
+        mcpProtectedResource,
+      ),
       HttpRouter.add("GET", "/.well-known/oauth-authorization-server", mcpAuthorizationServer),
       HttpRouter.add(
         "GET",
