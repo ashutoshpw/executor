@@ -147,6 +147,42 @@ layer(HostedLive, { excludeTestServices: true })("MCP organization OAuth", (it) 
             yield* oauth.revoke(bare);
           }),
         );
+        yield* evidence.step(
+          "An organization that does not exist is not a resource",
+          Effect.gen(function* () {
+            const callback = "http://127.0.0.1:9/callback";
+            const registered = yield* api.request(
+              yield* api.session(),
+              "POST",
+              "/api/auth/oauth2/register",
+              {
+                client_name: "Unknown organization client",
+                redirect_uris: [callback],
+                token_endpoint_auth_method: "none",
+                grant_types: ["authorization_code"],
+                response_types: ["code"],
+              },
+            );
+            const { client_id } = yield* body(
+              Schema.Struct({ client_id: Schema.NonEmptyString }),
+              registered,
+            );
+            const query = new URLSearchParams({
+              response_type: "code",
+              client_id,
+              redirect_uri: callback,
+              code_challenge: "x".repeat(43),
+              code_challenge_method: "S256",
+              scope: "mcp",
+              resource: `${resourceOrigin}/org/missing-${randomUUID().slice(0, 8)}/mcp`,
+              state: "s",
+            });
+            const refused = yield* rawRequest(
+              `${targetHosts(target).browser}/api/auth/oauth2/authorize?${query}`,
+            );
+            expect(refused.location ?? refused.text).toContain("invalid_target");
+          }),
+        );
         yield* oauth.revoke(grant);
       }).pipe(Effect.provide(Layer.mergeAll(McpOAuth.layer, McpClient.layer))),
     ),
