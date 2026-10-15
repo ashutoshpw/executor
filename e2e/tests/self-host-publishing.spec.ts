@@ -170,6 +170,23 @@ layer(TestLive, { excludeTestServices: true })("Self-host publishing", (it) => {
           });
           expect(created.status, JSON.stringify(created.body)).toBe(200);
           const other = yield* body(Organization, created);
+          // An administrator of the second organization who belongs to no other.
+          const adminInvitation = yield* api.request(
+            owner,
+            "POST",
+            "/api/auth/organization/invite-member",
+            { organizationId: other.id, email: "installer-admin@example.test", role: "admin" },
+          );
+          expect(adminInvitation.status, JSON.stringify(adminInvitation.body)).toBe(200);
+          const outsider = yield* api.session();
+          expect(
+            (yield* api.request(outsider, "POST", "/api/auth/self-host/register", {
+              invitation: (yield* body(Resource, adminInvitation)).id,
+              email: "installer-admin@example.test",
+              name: "Installer Admin",
+              password,
+            })).status,
+          ).toBe(200);
 
           // The owner may publish, and the name sits under the organization's slug on the domain.
           const original = yield* server.deploy(organization.id, name, `first ${suffix}`);
@@ -185,6 +202,56 @@ layer(TestLive, { excludeTestServices: true })("Self-host publishing", (it) => {
             status: "ready",
             manifest: { name, description: `first ${suffix}` },
           });
+
+          // A name the upstream already lists is not this server's to publish, and the repair keeps
+          // the label. Another label in the same scope publishes below.
+          const taken = `@${organization.slug}.executor.community/taken-${suffix}`;
+          yield* registry.list({ ...registryPublication, name: taken, commit: "c".repeat(40) });
+          const shadow = yield* server.deploy(organization.id, taken, `shadow ${suffix}`);
+          expect(
+            (yield* server.readiness(organization.id, shadow.app.id)).publication,
+          ).toMatchObject({
+            status: "blocked",
+            issue: { reason: "name-taken", name: taken },
+            suggestedName: expect.stringContaining(`@${organization.slug}.executor.community/`),
+          });
+          const shadowed = yield* server.publish(
+            owner,
+            organization.id,
+            shadow.app.id,
+            shadow.commit,
+          );
+          expect(shadowed.status, JSON.stringify(shadowed.body)).toBe(400);
+          expect(yield* body(Failure, shadowed)).toMatchObject({
+            _tag: "RegistryError",
+            reason: "conflict",
+          });
+
+          // An administrator of another organization cannot publish in this one's scope, through
+          // either organization's routes.
+          const foreign = yield* server.deploy(
+            other.id,
+            `@${organization.slug}.executor.community/foreign-${suffix}`,
+            `foreign ${suffix}`,
+          );
+          const wrongScope = yield* api.request(
+            outsider,
+            "POST",
+            `/api/organizations/${other.id}/apps/${foreign.app.id}/publication`,
+            { commit: foreign.commit },
+          );
+          expect(wrongScope.status, JSON.stringify(wrongScope.body)).toBe(400);
+          expect(yield* body(Failure, wrongScope)).toMatchObject({
+            _tag: "RegistryError",
+            reason: "forbidden",
+          });
+          const wrongOrganization = yield* server.publish(
+            outsider,
+            organization.id,
+            original.app.id,
+            original.commit,
+          );
+          expect(wrongOrganization.status, JSON.stringify(wrongOrganization.body)).toBe(403);
 
           // A member is refused every publishing operation, whatever the interface shows.
           for (const refused of [
@@ -222,6 +289,15 @@ layer(TestLive, { excludeTestServices: true })("Self-host publishing", (it) => {
             reason: "not-found",
           });
 
+          // The upstream later publishes the same name: this server's listing still wins in the
+          // catalog, which shows the name once.
+          yield* registry.list({ ...registryPublication, name, commit: "b".repeat(40) });
+          // The upstream's full listing is cached for minutes once read, so the outage below only
+          // shows through if nothing has read it yet. Only named reads have reached it so far.
+          expect(
+            (yield* registry.paths).filter((path) => path === "/api/registry/apps"),
+            "no full upstream listing was read before the outage",
+          ).toEqual([]);
           // The authenticated catalog keeps listing this server's apps when the upstream is down.
           yield* registry.outage(true);
           const degraded = yield* server.catalog(other.id);
@@ -240,9 +316,11 @@ layer(TestLive, { excludeTestServices: true })("Self-host publishing", (it) => {
           yield* registry.outage(false);
           const both = yield* server.catalog(other.id);
           expect(both.status, JSON.stringify(both.body)).toBe(200);
-          expect((yield* body(Schema.Array(Publication), both)).map((entry) => entry.name)).toEqual(
-            [registryPublication.name, name].sort(),
+          const entries = yield* body(Schema.Array(Publication), both);
+          expect(entries.map((entry) => entry.name)).toEqual(
+            [registryPublication.name, taken, name].sort(),
           );
+          expect(entries.find((entry) => entry.name === name)?.commit).toBe(original.commit);
 
           // Another organization installs the local listing; the copy points back at this server.
           const installed = yield* api.request(
@@ -347,6 +425,8 @@ layer(TestLive, { excludeTestServices: true })("Self-host publishing", (it) => {
           expect(Exit.isFailure(refused), "an invalid publishing domain starts no server").toBe(
             true,
           );
+          // The server says why in its own output, which the failure carries.
+          expect(JSON.stringify(refused)).toContain("EXECUTOR_PUBLISHING_DOMAIN must be");
         }),
       ),
     { timeout: 240_000 },

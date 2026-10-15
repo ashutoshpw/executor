@@ -45,6 +45,7 @@ import {
   hostedAppCopies,
   organizationBlobTtl,
   PublishingDomain,
+  publishingDomain as defaultPublishingDomain,
 } from "@executor-js/hosted-server";
 import {
   defaultBlobPolicy,
@@ -139,6 +140,10 @@ export const selfHostExecutorServices = <E, R>(
       // This server publishes its own apps; the Executor registry stays a read-only catalog that
       // Add app also lists, and is never served from this server's public registry reads.
       const domain = yield* publishingDomain;
+      if (domain === defaultPublishingDomain)
+        yield* Effect.logWarning(
+          `Packages are published under ${defaultPublishingDomain}, which Executor Cloud also uses: a name here can match an app published there. Set EXECUTOR_PUBLISHING_DOMAIN to a domain you control.`,
+        );
       const upstream = remoteRegistry(
         yield* Config.String("EXECUTOR_REGISTRY_URL").pipe(
           Config.withDefault(hostedExecutorOrigin),
