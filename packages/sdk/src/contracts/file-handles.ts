@@ -155,11 +155,13 @@ export interface FileHandleStore {
   /**
    * A live file of `owner`. Another owner's file reads as `BlobNotFound`. A file past its
    * lifetime that the sweep has not removed yet reads as `BlobExpired`, and as `BlobNotFound`
-   * once it has.
+   * once it has. With `visible`, a file whose creator app it rejects reads as `BlobNotFound`
+   * before expiry is considered, so a hidden file never answers differently from a missing one.
    */
   readonly stat: (input: {
     readonly owner: string;
     readonly id: string;
+    readonly visible?: ((creator: string | undefined) => boolean) | undefined;
   }) => Effect.Effect<StoredFileHandle, BlobNotFound | BlobExpired | BlobUnavailable>;
   /**
    * Hide a file from every reader and return the row for removal. Only the creating app may.
