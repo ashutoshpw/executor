@@ -100,6 +100,32 @@ output. Time spent waiting for your approval or input does not count toward the
 request for approval or input when the program pauses. An MCP client with a
 shorter tool-call timeout, often 60 seconds, may give up and cancel the program.
 
+## Files
+
+A tool result carries at most 100,000 bytes, so an app tool that produces a file
+returns a small handle instead of the bytes. When a `call`, `execute` or `resume`
+result holds a handle for a file you can read, the result also carries a
+`resource_link` block after its text, naming `executor-file://<organization>/<id>`
+with the file's size, type and SHA-256. The text and structured content are
+unchanged. Clients on MCP 2025-03-26 or older have no `resource_link` and get the
+result as before.
+
+Read the file with `resources/read` on that URI. The server returns the whole
+file as `text` when its type is text and it is valid UTF-8, and as a base64
+`blob` otherwise, up to a limit of 4 MiB on Cloud and 8 MiB on self-host and
+local. A larger file fails with a typed error whose `data` names `FileTooLarge`,
+the size and limit, and a signed HTTPS link that downloads the exact bytes
+without another credential; the message repeats the link and the
+`executor files get <id>` command that fetches the file. File bytes never appear
+in a tool result, so the output limit does not change.
+
+`resources/list` is empty by design, and the server advertises one template,
+`executor-file://{org}/{id}`. A file is reachable only by the organization that
+owns it: another organization's, expired, deleted and made-up handles all read
+as "Resource not found", and they get no link. A [scoped
+connection](#scoped-connections) cannot read files yet; connections that reach
+every app, such as a personal access token or the local server key, can.
+
 ## Signing in from the browser
 
 Hosted and self-host use OAuth. Your client registers itself, opens your browser

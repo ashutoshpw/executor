@@ -112,6 +112,14 @@ claude mcp add --transport http --scope user executor 'https://mcp.executor.sh/m
 The mode is fixed when the connection is approved. To change it, connect again
 with the new URL. See [The MCP endpoint](/mcp) for what each mode does.
 
+## Files
+
+When a tool returns a file, the result carries a `resource_link` that the client
+can read with `resources/read`. Clients differ in how much of this they support:
+some show the link, some read it for the agent, some ignore it. The signed
+download link in a too-large read error and the `executor files get` command work
+with any client. See [The MCP endpoint](/mcp#files).
+
 ## Check that it worked
 
 Ask the agent to run this:
