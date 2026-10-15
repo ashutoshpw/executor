@@ -414,6 +414,28 @@ layer(HostedLive, { excludeTestServices: true })("Organization files", (it) => {
         });
         expect(unknownDownload.status).toBe(404);
 
+        // The dashboard mints with its cookie session and names the organization by slug before
+        // it has verified the ID. The link then downloads the exact bytes with no credential. A
+        // request that leaves the organization out reaches the route as "undefined" and is refused.
+        const bySlug = yield* api.request(
+          actors.owner,
+          "POST",
+          `/api/organizations/${actors.organization.slug}/files/${a.id}/download-url`,
+          {},
+        );
+        expect(bySlug.status).toBe(200);
+        const slugLink = yield* body(Link, bySlug);
+        const slugServed = yield* raw("GET", slugLink.url);
+        expect(slugServed.status).toBe(200);
+        expect(text(slugServed.bytes)).toBe(content.a);
+        const withoutOrganization = yield* api.request(
+          actors.owner,
+          "POST",
+          `/api/organizations/undefined/files/${a.id}/download-url`,
+          {},
+        );
+        expect(withoutOrganization.status).toBe(403);
+
         // A link minted before stays valid until it expires, whoever fetches it: a link is a
         // bearer secret the minting caller was entitled to.
         const early = yield* body(Link, yield* mint(actors.owner, b.id));

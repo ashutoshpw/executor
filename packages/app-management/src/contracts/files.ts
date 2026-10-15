@@ -60,13 +60,13 @@ export const fileContentTypeHeader = "x-executor-content-type";
  * `download` answers `Range`, `If-None-Match` and `If-Range` as a static file server does, and
  * `upload` needs a `Content-Length` on hosts that cannot store a stream of unknown length.
  */
-export const fileTransferApi = <I extends HttpApiMiddleware.AnyId, S>(
+const fileTransferGroup = <I extends HttpApiMiddleware.AnyId, S, T extends Schema.Struct.Fields>(
   prefix: "/api" | "/api/organizations/:organization",
+  tenantFields: T,
   access: Context.Key<I, S>,
 ) => {
-  const tenant =
-    prefix === "/api" ? Schema.Struct({}) : Schema.Struct({ organization: Schema.NonEmptyString });
-  const file = Schema.Struct({ ...tenant.fields, handle: Schema.NonEmptyString });
+  const tenant = Schema.Struct(tenantFields);
+  const file = Schema.Struct({ ...tenantFields, handle: Schema.NonEmptyString });
   const errors = [FileNotFound, FileExpired, FilesUnavailable];
   return HttpApi.make("file-transfer").add(
     HttpApiGroup.make("files")
@@ -102,3 +102,38 @@ export const fileTransferApi = <I extends HttpApiMiddleware.AnyId, S>(
       .middleware(access),
   );
 };
+
+/** The file routes of one product, typed by the path parameters its prefix names. */
+export type FileTransferApi<
+  I extends HttpApiMiddleware.AnyId,
+  S,
+  T extends Schema.Struct.Fields,
+> = ReturnType<typeof fileTransferGroup<I, S, T>>;
+
+const organizationFields = { organization: Schema.NonEmptyString };
+
+/** Either product's file routes, for handlers that read only the file's handle. */
+export type AnyFileTransferApi<I extends HttpApiMiddleware.AnyId, S> =
+  | FileTransferApi<I, S, {}>
+  | FileTransferApi<I, S, typeof organizationFields>;
+
+/**
+ * Overloaded by prefix so a client of the organization prefix must name the organization: one
+ * signature over both prefixes would type the path parameters without it and let a call omit it.
+ */
+export function fileTransferApi<I extends HttpApiMiddleware.AnyId, S>(
+  prefix: "/api",
+  access: Context.Key<I, S>,
+): FileTransferApi<I, S, {}>;
+export function fileTransferApi<I extends HttpApiMiddleware.AnyId, S>(
+  prefix: "/api/organizations/:organization",
+  access: Context.Key<I, S>,
+): FileTransferApi<I, S, typeof organizationFields>;
+export function fileTransferApi<I extends HttpApiMiddleware.AnyId, S>(
+  prefix: "/api" | "/api/organizations/:organization",
+  access: Context.Key<I, S>,
+) {
+  return prefix === "/api"
+    ? fileTransferGroup(prefix, {}, access)
+    : fileTransferGroup(prefix, organizationFields, access);
+}

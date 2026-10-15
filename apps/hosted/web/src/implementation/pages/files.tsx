@@ -29,6 +29,7 @@ import type { FileEntry } from "@executor-js/hosted-server/files";
 import { deleteFileAtom, downloadLinkAtom, filesAtom } from "../../contracts/files.ts";
 import { type HostedError } from "../../contracts/errors.ts";
 import { HostedFailure } from "../components/dashboard-bindings.tsx";
+import { appError } from "../../contracts/errors.ts";
 import { FilesFrame, FilesLoading, filesTitle } from "../components/page-pending.tsx";
 import { useOrganizationRoute } from "../components/organization.tsx";
 
@@ -181,7 +182,7 @@ function FilesTable({
         onDownload={(file) => void download(file as FileEntry)}
         mintLink={async (file) => {
           const result = await link(file.id);
-          if (Exit.isFailure(result)) throw new Error("Could not create a download link.");
+          if (Exit.isFailure(result)) throw new Error(appError(result.cause));
           return result.value.url;
         }}
       />
