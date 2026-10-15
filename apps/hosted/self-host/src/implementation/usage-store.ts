@@ -330,11 +330,11 @@ export const selfHostUsageStore = Effect.gen(function* () {
       `select epoch_ms(occurred_at) as at, app_id, tool_name, outcome, error_type, duration_ms,
         task_id, mcp_session_id, run_id, arguments
       from (
-        select *, ${taskKey} as task_key from usage_tool_calls
+        select *, rowid as row_id, ${taskKey} as task_key from usage_tool_calls
         where organization_id = ? and occurred_at >= ?
       )
       where task_key = ?
-      order by occurred_at, rowid
+      order by occurred_at, row_id
       limit ?`,
       [
         input.organization,
