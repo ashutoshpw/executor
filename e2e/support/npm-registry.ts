@@ -110,7 +110,7 @@ interface Staged {
  * Serve the staged `apps` and the pinned packages. A packument lists only pinned versions, so every
  * range resolves to the version it resolved to when the lock was written.
  */
-const lockedReply = (staged: Staged) =>
+const lockedReply = (staged: Staged, serveStaged: boolean) =>
   Effect.gen(function* () {
     const { lock, read } = yield* lockedPackages;
     const archives = new Map(
@@ -139,11 +139,11 @@ const lockedReply = (staged: Staged) =>
             },
           ]),
         ),
-        ...(name === "apps" ? { [staged.version]: staged.entry(base) } : {}),
+        ...(name === "apps" && serveStaged ? { [staged.version]: staged.entry(base) } : {}),
       },
     });
     const replies: Replies = (url, base) => {
-      if (url === staged.tarballPath)
+      if (url === staged.tarballPath && serveStaged)
         return Effect.succeed({
           status: 200,
           type: "application/octet-stream",
@@ -317,7 +317,18 @@ const loopback = ({ port, version }: { readonly port: number; readonly version: 
  * Start the suite's registry for the scope on loopback and return its origin. It serves only the
  * staged `apps` and `e2e/npm-packages.json`, so no scenario depends on the public registry.
  */
-export const lockedNpmRegistry = serveRegistry("127.0.0.1", lockedReply).pipe(Effect.map(loopback));
+export const lockedNpmRegistry = serveRegistry("127.0.0.1", (staged) =>
+  lockedReply(staged, true),
+).pipe(Effect.map(loopback));
+
+/**
+ * The same registry without the staged `apps`: it holds only the published releases in
+ * `e2e/npm-packages.json`, as npm does for a version this checkout has not published. A host that
+ * builds an app pinned to the staged version through it must have the files itself.
+ */
+export const publishedOnlyNpmRegistry = serveRegistry("127.0.0.1", (staged) =>
+  lockedReply(staged, false),
+).pipe(Effect.map(loopback));
 
 /**
  * Start a forwarding registry for the scope on loopback and return its origin. Release checks use
