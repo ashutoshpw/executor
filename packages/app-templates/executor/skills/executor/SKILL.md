@@ -39,10 +39,16 @@ client supports that, else open the signed link a too-large read names or run
 ## Build an app
 
 Build an app when no existing app provides the tools, data, UI or automation
-the user needs. For a known service, first check Quick Add on the Add app page,
-which installs published apps and remote MCP servers without code. With a
+the user needs. For a known service, first check Quick Add on the Add app page
+(`/org/<slug>/apps/add`), which installs published apps and remote MCP servers without code. With a
 shell, deploy a source directory with the `executor apps` CLI; without one,
 build through `execute`. Read the `app-authoring` skill before writing an app.
+
+## Dashboard links
+
+Every dashboard page is under `/org/<slug>`, such as `/org/<slug>/apps/<appId>`;
+bare `/apps/<id>` does not exist. Prefer a URL a tool returned. The page table
+is in the docs, Organizations and access, "Dashboard URLs".
 
 ## Send feedback
 
