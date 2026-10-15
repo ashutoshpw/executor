@@ -44,7 +44,10 @@ These settings override the defaults:
 | `SSO_CLIENT_ID`, `SSO_CLIENT_SECRET` | no       | Credentials for that identity provider.                                  |
 | `SSO_ALLOWED_DOMAINS`                | no       | Comma-separated email domains allowed to join through SSO.               |
 
-Organization admins can publish apps from this server. Its public catalog is served at
+Organization admins can publish apps from this server. The default publishing domain,
+`executor.community`, is the one Executor Cloud uses, so a name published here can match an
+app published there. This server refuses to publish a name the upstream registry already lists, but
+set `EXECUTOR_PUBLISHING_DOMAIN` to a domain you control so your names never share Cloud's namespace. Its public catalog is served at
 `/api/registry/apps` and lists only apps published here, so other servers and the CLI can
 read it without signing in. Changing `EXECUTOR_PUBLISHING_DOMAIN` renames every listing, because
 names follow the organization's current scope; apps already installed keep their source.

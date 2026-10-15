@@ -133,10 +133,16 @@ export type RegistryError = typeof RegistryError.Type;
 export interface Registry {
   readonly origin: string;
   /**
-   * The origin that serves this listing's source, for a registry that layers several. Installed
-   * copies point back at it. Omitted, every listing is served from `origin`.
+   * `snapshot` with the origin of the registry that served it, for a registry that layers several.
+   * Installed copies point back at that origin. Omitted, every listing is served from `origin`.
    */
-  readonly originOf?: (name: string) => Effect.Effect<string, RegistryError>;
+  readonly resolve?: (
+    name: string,
+    commit: string,
+  ) => Effect.Effect<
+    { readonly snapshot: PublicationSnapshot; readonly origin: string },
+    RegistryError
+  >;
   readonly list: (name?: string) => Effect.Effect<ReadonlyArray<Publication>, RegistryError>;
   readonly snapshot: (
     name: string,
