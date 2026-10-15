@@ -33,6 +33,22 @@ const pages = Atom.family((key: FilesKey) =>
 export const filesAtom = (key: ConstructorParameters<typeof FilesKey>[0]) =>
   pages(new FilesKey(key));
 
+/** One file by handle, from the route that applies the listing's visibility; absent files fail. */
+class FileKey extends Data.Class<{
+  readonly organization: OrganizationReference;
+  readonly handle: string;
+}> {}
+
+const singles = Atom.family((key: FileKey) =>
+  HostedClient.query(
+    "organizationFiles",
+    "get",
+    hydrated({ params: { organization: key.organization, handle: key.handle } }),
+  ).pipe(revalidated, acknowledgedQuery),
+);
+export const fileAtom = (key: ConstructorParameters<typeof FileKey>[0]) =>
+  singles(new FileKey(key));
+
 /** Delete a file; the page reads the listing again once the server confirms. */
 export const deleteFileAtom = Atom.family((organization: OrganizationReference) =>
   HostedClient.runtime.fn((handle: string) =>

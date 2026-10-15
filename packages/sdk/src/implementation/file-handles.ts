@@ -49,6 +49,7 @@ const Row = Schema.Struct({
   expires_at: Schema.String,
   creator_app_id: Schema.NullOr(Schema.String),
   owner: Schema.String,
+  created_at: Schema.String,
 });
 type Row = typeof Row.Type;
 
@@ -57,11 +58,11 @@ const columns = (
   sql: SqlClient.SqlClient,
 ) => sql`id, owner, sha256, size::text as size, content_type,
   to_char(expires_at at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as expires_at,
-  creator_app_id`;
+  creator_app_id,
+  to_char(created_at at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as created_at`;
 
 const ListedRow = Schema.Struct({
   ...Row.fields,
-  created_at: Schema.String,
   created_at_exact: Schema.String,
 });
 
@@ -77,6 +78,7 @@ const stored = (row: Row): StoredFileHandle => ({
   }),
   key: keyOf(row.owner, row.id),
   creator: row.creator_app_id ?? undefined,
+  createdAt: row.created_at,
 });
 
 /** Storage failures keep their operation for diagnosis, never their driver text or parameters. */
@@ -258,7 +260,6 @@ export const makeFileHandleStore = (options: {
             ? sql``
             : sql` and (created_at, id) < (${input.after.createdAtExact}::timestamptz, ${input.after.id})`;
         const found = yield* sql`select ${columns(sql)},
-            to_char(created_at at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') as created_at,
             created_at::text as created_at_exact
           from ${table}
           where owner = ${input.owner} and state = 'complete'

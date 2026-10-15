@@ -85,6 +85,8 @@ export interface StoredFileHandle {
   readonly key: BlobKey;
   /** The app that first stored the file; only it may delete it. */
   readonly creator: string | undefined;
+  /** When the file was first stored, as an ISO-8601 string. */
+  readonly createdAt: string;
 }
 
 /** A reservation the runner streams bytes into before it commits them. */

@@ -31,6 +31,15 @@ const Page = Schema.Struct({
   apps: Schema.Array(Schema.Struct({ id: Schema.String, name: Schema.String })),
   canDelete: Schema.Boolean,
 });
+const Entry = Schema.Struct({
+  id: Schema.String,
+  contentType: Schema.String,
+  size: Schema.Number,
+  sha256: Schema.String,
+  createdAt: Schema.String,
+  expiresAt: Schema.String,
+  app: Schema.NullOr(Schema.Struct({ id: Schema.String, name: Schema.NullOr(Schema.String) })),
+});
 const Link = Schema.Struct({ url: Schema.String, expiresAt: Schema.String });
 const Key = Schema.Struct({ id: Schema.String, key: Schema.RedactedFromValue(Schema.String) });
 const Failure = Schema.Struct({ _tag: Schema.String });
@@ -218,6 +227,26 @@ layer(HostedLive, { excludeTestServices: true })("Organization files", (it) => {
         expect(member.first.canDelete).toBe(false);
         expect(member.first.apps.map((app) => app.id)).toContain(appA.id);
         expect(member.first.apps.map((app) => app.id)).not.toContain(appB.id);
+        // One file by handle answers with the entry the listing shows, under the same visibility.
+        const details = (as: Session, id: string) =>
+          api.request(as, "GET", `${prefix}/files/${id}/details`);
+        for (const as of [actors.owner, actors.admin])
+          expect(yield* body(Entry, yield* details(as, a1.id))).toEqual(entries.get(a1.id));
+        expect(yield* body(Entry, yield* details(actors.owner, upload.id))).toEqual(
+          entries.get(upload.id),
+        );
+        expect(yield* body(Entry, yield* details(actors.member, a1.id))).toEqual(
+          entries.get(a1.id),
+        );
+        const unknownFile = yield* details(actors.member, "00000000-0000-4000-8000-000000000000");
+        expect(unknownFile.status).toBe(404);
+        expect(yield* tagOf(unknownFile)).toBe("FileNotFound");
+        // A file of an app the member cannot use, and one no app created, read as missing.
+        for (const id of [b1.id, upload.id]) {
+          const hiddenFile = yield* details(actors.member, id);
+          expect(hiddenFile.status, `a member reads ${id}`).toBe(404);
+          expect(hiddenFile.body).toEqual(unknownFile.body);
+        }
         // A filter on an app they cannot use is empty, as it is for an app that does not exist.
         const hidden = yield* body(
           Page,

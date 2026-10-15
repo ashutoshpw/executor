@@ -78,6 +78,14 @@ export const HostedOrganizationFiles = HttpApiGroup.make("organizationFiles")
     }).annotate(RequiredAction, "read"),
   )
   .add(
+    // Not `/files/:handle`: a GET there downloads the bytes.
+    HttpApiEndpoint.get("get", "/api/organizations/:organization/files/:handle/details", {
+      params: { ...organization, handle: Schema.NonEmptyString },
+      success: FileEntry,
+      error: [...errors, FileNotFound],
+    }).annotate(RequiredAction, "read"),
+  )
+  .add(
     HttpApiEndpoint.delete("delete", "/api/organizations/:organization/files/:handle", {
       params: { ...organization, handle: Schema.NonEmptyString },
       success: HttpApiSchema.NoContent,

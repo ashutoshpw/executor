@@ -1185,7 +1185,7 @@ export const scenarios = plan({
     fixtures: "actors",
     file: "organization-files.spec.ts",
     title:
-      "The Files page lists an organization's files by role and app use, pages them, and lets only owners and admins delete",
+      "The Files page lists an organization's files by role and app use, reads one by handle under the same visibility, pages them, and lets only owners and admins delete",
     targets: {
       "self-host": scheduled,
       cloud: na(
@@ -1211,7 +1211,7 @@ export const scenarios = plan({
     fixtures: "actors",
     file: "organization-file-previews.spec.ts",
     title:
-      "The Files page previews images, text, CSV, TSV and Excel workbooks in its drawer, cuts long text with a note and leaves other types to download",
+      "The Files page previews images, text, CSV, TSV and Excel workbooks in its drawer, keeps the open file in its address, cuts long text with a note and leaves other types to download",
     targets: {
       "self-host": scheduled,
       cloud: na(

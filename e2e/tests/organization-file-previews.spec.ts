@@ -155,6 +155,46 @@ layer(HostedLive, { excludeTestServices: true })("Organization file previews", (
           );
         });
 
+        // The drawer is bookmarkable: opening a file puts it in the address, a direct visit to
+        // that address opens it, and closing removes it again.
+        const fileParam = (page: Page) =>
+          Promise.resolve(new URL(page.url()).searchParams.get("file"));
+        yield* open(textId);
+        expect(yield* browser.use("Read the address", (page) => fileParam(page))).toBe(textId);
+        yield* browser.use("Reload the page", (page) => page.reload());
+        yield* browser.use("The drawer opens again", (page) =>
+          drawerOf(page).getByRole("region", { name: "File text" }).waitFor(),
+        );
+        yield* close;
+        yield* browser.use("The address drops the file", (page) =>
+          page.waitForURL((url) => url.searchParams.get("file") === null),
+        );
+        yield* browser.use("Visit the address of a file", (page) =>
+          page.goto(`/org/${actors.organization.slug}/files?file=${pngId}`),
+        );
+        yield* browser.use("The drawer opens for the linked file", (page) =>
+          drawerOf(page).locator("[data-image-size]").waitFor(),
+        );
+        yield* close;
+        yield* browser.use("Visit the address of a file that does not exist", (page) =>
+          page.goto(
+            `/org/${actors.organization.slug}/files?file=00000000-0000-4000-8000-000000000000`,
+          ),
+        );
+        yield* browser.use("The notice appears", (page) =>
+          page.getByRole("alert").filter({ hasText: "This file is no longer available" }).waitFor(),
+        );
+        yield* browser.use("Dismiss the notice", (page) =>
+          page.getByRole("button", { name: "Dismiss" }).click(),
+        );
+        yield* browser.use("The notice goes", (page) =>
+          page
+            .getByRole("alert")
+            .filter({ hasText: "This file is no longer available" })
+            .waitFor({ state: "hidden" }),
+        );
+        expect(yield* browser.use("Read the address", (page) => fileParam(page))).toBeNull();
+
         // An image is shown from its link, and its natural size is read once it loads.
         for (const [id, size] of [
           [pngId, "1 × 1"],
