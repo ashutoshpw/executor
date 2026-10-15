@@ -3,19 +3,25 @@ import { expect, layer } from "@effect/vitest";
 import { Duration, Effect, Redacted, Schedule, Schema } from "effect";
 import { randomUUID } from "node:crypto";
 import { scenarios } from "../test-plan.ts";
-import { Api, body, type Session } from "../support/api.ts";
-import { Actors } from "../support/actors.ts";
-import { App, Organization } from "../support/contracts.ts";
+import { Api, SessionClients, body, type Session } from "../support/api.ts";
+import { Actors, password } from "../support/actors.ts";
+import { App, Organization, Resource } from "../support/contracts.ts";
 import { HostedLive, withHostedCase } from "../support/case.ts";
 import { McpClient } from "../support/mcp-client.ts";
 import { appsManifest } from "../support/apps-release.ts";
 
-const source = `import { defineApp, query, object, string, array, record, router } from "apps";
+const source = `import { defineApp, query, mutation, object, string, array, record, router } from "apps";
+import { always } from "apps/operations/approval";
 export default defineApp({}, async () => ({ tools: router({
   echo: query({ input: object({ text: string() }), description: "Echo text back to the caller" },
     async (_ctx, { text }) => ({ text })),
   explode: query({ input: object({}), description: "Always fails" },
     async () => { throw new Error("exploded"); }),
+  approved: mutation({
+    input: object({ text: string() }),
+    description: "Echo text back after the caller approves",
+    approval: always(),
+  }, async (_ctx, { text }) => ({ text })),
   sink: query({
     input: object({
       text: string(),
@@ -24,6 +30,8 @@ export default defineApp({}, async () => ({ tools: router({
       label: string().optional(),
       ssn: string().optional(),
       big: string().optional(),
+      endpoint: string().optional(),
+      headers: array(object({ name: string(), value: string() })).optional(),
       config: record(string()).optional(),
       items: array(object({ token: string().optional(), name: string().optional() })).optional(),
     }),
@@ -265,9 +273,36 @@ layer(HostedLive, { excludeTestServices: true })("Task insights", (it) => {
 
         // The calls nested in one execute share its run.
         const program = yield* reader.detail(actors.owner, "T-NESTED", (calls) => calls >= 2);
-        expect(new Set(program.calls.map((item) => item.runId))).toEqual(
-          new Set([resultMeta(nested)["executor/runId"]]),
-        );
+        expect(program.calls).toHaveLength(2);
+        expect(program.calls.map((item) => item.runId)).toEqual([
+          resultMeta(nested)["executor/runId"],
+          resultMeta(nested)["executor/runId"],
+        ]);
+
+        // An approval-gated tool resumed later keeps the task and run of the execute that paused.
+        const gated = yield* agent.call("Execute a tool that needs approval", {
+          name: "execute",
+          arguments: {
+            code: `return await tools[${JSON.stringify(app.slug)}].approved({ text: "gated" });`,
+            taskId: "T-GATED",
+          },
+        });
+        const waiting = Schema.decodeUnknownSync(
+          Schema.Struct({
+            structuredContent: Schema.Struct({
+              status: Schema.Literal("approval-required"),
+              requestId: Schema.String,
+            }),
+          }),
+        )(gated).structuredContent;
+        const resumed = yield* agent.call("Approve the tool through resume", {
+          name: "resume",
+          arguments: { requestId: waiting.requestId, response: { action: "accept" } },
+        });
+        expect(resultMeta(resumed)["executor/runId"]).toBe(resultMeta(gated)["executor/runId"]);
+        const approved = yield* reader.detail(actors.owner, "T-GATED", (calls) => calls === 1);
+        expect(approved.calls[0]?.toolName.split(".").at(-1)).toBe("approved");
+        expect(approved.calls[0]?.runId).toBe(resultMeta(gated)["executor/runId"]);
 
         // The list groups by task, newest first, and keeps calls without a task ID apart.
         const list = yield* reader.list(
@@ -363,7 +398,12 @@ layer(HostedLive, { excludeTestServices: true })("Task insights", (it) => {
         yield* run("ARGS-ON", {
           text: "hello",
           password: "hunter2-on",
-          note: "Bearer abcdefghijklmnop1234567890",
+          note: "use Bearer abcdefghijklmnop1234567890 for it",
+          endpoint: "https://svc:s3cr3tpw@db.example.com/x",
+          headers: [
+            { name: "X-Api-Key", value: "hdr-secret-789" },
+            { name: "Accept", value: "application/json" },
+          ],
           label: "ghp_abcdefghijklmnopqrstuvwxyz0123",
           ssn: "123-45-6789",
           config: { apiKey: "key-value-123", region: "eu" },
@@ -374,7 +414,12 @@ layer(HostedLive, { excludeTestServices: true })("Task insights", (it) => {
         expect(JSON.parse(stored)).toEqual({
           text: "hello",
           password: "[masked]",
-          note: "[masked]",
+          note: "use [masked] for it",
+          endpoint: "https://[masked]@db.example.com/x",
+          headers: [
+            { name: "X-Api-Key", value: "[masked]" },
+            { name: "Accept", value: "application/json" },
+          ],
           label: "[masked]",
           ssn: "[masked]",
           config: { apiKey: "[masked]", region: "eu" },
@@ -387,8 +432,35 @@ layer(HostedLive, { excludeTestServices: true })("Task insights", (it) => {
           "123-45-6789",
           "key-value-123",
           "tok-value-456",
+          "s3cr3tpw",
+          "hdr-secret-789",
         ])
           expect(stored).not.toContain(secret);
+
+        // Calls nested in an execute program are recorded in order, masked, with the execute's run.
+        const nested = yield* agent.call("Execute two nested sink calls", {
+          name: "execute",
+          arguments: {
+            code: `await ${sink}({ text: "n1", password: "nested-secret-1" });
+return await ${sink}({ text: "n2", password: "nested-secret-2" });`,
+            taskId: "ARGS-NESTED",
+          },
+        });
+        const nestedCalls = yield* reader.detail(
+          actors.owner,
+          "ARGS-NESTED",
+          (calls) => calls === 2,
+        );
+        expect(
+          nestedCalls.calls.map((item) => JSON.parse(item.arguments ?? "null") as unknown),
+        ).toEqual([
+          { text: "n1", password: "[masked]" },
+          { text: "n2", password: "[masked]" },
+        ]);
+        expect(nestedCalls.calls.map((item) => item.runId)).toEqual([
+          resultMeta(nested)["executor/runId"],
+          resultMeta(nested)["executor/runId"],
+        ]);
 
         // What is stored is capped, and says so when it was cut.
         yield* run("ARGS-BIG", { text: "big", big: "x".repeat(6000) });
@@ -397,10 +469,15 @@ layer(HostedLive, { excludeTestServices: true })("Task insights", (it) => {
         expect(Buffer.byteLength(bigArguments)).toBeLessThanOrEqual(4096);
         expect(bigArguments).toContain("truncated");
 
-        // Turning recording off stops it for new calls.
+        // Turning recording off stops it for new calls and deletes the arguments already stored.
         expect(
           (yield* save({ recordArguments: false, retentionDays: 7, extraMaskedKeys: [] })).status,
         ).toBe(200);
+        for (const task of ["ARGS-ON", "ARGS-BIG", "ARGS-NESTED"]) {
+          const scrubbed = yield* reader.detail(actors.owner, task, (calls) => calls >= 1);
+          expect(scrubbed.calls.length).toBeGreaterThan(0);
+          for (const item of scrubbed.calls) expect(item.arguments).toBeNull();
+        }
         yield* run("ARGS-OFF-AGAIN", { text: "visible again" });
         const again = yield* reader.detail(actors.owner, "ARGS-OFF-AGAIN", (calls) => calls === 1);
         expect(again.calls[0]?.arguments).toBeNull();
@@ -450,6 +527,43 @@ layer(HostedLive, { excludeTestServices: true })("Task insights", (it) => {
           (yield* body(Settings, yield* api.request(actors.admin, "GET", settingsPath)))
             .recordArguments,
         ).toBe(false);
+
+        // Someone who belongs to another organization only is refused this organization's tasks.
+        const outsiderEmail = `outsider-${randomUUID().slice(0, 8)}@example.test`;
+        const sessions = yield* SessionClients;
+        const owned = yield* body(
+          Organization,
+          yield* api.request(actors.owner, "POST", "/api/auth/organization/create", {
+            name: "Outsider home",
+            slug: `outsider-home-${randomUUID().slice(0, 8)}`,
+            keepCurrentActiveOrganization: true,
+          }),
+        );
+        const invitation = yield* body(
+          Resource,
+          yield* api.request(actors.owner, "POST", "/api/auth/organization/invite-member", {
+            email: outsiderEmail,
+            role: "member",
+            organizationId: owned.id,
+            resend: true,
+          }),
+        );
+        const outsider = yield* sessions.session();
+        expect(
+          (yield* sessions.request(outsider, "POST", "/api/auth/self-host/register", {
+            invitation: invitation.id,
+            email: outsiderEmail,
+            name: "Task outsider",
+            password,
+          })).status,
+        ).toBe(200);
+        const outsiderKey = encodeURIComponent("task:MEMBER-TASK");
+        for (const path of [
+          `${prefix}/tasks?range=7d`,
+          `${prefix}/tasks/detail?range=7d&key=${outsiderKey}`,
+          `${prefix}/task-insights-settings`,
+        ])
+          expect((yield* sessions.request(outsider, "GET", path)).status, path).toBe(403);
 
         // Another organization has its own tasks: none of this one's appear there.
         const other = yield* body(
