@@ -21,7 +21,7 @@ layer(HostedLive, { excludeTestServices: true })("Skill folder paths", (it) => {
                   packaged,
                   helper,
                 )).status,
-              ).toBe(502);
+              ).toBe(422);
             }),
           { concurrency: 3 },
         );
@@ -31,7 +31,7 @@ layer(HostedLive, { excludeTestServices: true })("Skill folder paths", (it) => {
             packaged,
             helper,
           )).status,
-        ).toBe(502);
+        ).toBe(422);
       }),
     ),
   );

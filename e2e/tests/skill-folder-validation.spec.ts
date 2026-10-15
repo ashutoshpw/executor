@@ -27,14 +27,14 @@ layer(HostedLive, { excludeTestServices: true })("Skill folder validation", (it)
           (invalid) =>
             Effect.gen(function* () {
               expect((yield* bundle("{ skills: [] }", [invalid])).skills).toEqual([]);
-              expect((yield* read("{}", [invalid])).status).toBe(502);
+              expect((yield* read("{}", [invalid])).status).toBe(422);
               expect(
                 (yield* read(
                   "{ skills: await folderSkills({ files: ctx.files }) }",
                   [invalid],
                   helper,
                 )).status,
-              ).toBe(502);
+              ).toBe(422);
             }),
           { concurrency: 3 },
         );
