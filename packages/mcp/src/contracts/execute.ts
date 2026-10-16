@@ -98,7 +98,7 @@ export const ApprovalTooLarge = UserFacingError.define({
     recovery: {
       action:
         "Make the arguments smaller, for example by passing large content as a URL or an uploaded file, then call the tool again.",
-      instructions: `An approval request carries the call's arguments and must fit in ${limit} bytes of JSON; this one is ${bytes}. Calling it again with the same arguments fails the same way, and changing unrelated arguments does not help. Pass large content by reference instead of inline: a URL, an upload or file ID the tool accepts, or several smaller calls if the tool supports that. Code that ran before approval was requested, in this tool or earlier in the program, may already have made changes; check current state with a safe read before calling again.`,
+      instructions: `An approval request carries the call's arguments and must fit in ${limit} bytes of JSON; this one is ${bytes}. Calling it again with the same arguments fails the same way, and changing unrelated arguments does not help. Pass large content by reference instead of inline. For a file, upload it with executor.files.uploadUrl and an HTTP PUT of the bytes, then pass the returned handle if the tool accepts a file handle. Otherwise use a URL or ID the tool accepts, or several smaller calls if the tool supports that. Code that ran before approval was requested, in this tool or earlier in the program, may already have made changes; check current state with a safe read before calling again.`,
     },
   }),
 });

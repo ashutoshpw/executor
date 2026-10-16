@@ -4,16 +4,16 @@
 export const executorSkillDigests: Readonly<Record<string, string>> = {
   "app-authoring/SKILL.md": "916996df32a22548d2172aac4941dcee425a0fcf421f3fe88d28a99b7970ff0e",
   "app-authoring/accounts.md": "915d0517ba8cca457994afb1d5696577d67a66f48024d532db003e7de5ccfbc8",
-  "app-authoring/deploy.md": "2ae30feab4d030a2611034b436fbfb8a5619c065c015e343824be078bb198fae",
+  "app-authoring/deploy.md": "f6f97a99e3c39b19f9fa005f5b4e23c07bcf4290722d7c01fe5a27aabc86bbbd",
   "app-authoring/events.md": "8f7465e35c6c94b06978b89680181df60c741225de3ba8158f22f76ee7e91a5a",
   "app-authoring/integrations.md": "2d50abfb3b682eae292f6f02c4387e2eb11eff905e7b668811bc7c1443b43413",
   "app-authoring/starter.md": "58445ed62c60fbcfa66934f805176e42d71802db9a408c7b8d4028352b0b3562",
   "app-authoring/storage.md": "78f0658fa492e87c3a8c415c654998104213a945fb4344748b373dcb20fe957e",
-  "app-authoring/tools.md": "a8a9ee4c115e88385970826fd3359c8efc952c3c76e06fa8c7c3906910e7ecd4",
+  "app-authoring/tools.md": "dcd72c8f2b8665a0f9d657ee29c6207a044602d6bcd460f503cf4192e045c04f",
   "app-authoring/ui.md": "c2331bd689071b1b55d24a4a9da4aa186639a9ba2ee650c160fb05a3fe145729",
   "app-authoring/webhooks.md": "713dde373c65582dcfb257001f4fd4d79ce6e89ad95669842137a5cd58c873dd",
   "app-authoring/workflows.md": "243842172b2f3e12f3ba0b0bc28961c85a9e9e6f9a6c8e8191697c1d8dd479ae",
   "code-mode/SKILL.md": "f92209018cb40e4c3d2b222094ab3345bb18fdde9fe1d494f57ce15164eb1611",
-  "executor/SKILL.md": "57e2b46a10d35617eb07d9d20053e1d3b77df69095dd0e1b26b1a281eacc40d3",
+  "executor/SKILL.md": "f65814f5033f7f12ca573aca3fa3fadde586bf33aeb5258bbb18dc44705e3c57",
   "executor/feedback.md": "11397bd260917e5a21e92897a19368d0426bf5944a7c081adc2c061d1ea797cd"
 };
