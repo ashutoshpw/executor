@@ -387,6 +387,11 @@ Return the handle from the tool and nothing else of the file. An agent reaches t
 the `resource_link` the MCP result carries (`resources/read`, up to the host's read limit), the
 signed link from `ctx.blobs.url`, or `executor files get`; never put file bytes in a result.
 
+A tool that takes a file should accept a file handle (`BlobHandle`) as input and read it with
+`ctx.blobs.read`, not a base64 string. This matters most for an approval-required tool, whose whole
+request must fit in 100,000 bytes. A caller gets a handle from `executor.files.uploadUrl` and an
+HTTP PUT of the bytes, or from `executor files put`.
+
 Files are the organization's: two apps that store the same bytes share one handle, and another
 organization's handle reads as `BlobNotFound`. Files expire after the lifetime an organization
 owner or admin sets under Blob in the organization settings (seven days by default); an
