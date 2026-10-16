@@ -1,5 +1,5 @@
 /**
- * The Files page previews images, text, CSV, TSV and Excel workbooks in its drawer. Each file is
+ * The Files page previews images, text, HTML, CSV, TSV and Excel workbooks in its drawer. Each file is
  * uploaded over HTTP and opened through the real page, so the assertions see what a person sees.
  */
 import { expect, layer } from "@effect/vitest";
@@ -64,6 +64,9 @@ const large = strToU8(
     (_, index) => `${String(index + 1).padStart(5, "0")} ${"x".repeat(57)}\n`,
   ).join(""),
 );
+
+const htmlHeading = "Sandboxed heading 7f3a9c";
+const htmlDocument = `<!doctype html><html><head><title>Original title</title><link rel="stylesheet" href="https://example.invalid/style.css"></head><body><h1>${htmlHeading}</h1><img src="https://example.invalid/pixel.png" alt="remote"><script>document.title = "script ran"; document.body.insertAdjacentHTML("beforeend", '<p id="script-marker">ran</p>');</script></body></html>`;
 
 layer(HostedLive, { excludeTestServices: true })("Organization file previews", (it) => {
   it.effect(scenarios.organizationFilePreviews.title, (context) =>
@@ -131,6 +134,7 @@ layer(HostedLive, { excludeTestServices: true })("Organization file previews", (
           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
           workbook(),
         );
+        const htmlId = yield* upload("text/html; charset=utf-8", strToU8(htmlDocument));
         const largeId = yield* upload("text/plain", large);
         const zipId = yield* upload("application/zip", zipSync({ "a.txt": strToU8("a") }));
 
@@ -243,6 +247,56 @@ layer(HostedLive, { excludeTestServices: true })("Organization file previews", (
         expect(plain[0]).toContain("third line");
         expect(plain[1]).toEqual(["1", "2", "3"]);
         expect(plain[2]).toBe("3 lines");
+        yield* close;
+
+        // HTML renders in a sandboxed frame: its script does not run and nothing it names is fetched.
+        const remoteRequests: string[] = [];
+        // A route answers the remote hosts, so a request that leaves the page is recorded; one the
+        // frame's policy blocks never reaches it.
+        yield* browser.use("Answer the document's remote hosts", (page) =>
+          page.route(/^https?:\/\/example\.invalid\//u, (route) => {
+            remoteRequests.push(route.request().url());
+            return route.fulfill({ status: 200, contentType: "text/css", body: "h1{color:red}" });
+          }),
+        );
+        yield* open(htmlId);
+        const preview = (page: Page) => drawerOf(page).locator("iframe");
+        yield* browser.use("The preview is selected", (page) =>
+          drawerOf(page).getByRole("radio", { name: "Preview" }).waitFor(),
+        );
+        expect(
+          yield* browser.use("Read the selection", (page) =>
+            drawerOf(page).getByRole("radio", { name: "Preview" }).getAttribute("aria-checked"),
+          ),
+        ).toBe("true");
+        yield* browser.use("The heading renders in the frame", (page) =>
+          preview(page).contentFrame().getByRole("heading", { name: htmlHeading }).waitFor(),
+        );
+        const frame = yield* browser.use("Read the frame", (page) =>
+          Promise.all([
+            preview(page).getAttribute("sandbox"),
+            preview(page).getAttribute("referrerpolicy"),
+            preview(page).contentFrame().locator("#script-marker").count(),
+            preview(page)
+              .contentFrame()
+              .locator("html")
+              .evaluate((element) => element.ownerDocument.title),
+          ]),
+        );
+        expect(frame[0]).toBe("");
+        expect(frame[1]).toBe("no-referrer");
+        expect(frame[2]).toBe(0);
+        expect(frame[3]).not.toBe("script ran");
+        yield* browser.use("Switch to the HTML source", (page) =>
+          drawerOf(page).getByRole("radio", { name: "Raw" }).click(),
+        );
+        const htmlSource = yield* browser.use("Read the HTML source", (page) =>
+          drawerOf(page).locator("pre").textContent(),
+        );
+        expect(htmlSource).toContain("<script>");
+        expect(htmlSource).toContain(htmlHeading);
+        yield* browser.use("Wait for any late requests", (page) => page.waitForTimeout(500));
+        expect(remoteRequests).toEqual([]);
         yield* close;
 
         // A file past the text limit is cut, with a note, instead of refused.
