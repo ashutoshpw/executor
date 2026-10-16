@@ -60,6 +60,9 @@ export const maxPdfPreviewBytes = 25 * 1024 * 1024;
 /** Markdown above this many bytes is downloaded, not previewed. */
 export const maxMarkdownPreviewBytes = 1024 * 1024;
 
+/** An HTML document above this many bytes is downloaded, not previewed. */
+export const maxHtmlPreviewBytes = 1024 * 1024;
+
 /** A workbook above this many bytes is downloaded, not previewed. */
 export const maxXlsxPreviewBytes = 10 * 1024 * 1024;
 /** Plain text above this many bytes is cut at it. */
@@ -74,6 +77,7 @@ export const maxDelimitedPreviewBytes = 5 * 1024 * 1024;
 export type PreviewKind =
   | "pdf"
   | "markdown"
+  | "html"
   | "video"
   | "audio"
   | "image"
@@ -81,7 +85,7 @@ export type PreviewKind =
   | "csv"
   | "tsv"
   | "xlsx";
-type BufferedKind = "pdf" | "markdown" | "text" | "csv" | "tsv" | "xlsx";
+type BufferedKind = "pdf" | "markdown" | "html" | "text" | "csv" | "tsv" | "xlsx";
 
 /** A media link outlives a long playback: four hours, where the default is fifteen minutes. */
 export const mediaLinkSeconds = 4 * 60 * 60;
@@ -91,6 +95,7 @@ export const previewKind = (contentType: string): PreviewKind | undefined => {
   const type = contentType.split(";")[0]?.trim().toLowerCase();
   if (type === "application/pdf" || type === "application/x-pdf") return "pdf";
   if (type === "text/markdown" || type === "text/x-markdown") return "markdown";
+  if (type === "text/html" || type === "application/xhtml+xml") return "html";
   if (type === "text/csv" || type === "application/csv" || type === "text/x-csv") return "csv";
   if (type === "text/tab-separated-values" || type === "text/tsv") return "tsv";
   if (type === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") return "xlsx";
@@ -114,6 +119,7 @@ export const previewKind = (contentType: string): PreviewKind | undefined => {
 const limits = {
   pdf: maxPdfPreviewBytes,
   markdown: maxMarkdownPreviewBytes,
+  html: maxHtmlPreviewBytes,
   text: maxTextPreviewBytes,
   csv: maxDelimitedPreviewBytes,
   tsv: maxDelimitedPreviewBytes,
@@ -527,6 +533,53 @@ function MarkdownViewer({ bytes }: { readonly bytes: ArrayBuffer }) {
   );
 }
 
+/**
+ * Stops the previewed document loading anything from the network: only inline styles and data or
+ * blob media. It is the first thing in the document, which the HTML parser keeps in the head.
+ */
+const htmlPreviewPolicy =
+  `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; ` +
+  `style-src 'unsafe-inline'; font-src data:; media-src data:">`;
+
+const leadingDoctype = /^\s*<!doctype[^>]*>/i;
+
+/** Put the policy first, but after a doctype, which would otherwise be ignored and force quirks mode. */
+const withHtmlPreviewPolicy = (source: string) => {
+  const doctype = leadingDoctype.exec(source)?.[0] ?? "";
+  return doctype + htmlPreviewPolicy + source.slice(doctype.length);
+};
+
+/**
+ * Show an HTML file as its source or as a page. The page is a sandboxed frame with no scripts,
+ * forms, popups or origin, and no network access, on a white canvas as pages expect.
+ */
+function HtmlViewer({ bytes }: { readonly bytes: ArrayBuffer }) {
+  const [view, setView] = useState<MarkdownView>("preview");
+  const source = useMemo(() => new TextDecoder("utf-8").decode(bytes), [bytes]);
+  return (
+    <>
+      <div className="flex items-center justify-end border-b px-4 py-2">
+        <ViewSwitch label="HTML view" options={markdownViews} value={view} onChange={setView} />
+      </div>
+      {view === "raw" ? (
+        <div className="min-h-0 flex-1 overflow-auto p-4">
+          <pre className="font-mono text-[12px] leading-[1.6] break-words whitespace-pre-wrap">
+            {source}
+          </pre>
+        </div>
+      ) : (
+        <iframe
+          title="HTML file preview"
+          sandbox=""
+          referrerPolicy="no-referrer"
+          srcDoc={withHtmlPreviewPolicy(source)}
+          className="min-h-0 w-full flex-1 border-0 bg-white"
+        />
+      )}
+    </>
+  );
+}
+
 const unplayable = "This file can't be played in this browser.";
 
 /**
@@ -666,6 +719,7 @@ function PreviewBody({
     );
   }
   if (kind === "markdown") return <MarkdownViewer bytes={state.bytes} />;
+  if (kind === "html") return <HtmlViewer bytes={state.bytes} />;
   return (
     <Suspense fallback={loadingPreview}>
       <ExtraPreview
@@ -683,8 +737,9 @@ function PreviewBody({
 }
 
 /**
- * A right-hand drawer previewing a PDF, Markdown, text, CSV, spreadsheet, image, video or audio file. It fetches through a short-lived link
- * the caller mints, never navigates to the link and never renders HTML from the file.
+ * A right-hand drawer previewing a PDF, Markdown, HTML, text, CSV, spreadsheet, image, video or audio file. It fetches through a short-lived link
+ * the caller mints and never navigates to the link. An HTML file is rendered only in a fully
+ * sandboxed frame (no scripts, forms, popups or origin) whose policy blocks every network load.
  */
 export function FilePreviewSheet({
   file,

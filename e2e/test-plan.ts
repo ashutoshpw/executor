@@ -1222,7 +1222,7 @@ export const scenarios = plan({
     fixtures: "actors",
     file: "organization-file-previews.spec.ts",
     title:
-      "The Files page previews images, text, CSV, TSV and Excel workbooks in its drawer, keeps the open file in its address, cuts long text with a note and leaves other types to download",
+      "The Files page previews images, text, HTML, CSV, TSV and Excel workbooks in its drawer, keeps the open file in its address, cuts long text with a note and leaves other types to download",
     targets: {
       "self-host": scheduled,
       cloud: na(
