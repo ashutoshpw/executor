@@ -83,6 +83,25 @@ export interface GeneratedToolRules {
   readonly approvals?: Readonly<Record<string, "always" | "never">>;
   /** Exposed names the app leaves out. */
   readonly omitted?: readonly string[];
+  /**
+   * What a tool the rules do not name gets, for a server that lists its tools as it runs:
+   * `always` asks before it runs, `omitted` leaves it out. `known` are the names the rules decide,
+   * including the ones they leave to the app's default.
+   */
+  readonly otherwise?:
+    | { readonly rule: "always" | "omitted"; readonly known: readonly string[] }
+    | undefined;
+}
+
+/**
+ * Fixed credentials sent on every request beside each account's own, held by one account of a
+ * second provider that the app's managers link for everyone (`fixed`), such as a gateway's client
+ * ID and secret in front of an OAuth sign-in. Its provider takes the same hosts.
+ */
+export interface GeneratedFixedAccount {
+  /** Secret fields the account holds. */
+  readonly fields: readonly string[];
+  readonly placements: readonly CredentialPlacement[];
 }
 
 /** Settings shared by the protocol generators. No methods makes a public app. */
@@ -95,4 +114,15 @@ export interface ProtocolAppOptions {
   readonly tools?: GeneratedToolRules | undefined;
   /** How the provider checks an account; without one an OpenAPI or GraphQL app has no check. */
   readonly health?: GeneratedHealthCheck | undefined;
+  /**
+   * Also declare `workspace: provider.many()` in the app scope, for accounts its managers link for
+   * everyone, beside each member's own `service` accounts. Each tool takes an account from either.
+   */
+  readonly sharedAccounts?: boolean | undefined;
+  /**
+   * Also declare `fixed: fixedProvider` in the app scope, whose one account's credentials every
+   * request sends under the selected account's own. Only with sign-in methods; the provider then
+   * has no account check, which cannot read the fixed account.
+   */
+  readonly fixedAccount?: GeneratedFixedAccount | undefined;
 }

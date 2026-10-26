@@ -4,7 +4,7 @@ import {
   FingerPrintIcon,
   Home01Icon,
   Key01Icon,
-  Plug01Icon,
+  ConnectIcon,
   Settings05Icon,
   TaskDone01Icon,
   Shield01Icon,
@@ -17,7 +17,7 @@ import {
 export const items = [
   { to: "/org/$organizationSlug", label: "Home", icon: Home01Icon, exact: true },
   { to: "/org/$organizationSlug/apps", label: "Apps", icon: BoxesIcon },
-  { to: "/org/$organizationSlug/connect", label: "Connections", icon: Plug01Icon },
+  { to: "/org/$organizationSlug/connect", label: "Connections", icon: ConnectIcon },
   { to: "/org/$organizationSlug/accounts", label: "Accounts", icon: UserCircleIcon },
   { to: "/org/$organizationSlug/approvals", label: "Approvals", icon: Shield01Icon },
   { to: "/org/$organizationSlug/files", label: "Files", icon: File01Icon },

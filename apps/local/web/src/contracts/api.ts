@@ -212,7 +212,8 @@ export const sourceFileAtom = (key: ConstructorParameters<typeof SourceFileKey>[
 
 /**
  * Tool discovery follows the app's version. It is read again after linking, unlinking or
- * connecting an account, and by the page's normal refresh on returning to it.
+ * connecting an account, and by the page's normal refresh on returning to it. It lists tools
+ * without their schemas; `toolDetailAtom` reads a selected tool's.
  */
 class ToolKey extends Data.Class<{
   readonly app: AppId;
@@ -252,13 +253,57 @@ export const toolCatalogAtom = (key: ConstructorParameters<typeof ToolKey>[0]) =
 class ToolDetailKey extends Data.Class<
   ConstructorParameters<typeof ToolKey>[0] & { readonly tool: string }
 > {}
-const toolDetails = Atom.family(({ tool, ...key }: ToolDetailKey) =>
-  Atom.map(
-    toolLists(new ToolKey(key)),
-    AsyncResult.map((tools) => tools.find((candidate) => candidate.name === tool)),
+class ToolSchemaKey extends Data.Class<{
+  readonly app: AppId;
+  readonly tool: ToolName;
+  readonly version: VersionId;
+}> {}
+/** A server render sends the schemas it read with the page, so hydration shows the same ones. */
+const toolSchemaQueries = Atom.family(({ app, tool, version }: ToolSchemaKey) =>
+  DashboardClient.query(
+    "dashboard",
+    "tool",
+    hydrated({ params: { app, tool }, query: { version } }),
   ),
 );
-/** The live snapshot already carries schemas, so a selected tool reads from the same catalog. */
+/**
+ * The schema read for a tool in the current catalog snapshot, in the version the catalog listed it
+ * in. It follows only the catalog, so a later snapshot, such as after an account changes, reads the
+ * schemas again. A tool the catalog does not list has none.
+ */
+const listedToolSchemas = Atom.family(({ tool, ...key }: ToolDetailKey) =>
+  Atom.readable((get) => {
+    const listed = get(toolLists(new ToolKey(key)));
+    const query = AsyncResult.map(listed, (tools) => {
+      const summary = tools.find((candidate) => candidate.name === tool);
+      return summary === undefined
+        ? undefined
+        : toolSchemaQueries(
+            new ToolSchemaKey({ app: key.app, tool: summary.name, version: summary.version }),
+          );
+    });
+    const previous = get.self<typeof query>();
+    if (
+      AsyncResult.isSuccess(query) &&
+      query.value !== undefined &&
+      Option.exists(previous, AsyncResult.isSuccess)
+    )
+      get.refresh(query.value);
+    return query;
+  }),
+);
+/** One tool's schemas for the live catalog. A tool that left it since has none. */
+const toolDetails = Atom.family((key: ToolDetailKey) =>
+  DashboardClient.runtime.atom((get) =>
+    Effect.gen(function* () {
+      const query = yield* get.result(listedToolSchemas(key));
+      if (query === undefined) return undefined;
+      return yield* get
+        .result(query)
+        .pipe(Effect.catchTag("ToolNotFound", () => Effect.succeed(undefined)));
+    }),
+  ),
+);
 export const toolDetailAtom = (key: ConstructorParameters<typeof ToolDetailKey>[0]) =>
   toolDetails(new ToolDetailKey(key));
 

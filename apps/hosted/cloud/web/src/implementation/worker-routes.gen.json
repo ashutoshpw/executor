@@ -11,8 +11,6 @@
   "/app-auth/",
   "/create",
   "/create/",
-  "/create/agent",
-  "/create/agent/",
   "/device",
   "/device/",
   "/email/unsubscribe",
@@ -28,7 +26,5 @@
   "/mcp/authorize/",
   "/oauth/callback",
   "/oauth/callback/",
-  "/org/*",
-  "/v1-import",
-  "/v1-import/"
+  "/org/*"
 ]

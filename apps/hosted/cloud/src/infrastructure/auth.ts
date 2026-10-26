@@ -41,7 +41,8 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import { Context, Effect, Layer, Option, Redacted, Schema, type Scope } from "effect";
 import { HttpBody, HttpServerRequest, HttpServerResponse } from "effect/http";
 import type { SendAuthEmail } from "../contracts/email.ts";
-import { cloudSecrets } from "./secrets.ts";
+import { cloudSecrets, v1McpForwardSecret, v1SessionHandoffSecret } from "./secrets.ts";
+import { V1HandoffSessionFailed, v1SessionHandoff } from "../implementation/v1-session-handoff.ts";
 import { cloudAuthRateLimit } from "./stage.ts";
 import { AuthDatabase, appSessionsPerCall, boundAuthAdapter } from "./auth-database.ts";
 import { invocationSql } from "./invocation-database.ts";
@@ -59,6 +60,8 @@ export const cloudAuth = (send: SendAuthEmail, onboarding: typeof Onboarding.Ser
       ),
     };
     const secrets = yield* cloudSecrets.pipe(Effect.orDie);
+    const v1Forward = yield* v1McpForwardSecret;
+    const v1Handoff = yield* v1SessionHandoffSecret;
     const meter = yield* BillingMeter.pipe(Effect.provide(yield* billingLive));
     // Better Auth invokes Promise callbacks. Carry the calling request's scope,
     // bindings and cancellation through that boundary, isolated per invocation.
@@ -132,7 +135,20 @@ export const cloudAuth = (send: SendAuthEmail, onboarding: typeof Onboarding.Ser
             ),
           ),
         ),
-      observation.refreshRejected,
+      {
+        onRefreshRejected: observation.refreshRejected,
+        // A person approved a new agent, by consent or by a device's code: the agent can connect.
+        onGrantCreated: (grant) =>
+          runCallback(
+            recordUsage("agent_connected", { grant_kind: grant.kind }).pipe(
+              Effect.provideService(CurrentUserId, grant.userId),
+              Effect.provideService(CurrentUsage, {
+                source: "dashboard",
+                client_id: grant.clientId,
+              }),
+            ),
+          ),
+      },
     );
     const database = yield* AuthDatabase;
     const makeInstance = (secret: string) =>
@@ -242,7 +258,7 @@ export const cloudAuth = (send: SendAuthEmail, onboarding: typeof Onboarding.Ser
       resourceOrigins: settings.resourceOrigins,
       issuer: settings.issuer,
     };
-    const mcpIdentity = mcpAuthentication(origins, bound, withSql);
+    const mcpIdentity = mcpAuthentication(origins, bound, withSql, v1Forward);
     const apiIdentity = Layer.effect(
       ApiAuthentication,
       Effect.gen(function* () {
@@ -299,17 +315,48 @@ export const cloudAuth = (send: SendAuthEmail, onboarding: typeof Onboarding.Ser
         ),
         Effect.map(HttpServerResponse.setHeader("cache-control", "no-store")),
       );
+    const browserSession = (headers: Headers) =>
+      nativeCall((instance) =>
+        instance.api.getSession({
+          headers,
+          query: { disableRefresh: true, disableCookieCache: true },
+        }),
+      ).pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(BrowserSession)),
+        Effect.mapError(() => new AuthenticationUnavailable()),
+      );
+    const v1HandoffHandler = v1SessionHandoff({
+      secret: v1Handoff,
+      withSql,
+      currentUser: (headers) =>
+        browserSession(headers).pipe(Effect.map((session) => session?.user.id)),
+      // Inside the auth callbacks' context, like a request to the handler: the session hooks
+      // record the sign-in.
+      startSession: (headers, userId, organizationId) =>
+        Effect.gen(function* () {
+          const [instance, bind] = yield* bound;
+          const context = yield* Effect.context<
+            RuntimeContext | HttpServerRequest.HttpServerRequest | Scope.Scope
+          >();
+          const result = yield* Effect.tryPromise({
+            try: (signal) =>
+              callbacks.run({ context, signal }, () =>
+                bind(() =>
+                  instance.api.startV1HandoffSession({
+                    headers,
+                    body: { userId, organizationId },
+                    returnHeaders: true,
+                  }),
+                ),
+              ),
+            catch: () => new V1HandoffSessionFailed(),
+          });
+          return result.headers.getSetCookie();
+        }),
+    });
     return {
-      browserSession: (headers: Headers) =>
-        nativeCall((instance) =>
-          instance.api.getSession({
-            headers,
-            query: { disableRefresh: true, disableCookieCache: true },
-          }),
-        ).pipe(
-          Effect.flatMap(Schema.decodeUnknownEffect(BrowserSession)),
-          Effect.mapError(() => new AuthenticationUnavailable()),
-        ),
+      browserSession,
+      v1Handoff: v1HandoffHandler,
       identity,
       mcpIdentity,
       apiIdentity,

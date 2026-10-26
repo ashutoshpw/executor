@@ -91,19 +91,38 @@ export const mcpCatalog = (options: McpCatalogOptions, kinds: OperationKinds) =>
         : tool.annotations?.readOnlyHint === true
           ? "query"
           : "mutation";
+    /**
+     * The server's hints with its read-only hint replaced by the tool's kind. The app's `kinds` is
+     * its own classification, so listings and the approval rules that read `toolAnnotations` both
+     * see it rather than the server's claim.
+     */
+    const annotationsOf = (tool: McpToolSummary) => ({
+      ...tool.annotations,
+      readOnlyHint: kindOf(tool) === "query",
+    });
+    /**
+     * Only the app's `kinds` confirms a kind. The server's `readOnlyHint` is its claim: a server can
+     * label a tool that writes read-only, so Executor never tells an agent the call only read.
+     */
+    const confirmed = (tool: McpToolSummary) =>
+      Object.hasOwn(kinds, tool.name) ? { kindConfirmed: true } : {};
     const summarize = (tool: McpToolSummary) => ({
       name: tool.name,
       description: tool.description ?? tool.title ?? tool.name,
       readOnly: kindOf(tool) === "query",
+      ...confirmed(tool),
       ...(tool.title === undefined ? {} : { title: tool.title }),
-      annotations: { ...tool.annotations, readOnlyHint: kindOf(tool) === "query" },
+      annotations: annotationsOf(tool),
     });
     /** The operation a call runs; descriptions are rendered from it, so they cannot differ. */
     const operation = (tool: McpToolMetadata) =>
       adaptMcpTool(client, tool).pipe(
         Effect.map((adapted) =>
           nativeOperation(
-            protocolOperations({ selected: adapted }, { selected: kindOf(tool) }).selected,
+            protocolOperations(
+              { selected: { ...adapted, annotations: annotationsOf(tool) } },
+              { selected: kindOf(tool) },
+            ).selected,
           ),
         ),
       );
@@ -112,7 +131,12 @@ export const mcpCatalog = (options: McpCatalogOptions, kinds: OperationKinds) =>
         Effect.flatMap((selected) =>
           selected === undefined
             ? Effect.succeed(undefined)
-            : operationDescription(tool.name, "", selected),
+            : operationDescription(tool.name, "", selected).pipe(
+                Effect.map(({ kindConfirmed: _declared, ...described }) => ({
+                  ...described,
+                  ...confirmed(tool),
+                })),
+              ),
         ),
       );
     const router: DynamicRouter = {

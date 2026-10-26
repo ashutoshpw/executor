@@ -18,7 +18,8 @@ export const selfHostDatabaseSchema = Layer.effect(
     const domain = yield* publishingDomain;
     yield* migrateHostedSchemas(
       {
-        ...selfHostAuthOptions(settings, []),
+        // Migrations read plugin schemas only. SSO adds none, so this reads no provider metadata.
+        ...selfHostAuthOptions(settings, [], null),
         database,
         secret: Redacted.value(settings.secret),
       },

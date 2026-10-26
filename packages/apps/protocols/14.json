@@ -186,6 +186,14 @@
                   "literal": true
                 },
                 "isOptional": true
+              },
+              {
+                "name": "sharedDefinitions",
+                "type": {
+                  "_tag": "Literal",
+                  "literal": true
+                },
+                "isOptional": true
               }
             ]
           },
@@ -1069,6 +1077,7 @@
     "response",
     "catalog",
     "catalogSummary",
+    "sharedCatalog",
     "skills",
     "elicitationRequest",
     "elicitationReply",

@@ -193,6 +193,11 @@ export const DeclaredRequirements = Schema.Struct({
       skillSources: Schema.optionalKey(Schema.Literal(true)),
       /** Accepts scheduled inspection. Earlier builds reject it as an excess field. */
       scheduledTools: Schema.optionalKey(Schema.Literal(true)),
+      /**
+       * Accepts inspect definitions and answers it with a shared catalog. Earlier builds reject it
+       * as an excess field.
+       */
+      sharedDefinitions: Schema.optionalKey(Schema.Literal(true)),
     }),
   ),
   /**
@@ -264,7 +269,10 @@ export const InvocationDeadline = Schema.Finite.check(Schema.isGreaterThanOrEqua
 /**
  * Serializable live tool metadata; executable callbacks never cross this boundary. `name` is the
  * tool's full dotted path. `router` is the path of the router that owns it, omitted at the root.
- * `readOnly` marks a query; a tool without it is a mutation.
+ * `readOnly` marks a query; a tool without it is a mutation. `kindConfirmed` marks a kind that the
+ * app's code or the tool's protocol fixes, such as a declared operation, a `kinds` entry or an HTTP
+ * method, rather than an upstream claim such as an MCP server's `readOnlyHint`. Executor tells an
+ * agent that a call only read only when both are set.
  */
 export const HostedTool = Schema.Struct({
   schedules: Schema.optionalKey(Schema.Array(OperationSchedule)),
@@ -274,6 +282,7 @@ export const HostedTool = Schema.Struct({
   description: Schema.String,
   inputSchema: JsonObject,
   readOnly: Schema.optionalKey(Schema.Boolean),
+  kindConfirmed: Schema.optionalKey(Schema.Boolean),
   title: Schema.optionalKey(Schema.String),
   outputSchema: Schema.optionalKey(JsonObject),
   annotations: Schema.optionalKey(ToolAnnotations),
@@ -341,6 +350,37 @@ export const HostedCatalogSummary = Schema.Struct({
 });
 export type HostedCatalogSummary = typeof HostedCatalogSummary.Type;
 
+/** A tool schema whose `$defs` a shared catalog sends once, beside its tools. */
+export const SharedSchemaKey = Schema.Literals(["inputSchema", "outputSchema"]);
+export type SharedSchemaKey = typeof SharedSchemaKey.Type;
+
+/**
+ * A tool of a shared catalog. The `$defs` of each schema `shared` names is the position of its
+ * entries in the catalog's `defs`; the tool's other fields are as `HostedTool`'s.
+ */
+export const HostedSharedTool = Schema.Struct({
+  ...HostedTool.fields,
+  shared: Schema.optionalKey(Schema.Array(SharedSchemaKey)),
+});
+export type HostedSharedTool = typeof HostedSharedTool.Type;
+
+/**
+ * A catalog that sends each `$defs` its tools' schemas hold once, and each definition in them
+ * once. Routers such as the OpenAPI importer give every tool the definitions its schemas reach,
+ * which for a densely connected document is most of the document again for each tool, under the
+ * same few hundred `$defs`. Putting each tool's `$defs` back gives the `HostedCatalog` the bundle
+ * evaluated. Only builds that declare the sharedDefinitions capability send it, and only when
+ * the inspection asks.
+ */
+export const HostedSharedCatalog = Schema.Struct({
+  tools: Schema.Array(HostedSharedTool),
+  routers: Schema.Array(HostedRouter),
+  definitions: Schema.Array(JsonValue),
+  /** Each distinct `$defs`, its entries naming positions in `definitions`. */
+  defs: Schema.Array(Schema.Record(Schema.String, Schema.Int)),
+});
+export type HostedSharedCatalog = typeof HostedSharedCatalog.Type;
+
 /**
  * A skill catalog and whether any of it came from `dynamicSkills`. Without a live loader the
  * catalog is determined by the build and its evaluation inputs; with one it reflects a publisher.
@@ -395,6 +435,11 @@ export const HostRequest = Schema.Union([
      * Only builds that declare the scheduledTools capability accept this.
      */
     scheduled: Schema.optionalKey(Schema.Literal(true)),
+    /**
+     * Answer with a HostedSharedCatalog, each shared `$defs` entry sent once. Only builds that
+     * declare the sharedDefinitions capability accept this.
+     */
+    definitions: Schema.optionalKey(Schema.Literal("shared")),
   }),
   Schema.Struct({
     operation: Schema.Literal("skills"),
@@ -562,6 +607,7 @@ export const messageDirections = {
   requirements: "bundle",
   catalog: "bundle",
   catalogSummary: "bundle",
+  sharedCatalog: "bundle",
   tools: "bundle",
   toolSummaries: "bundle",
   skills: "bundle",
@@ -586,6 +632,7 @@ export const current = {
     requirements: DeclaredRequirements,
     catalog: HostedCatalog,
     catalogSummary: HostedCatalogSummary,
+    sharedCatalog: HostedSharedCatalog,
     skills: SkillCatalogResponse,
     elicitationRequest: FormElicitation,
     elicitationReply: ElicitationReply,

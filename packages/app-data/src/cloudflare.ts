@@ -65,10 +65,14 @@ export const FacetResult = Schema.Struct({
     }),
   ),
 });
-/** What started for one facet call: the facet itself, and its Worker in the Worker Loader. */
+/**
+ * What started for one facet call: the facet itself, and its Worker in the Worker Loader.
+ * `recycled` marks a facet the supervisor restarted because the call found it idle.
+ */
 interface FacetStarts {
   facet: boolean;
   worker: boolean;
+  recycled: boolean;
 }
 const causes = new WeakMap<AppDatabaseError, unknown>();
 /** Internal diagnostics, deliberately absent from the serialized error. */
@@ -393,6 +397,14 @@ export const makeFacetSupervisor = (
         if (active !== loaded) {
           state.facets.abort("data", "Execution context changed");
           active = loaded;
+        } else if (admission.running === 1 && finishing === 0) {
+          // Cloudflare counts a facet's subrequests over the facet's whole life, not per call
+          // (cloudflare/workerd#7572), so a facet kept running across calls runs out of them and
+          // every later request fails until it restarts. A call that finds the facet idle, with no
+          // call or release running in it, restarts it and gets the full allowance a Worker
+          // invocation has. Calls that overlap it share that allowance.
+          state.facets.abort("data", "Fresh subrequest allowance");
+          starts.recycled = true;
         }
         if (!unloadReplacedFacets) return yield* select(name, invocation.app, load, starts);
         // Also covers a facet an evicted supervisor left loaded, which `active` never saw.
@@ -422,7 +434,7 @@ export const makeFacetSupervisor = (
                   modules: workerModules(bundle.modules),
                   compatibilityDate: "2026-07-30",
                   // The strictly-public flag would override this outbound and bypass it.
-                  compatibilityFlags: ["nodejs_compat"],
+                  compatibilityFlags: ["nodejs_compat", "no_brotli_content_encoding"],
                   globalOutbound: globalOutbound(app),
                 };
               });
@@ -720,7 +732,7 @@ export const makeFacetSupervisor = (
                 );
                 const started = yield* Clock.currentTimeNanos;
                 let waitMs = 0;
-                const starts: FacetStarts = { facet: false, worker: false };
+                const starts: FacetStarts = { facet: false, worker: false, recycled: false };
                 // Bounded attributes on the supervisor's span, when its host traces the call.
                 const annotate = () =>
                   Effect.annotateCurrentSpan({
@@ -728,6 +740,7 @@ export const makeFacetSupervisor = (
                     "executor.supervisor.isolate_cold": cold && firstInIsolate,
                     "executor.facet.cold": starts.facet,
                     "executor.facet.worker_cold": starts.worker,
+                    "executor.facet.recycled": starts.recycled,
                     "executor.data.write": invocation.write,
                   });
                 const result = yield* Effect.raceFirst(

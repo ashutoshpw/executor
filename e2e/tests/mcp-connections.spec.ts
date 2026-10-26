@@ -566,6 +566,12 @@ return { first, second };`,
         yield* browser.use("Open Connections", (page) =>
           page.goto(`/org/${actors.organization.slug}/connect`),
         );
+        yield* browser.use("Connect with full access", (page) =>
+          page
+            .getByRole("listitem", { name: "Full access" })
+            .getByRole("button", { name: "Connect", exact: true })
+            .click(),
+        );
         yield* browser.use("Show assistant-specific instructions", (page) =>
           page.getByRole("heading", { name: "Connect an assistant", exact: true }).waitFor(),
         );
@@ -624,6 +630,14 @@ return { first, second };`,
             .getByRole("img")
             .waitFor({ state: "visible" }),
         );
+        // Radix paints the dialog before the effect that makes it the topmost layer and moves focus
+        // into it. Escape pressed before that effect closes the setup dialog beneath it instead.
+        yield* browser.use("The full-size screenshot takes focus", (page) =>
+          page
+            .getByRole("dialog", { name: "Claude’s Add custom connector dialog" })
+            .and(page.locator(":focus-within"))
+            .waitFor(),
+        );
         yield* browser.use("Close the full-size screenshot", (page) =>
           page.keyboard.press("Escape"),
         );
@@ -637,19 +651,19 @@ return { first, second };`,
               .getAttribute("href"),
           ),
         ).toBe("https://cursor.com/marketplace/usefulsoftwareco");
-        yield* browser.use("Choose Grok Bot plugin setup", (page) =>
+        yield* browser.use("Choose Grok Bot setup", (page) =>
           page.getByRole("button", { name: "Grok Bot", exact: true }).click(),
         );
-        expect(
-          yield* browser.use("Grok Bot uses the same plugin", (page) =>
-            page
-              .getByRole("link", { name: "Install Executor for Grok Bot", exact: true })
-              .getAttribute("href"),
-          ),
-        ).toBe("https://cursor.com/marketplace/usefulsoftwareco");
-        yield* browser.use("Grok Bot installs the plugin by command", (page) =>
-          page.getByText("/add-plugin executor", { exact: true }).waitFor(),
+        yield* browser.use("Grok Bot gets a message to add the MCP server", (page) =>
+          page
+            .getByText("Add Executor as a remote MCP server named executor", { exact: false })
+            .waitFor(),
         );
+        expect(
+          yield* browser.use("Grok Bot no longer links to the plugin", (page) =>
+            page.getByRole("link", { name: "Install Executor for Grok Bot", exact: true }).count(),
+          ),
+        ).toBe(0);
         yield* browser.checkpoint("Assistant setup with sign-in instructions");
         yield* browser.use("Choose personal access token setup", (page) =>
           page.getByRole("tab", { name: "Personal access token", exact: true }).click(),
@@ -666,8 +680,9 @@ return { first, second };`,
               ),
           ),
         ).toBe(`/account/tokens?organization=${actors.organization.slug}`);
+        yield* browser.use("Close the full-access setup", (page) => page.keyboard.press("Escape"));
         yield* browser.use("Start a new connection", (page) =>
-          page.getByRole("button", { name: "Create a scoped connection", exact: true }).click(),
+          page.getByRole("link", { name: "New connection", exact: true }).click(),
         );
         yield* browser.use("Name the connection", (page) =>
           page.getByLabel("Name", { exact: true }).fill("Support assistant"),
@@ -697,6 +712,9 @@ return { first, second };`,
         expect(saved?.policy.apps).toEqual([
           { app: app.id, runsAs: [{ kind: "app" }], tools: { kind: "readOnly" } },
         ]);
+        yield* browser.use("Open the connection's setup", (page) =>
+          page.getByRole("button", { name: "Connect", exact: true }).click(),
+        );
         yield* browser.use("The connection shows its own MCP URL", (page) =>
           page
             .getByText(`${targetHosts(target).mcp}/mcp?connection=${saved?.id}`)
@@ -717,17 +735,46 @@ return { first, second };`,
           `codex mcp add executor --url '${targetHosts(target).mcp}/mcp?connection=${saved?.id}'`,
         );
         yield* browser.checkpoint("Saved connection with its MCP URL");
-        yield* browser.use("Revoke the connection", (page) =>
-          page.getByRole("button", { name: "Revoke", exact: true }).click(),
-        );
-        yield* browser.use("Confirm revocation", (page) =>
-          page.getByRole("button", { name: "Revoke connection", exact: true }).click(),
-        );
-        yield* browser.use("The page returns to agent setup", (page) =>
+        yield* browser.use("Close the connection's setup", (page) => page.keyboard.press("Escape"));
+        yield* browser.use("Return to the connection list", (page) =>
           page
-            .getByRole("button", { name: "Create a scoped connection", exact: true })
+            .getByRole("navigation")
+            .getByRole("link", { name: "Connections", exact: true })
+            .click(),
+        );
+        yield* browser.use("The list shows the connection's app on its card", (page) =>
+          page
+            .getByRole("listitem", { name: "Support assistant" })
+            .getByText(app.name, { exact: true })
             .waitFor({ state: "visible" }),
         );
+        yield* browser.checkpoint("Connections listing full access and the saved connection");
+        yield* browser.use("Open the connection from its card", (page) =>
+          page
+            .getByRole("listitem", { name: "Support assistant" })
+            .getByRole("link", { name: "Support assistant", exact: true })
+            .click(),
+        );
+        yield* browser.use("Open the connection's actions", (page) =>
+          page.getByRole("button", { name: "More actions", exact: true }).click(),
+        );
+        yield* browser.use("Revoke the connection", (page) =>
+          page.getByRole("menuitem", { name: "Revoke connection", exact: true }).click(),
+        );
+        yield* browser.use("Confirm revocation", (page) =>
+          page
+            .getByRole("dialog")
+            .getByRole("button", { name: "Revoke connection", exact: true })
+            .click(),
+        );
+        expect(
+          yield* browser.use("The page returns to the list without the connection", (page) =>
+            page
+              .getByRole("listitem", { name: "Full access" })
+              .waitFor({ state: "visible" })
+              .then(() => page.getByRole("listitem", { name: "Support assistant" }).count()),
+          ),
+        ).toBe(0);
         expect(yield* list).toEqual([]);
       }),
     ),

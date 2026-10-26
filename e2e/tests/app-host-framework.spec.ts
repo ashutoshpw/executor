@@ -92,7 +92,7 @@ layer(HostedLive, { excludeTestServices: true })("Host framework", (it) => {
         yield* serverControl("start");
         const refused = yield* deploy(appsVersion);
         expect(refused.status).toBe(422);
-        expect(refused.body).toMatchObject({ _tag: "DeploymentBuildFailed" });
+        expect(refused.body).toMatchObject({ _tag: "VersionBuildFailed" });
         yield* deployed(published);
         // The retained build of the app that used the host's files keeps running.
         expect(yield* framework(own.id)).toEqual(current);

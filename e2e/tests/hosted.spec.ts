@@ -73,7 +73,7 @@ layer(HostedLive, { excludeTestServices: true })("Self-host", (it) => {
               .getByRole("link", { name: "Apps", exact: true })
               .first()
               .click()
-              .then(() => page.getByRole("link", { name: "Add app", exact: true }))
+              .then(() => page.getByRole("button", { name: "Add app", exact: true }))
               .then((add) => add.waitFor({ state: "visible" })),
           );
           yield* browser.checkpoint(`${role} signed in through self-host password login`);

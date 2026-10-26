@@ -13,7 +13,8 @@ import type {
   Query,
 } from "../../contracts/dashboard.ts";
 import type { AppAcknowledgement } from "../../contracts/app-management.ts";
-import { Empty, LoadingRows, ProviderIcon, SearchInput } from "./common.tsx";
+import { Empty, ProviderIcon, SearchInput } from "./common.tsx";
+import { CatalogCountSkeleton, CatalogPageFrame, CatalogRowsSkeleton } from "./loading.tsx";
 import { Button } from "../components/button.tsx";
 import {
   Dialog,
@@ -24,6 +25,45 @@ import {
 } from "../components/dialog.tsx";
 import { Input } from "../components/input.tsx";
 import { useIncrementalList } from "./incremental-list.tsx";
+
+/**
+ * The installed copy of each catalog package, by package name. Installs record the catalog package
+ * as their copy origin, so the most recent copy of a package is the one a catalog row leads to.
+ */
+export function installedCatalogApps(apps: readonly App[] | undefined): ReadonlyMap<string, App> {
+  const installed = new Map<string, App>();
+  for (const app of apps ?? []) {
+    const name = app.copiedFrom?.name;
+    const latest = name === undefined ? undefined : installed.get(name);
+    if (name !== undefined && (!latest || app.createdAt > latest.createdAt))
+      installed.set(name, app);
+  }
+  return installed;
+}
+
+/** Runs one command with its input and resolves with that row's own result. */
+function useRunCommand<IE>() {
+  const registry = useContext(RegistryContext);
+  return async <I, A>(command: MutationProps<I, A, IE>["mutation"], input: I) => {
+    const release = registry.mount(command);
+    try {
+      registry.set(command, input);
+      return await Effect.runPromiseExit(
+        AtomRegistry.getResult(registry, command, { suspendOnWaiting: true }),
+      );
+    } finally {
+      release();
+    }
+  };
+}
+
+/** Runs one catalog entry's install and resolves with that entry's own result. */
+export function useCatalogInstall<IE>(
+  mutation: (entry: string) => MutationProps<InstallApp, DeployedApp, IE>["mutation"],
+) {
+  const run = useRunCommand<IE>();
+  return (entry: CatalogEntry, input: InstallApp) => run(mutation(entry.id), input);
+}
 
 /** A public listing's copy input: the name for the new app, and how the host acknowledges it. */
 type PublicCopyInput = { readonly name: string; readonly onApp: AppAcknowledgement };
@@ -61,6 +101,7 @@ export function CatalogPage<E, IE, P>({
   InstallFailure,
   back,
   action,
+  create,
   inventory,
   open,
   publications,
@@ -72,7 +113,10 @@ export function CatalogPage<E, IE, P>({
   readonly mutation: (entry: string) => MutationProps<InstallApp, DeployedApp, IE>["mutation"];
   readonly InstallFailure: MutationProps<InstallApp, DeployedApp, IE>["Failure"];
   readonly back: ReactNode;
+  /** The heading's action, beside the title. */
   readonly action?: ReactNode;
+  /** Offers the ways to make an app when nothing here fits. */
+  readonly create?: ReactNode;
   /** The apps already installed; a failed read just leaves every row on Add. */
   readonly inventory: Query<Inventory, unknown>;
   /** A link to the installed app, rendered inside the row's Open button. */
@@ -88,27 +132,10 @@ export function CatalogPage<E, IE, P>({
   const result = useAtomValue(query);
   const publicResult = useAtomValue(publications);
   const retryPublic = useAtomRefresh(publications);
-  const apps = Option.getOrUndefined(AsyncResult.value(useAtomValue(inventory)))?.apps;
-  const installedByPackage = new Map<string, App>();
-  for (const app of apps ?? []) {
-    const name = app.copiedFrom?.name;
-    const latest = name === undefined ? undefined : installedByPackage.get(name);
-    if (name !== undefined && (!latest || app.createdAt > latest.createdAt))
-      installedByPackage.set(name, app);
-  }
-  const registry = useContext(RegistryContext);
-  /** Runs one command with its input and resolves with that row's own result. */
-  const run = async <I, A>(command: MutationProps<I, A, IE>["mutation"], input: I) => {
-    const release = registry.mount(command);
-    try {
-      registry.set(command, input);
-      return await Effect.runPromiseExit(
-        AtomRegistry.getResult(registry, command, { suspendOnWaiting: true }),
-      );
-    } finally {
-      release();
-    }
-  };
+  const installedByPackage = installedCatalogApps(
+    Option.getOrUndefined(AsyncResult.value(useAtomValue(inventory)))?.apps,
+  );
+  const run = useRunCommand<IE>();
   const attempt = (row: Row, name: string) =>
     row.kind === "official"
       ? run(mutation(row.entry.id), { entry: row.entry.id, name })
@@ -182,30 +209,30 @@ export function CatalogPage<E, IE, P>({
     );
   const visible = useIncrementalList(entries.length, term, 50);
   return (
-    <div className="page w-full shrink-0 max-w-315 [padding:24px_24px_48px] my-0 mx-auto max-[1000px]:[padding:20px_20px_40px] max-[740px]:[padding:18px_max(16px,_env(safe-area-inset-right))_max(32px,_env(safe-area-inset-bottom))_max(16px,_env(safe-area-inset-left))]">
-      {back}
-      <div className="page-heading gap-4 flex justify-between items-center min-h-12 mb-4.5 [&_p]:text-muted-foreground [&_p]:text-[13px] [&_p]:mt-1.25 [&_>_div]:min-w-0 [&_>_div]:wrap-anywhere max-[740px]:items-start max-[740px]:mb-4.5 max-[740px]:[&_p]:leading-[1.6] max-[740px]:[&_>_[data-slot='button']]:mt-0.25 max-[740px]:[.setup-page_&]:min-h-0">
-        <div>
-          <h1 className="text-[22px] font-semibold tracking-[-0.035em] leading-[1.35] [&>span]:text-muted-foreground [&>span]:text-[13px] [&>span]:font-mono [&>span]:font-normal [&>span]:ml-[8px] [&>span]:align-middle">
-            Add app
-          </h1>
-          <p>Find a published app or connect a service.</p>
-        </div>
-        {action}
-      </div>
-      <div className="list-toolbar flex flex-wrap items-center gap-[10px_16px] mb-4">
-        <SearchInput autoFocus value={search} onChange={setSearch} placeholder="Search apps…" />
-        <span className="muted text-muted-foreground">
-          {entries.length.toLocaleString("en-US")} apps
-        </span>
-      </div>
+    <CatalogPageFrame
+      back={back}
+      action={action}
+      toolbar={
+        <>
+          <SearchInput autoFocus value={search} onChange={setSearch} placeholder="Search apps…" />
+          {(AsyncResult.isInitial(result) || AsyncResult.isInitial(publicResult)) &&
+          !entries.length ? (
+            <CatalogCountSkeleton />
+          ) : (
+            <span className="muted min-w-20 text-muted-foreground tabular-nums">
+              {entries.length.toLocaleString("en-US")} apps
+            </span>
+          )}
+        </>
+      }
+    >
       {AsyncResult.isFailure(result) && <Failure cause={result.cause} retry={retry} />}
       {AsyncResult.isFailure(publicResult) && (
         <PublicationFailure cause={publicResult.cause} retry={retryPublic} />
       )}
       {failure && conflict === undefined && <InstallFailure cause={failure} />}
       {!entries.length && (AsyncResult.isInitial(result) || AsyncResult.isInitial(publicResult)) ? (
-        <LoadingRows />
+        <CatalogRowsSkeleton />
       ) : !entries.length &&
         (AsyncResult.isFailure(result) ||
           AsyncResult.isFailure(publicResult)) ? null : !entries.length ? (
@@ -216,14 +243,10 @@ export function CatalogPage<E, IE, P>({
               <Button variant="outline" onClick={() => setSearch("")}>
                 Clear search
               </Button>
-            ) : (
-              action
-            )
+            ) : undefined
           }
         >
-          {search
-            ? "Try another name or connect your own service."
-            : "Connect your own service to get started."}
+          {create ? <MissingApp create={create} /> : "Try another name."}
         </Empty>
       ) : (
         <>
@@ -250,7 +273,7 @@ export function CatalogPage<E, IE, P>({
                     </span>
                   </div>
                   {installed ? (
-                    <Button variant="outline" size="sm" asChild>
+                    <Button variant="outline" size="sm" className="min-w-21" asChild>
                       {open(installed)}
                     </Button>
                   ) : (
@@ -258,6 +281,7 @@ export function CatalogPage<E, IE, P>({
                       type="button"
                       variant="outline"
                       size="sm"
+                      className="min-w-21"
                       aria-label={`Add ${title}`}
                       disabled={adding.has(key)}
                       onClick={() => void add(row, defaultName(row))}
@@ -270,6 +294,11 @@ export function CatalogPage<E, IE, P>({
             })}
           </div>
           {visible.sentinel}
+          {create && (
+            <p className="mt-6 text-center text-[13px] text-muted-foreground">
+              <MissingApp create={create} />
+            </p>
+          )}
         </>
       )}
       <Dialog
@@ -326,6 +355,10 @@ export function CatalogPage<E, IE, P>({
           </form>
         </DialogContent>
       </Dialog>
-    </div>
+    </CatalogPageFrame>
   );
+}
+
+function MissingApp({ create }: { readonly create: ReactNode }) {
+  return <>Can’t find what you’re looking for? {create}</>;
 }

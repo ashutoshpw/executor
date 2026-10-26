@@ -11,6 +11,7 @@ import {
   TemplateError,
   type CredentialPlacement,
   type GeneratedAuthMethod,
+  type GeneratedFixedAccount,
   type GeneratedHealthCheck,
   type GeneratedToolRules,
   type ProtocolAppOptions,
@@ -74,6 +75,55 @@ const sentValues = (method: GeneratedAuthMethod) => {
       .map((placement) => `${key(placement.name)}: ${value(placement)}`)
       .join(", ");
   return `{ headers: { ${entries("header")} }, query: { ${entries("query")} } }`;
+};
+
+/** The fixed account's sign-in method: its fields, sent where the placements say. */
+const fixedMethod = (fixed: GeneratedFixedAccount): GeneratedAuthMethod => ({
+  kind: "secrets",
+  label: "Fixed credentials",
+  fields: fixed.fields,
+  placements: fixed.placements,
+});
+
+/**
+ * The second provider of an app with a fixed account, the account's type, and
+ * `requestCredentials`, which sends the selected account's credentials over the fixed ones, as v1
+ * sent a connection's over its integration's.
+ */
+const fixedDeclarations = (
+  name: string,
+  fixed: GeneratedFixedAccount,
+  hosts: readonly string[],
+) => {
+  const method = fixedMethod(fixed);
+  return `
+/**
+ * Credentials every request sends beside the selected account's, held by one account the app's
+ * managers link for everyone. They go only to the same hosts.
+ */
+export const fixedProvider = defineProvider({
+  name: ${JSON.stringify(`${name} fixed credentials`)},
+  hosts: [${hosts.map((host) => JSON.stringify(host)).join(", ")}],
+  auth: {
+    fixed: ${methodDeclaration(method)},
+  },
+})
+
+/** The fixed credentials' account. */
+export type FixedAccount = ${accountType("fixed", method)}
+
+/** The headers and query parameters that send the fixed account's credentials. */
+export const fixedCredentials = (
+  account: FixedAccount,
+): { readonly headers: Record<string, string>; readonly query: Record<string, string> } => (${sentValues(method)})
+
+/** The selected account's credentials, sent over the fixed account's. */
+export const requestCredentials = (account: Account, fixedAccount: FixedAccount) => {
+  const own = credentials(account)
+  const shared = fixedCredentials(fixedAccount)
+  return { headers: { ...shared.headers, ...own.headers }, query: { ...shared.query, ...own.query } }
+}
+`;
 };
 
 /** The value at a path of a response body as a non-empty string of at most 255 characters. */
@@ -248,8 +298,10 @@ export const providerFile = (
   extra: { readonly imports?: string; readonly body?: string; readonly health?: string } = {},
 ) => {
   const methods = Object.entries(options.methods);
+  const fixed = options.fixedAccount;
+  // A check gets only its own account, so it cannot send the fixed account's credentials.
   const generated =
-    extra.health === undefined && options.health !== undefined
+    extra.health === undefined && options.health !== undefined && fixed === undefined
       ? healthCode(options.health, options.url)
       : undefined;
   const constructors = [
@@ -257,10 +309,11 @@ export const providerFile = (
       ...methods.flatMap(([, method]) =>
         method.kind === "secrets" ? ["object", "secrets", "string"] : ["oauth2"],
       ),
+      ...(fixed === undefined ? [] : ["object", "secrets", "string"]),
       ...(generated === undefined ? [] : ["ProviderError"]),
     ]),
   ].sort();
-  const health = extra.health ?? generated?.health;
+  const health = fixed === undefined ? (extra.health ?? generated?.health) : undefined;
   return `import { defineProvider, ${constructors.join(", ")} } from "apps"
 ${extra.imports ?? ""}
 export const provider = defineProvider({
@@ -287,7 +340,7 @@ ${methods.map(([name, method]) => `    case ${JSON.stringify(name)}:\n      retu
 
 /** Fixed, non-credential headers and query parameters sent on every request. */
 export const fixed = ${json({ headers: options.headers ?? {}, query: options.queryParams ?? {} })}
-${generated?.body ?? ""}${extra.body ?? ""}`;
+${fixed === undefined ? "" : fixedDeclarations(options.name, fixed, hosts)}${generated?.body ?? ""}${extra.body ?? ""}`;
 };
 
 const lowerSnake = `name.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "tool"`;
@@ -302,8 +355,22 @@ export const toolsFile = (rules: GeneratedToolRules | undefined) => {
     names?.kind === "lower_snake" && Object.keys(names.overrides ?? {}).length > 0
       ? names.overrides
       : undefined;
-  if (names === undefined && omitted.length === 0 && Object.keys(approvals).length === 0)
+  // A fixed map names every tool the app exposes, so only a live list has tools the rules miss.
+  const otherwise = names?.kind === "map" ? undefined : rules.otherwise;
+  if (
+    names === undefined &&
+    omitted.length === 0 &&
+    Object.keys(approvals).length === 0 &&
+    otherwise === undefined
+  )
     return undefined;
+  const known =
+    otherwise === undefined
+      ? ""
+      : `/** The names the rules decide; the server may list others. */
+const known = new Set<string>(${json([...otherwise.known].sort())})
+
+`;
   const exposed =
     names?.kind === "map"
       ? `const names: Record<string, string> = ${json(
@@ -324,7 +391,9 @@ ${
 const overrides: Record<string, string> = ${json(overrides)}
 `
 }
-/** The name each tool is exposed under. Omitted tools are left out. */
+${known}/** The name each tool is exposed under. Omitted tools are left out${
+          otherwise?.rule === "omitted" ? ", and so are tools the rules do not name" : ""
+        }. */
 export const exposedName = (name: string): string | undefined => {
   const exposed = ${
     names?.kind === "lower_snake"
@@ -335,7 +404,7 @@ export const exposedName = (name: string): string | undefined => {
         ? `name.replace(/^(query|mutation)_/, "$1.")`
         : "name"
   }
-  return omitted.has(exposed) ? undefined : exposed
+  return omitted.has(exposed)${otherwise?.rule === "omitted" ? " || !known.has(exposed)" : ""} ? undefined : exposed
 }
 `;
   return `import { always, never } from "apps/operations/approval"
@@ -345,9 +414,13 @@ const approvals: Record<string, "always" | "never"> = ${json(
     Object.fromEntries(Object.entries(approvals).sort(([a], [b]) => (a < b ? -1 : 1))),
   )}
 
-/** A tool's own approval rule, by exposed name, or undefined to use the app's default. */
+/** A tool's own approval rule, by exposed name, or undefined to use the app's default${
+    otherwise?.rule === "always" ? "; a tool the rules do not name asks always" : ""
+  }. */
 export const approval = (name: string) =>
-  approvals[name] === "always" ? always() : approvals[name] === "never" ? never() : undefined
+  approvals[name] === "always" ? always() : approvals[name] === "never" ? never() : ${
+    otherwise?.rule === "always" ? "known.has(name) ? undefined : always()" : "undefined"
+  }
 `;
 };
 
@@ -373,6 +446,34 @@ const publicHeaders = (headers: Readonly<Record<string, string>> | undefined) =>
 const appImports = (names: readonly string[]) =>
   `import { ${[...new Set(names)].sort().join(", ")} } from "apps"`;
 
+/**
+ * The account requirements an app with sign-in methods declares, the factory's parameters for
+ * them, the accounts its tools take one of, and the expression for one account's credentials:
+ * each member's own accounts (`service`), with `sharedAccounts` also those linked for everyone
+ * (`workspace`), and with a fixed account the one account linked for everyone that holds the fixed
+ * credentials (`fixed`), sent under the selected account's. An account linked in both scopes is
+ * offered once.
+ */
+const accountScopes = (options: Pick<ProtocolAppOptions, "sharedAccounts" | "fixedAccount">) => {
+  const shared = options.sharedAccounts === true;
+  const fixed = options.fixedAccount !== undefined;
+  const app = [
+    ...(shared ? ["workspace: provider.many()"] : []),
+    ...(fixed ? ["fixed: fixedProvider"] : []),
+  ];
+  return {
+    requirements: `{ ${app.length === 0 ? "" : `app: { accounts: { ${app.join(", ")} } }, `}user: { accounts: { service: provider.many() } } }`,
+    context: app.length === 0 ? "user" : "app, user",
+    accounts: shared
+      ? `[...app.accounts.workspace, ...(user?.accounts.service ?? []).filter((account) => !app.accounts.workspace.some((shared) => shared.id === account.id))]`
+      : "user?.accounts.service ?? []",
+    /** The provider file's names the app's index imports. */
+    imports: fixed ? ["fixedProvider", "requestCredentials"] : ["credentials"],
+    sent: (account: string) =>
+      fixed ? `requestCredentials(${account}, app.accounts.fixed)` : `credentials(${account})`,
+  };
+};
+
 /** An MCP server app for known sign-in methods, fixed headers and query parameters. */
 export const mcpAppSource = (options: ProtocolAppOptions & { readonly url: string }) =>
   Effect.gen(function* () {
@@ -380,6 +481,8 @@ export const mcpAppSource = (options: ProtocolAppOptions & { readonly url: strin
     const rules = tools !== undefined;
     const accounts = Object.keys(options.methods).length > 0;
     const defaultRule = `toolAnnotations(tool)?.destructiveHint === true ? always() : undefined`;
+    const scopes = accountScopes(options);
+    const fixedAccount = accounts && options.fixedAccount !== undefined;
     const fixedUrl = yield* Effect.try({
       try: () => queryUrl(options.url, options.queryParams),
       catch: () => failed("The MCP server URL is not valid."),
@@ -394,11 +497,11 @@ export const mcpAppSource = (options: ProtocolAppOptions & { readonly url: strin
       ? `${appImports(["defineApp", ...routerImports])}
 import { mcpRouter } from "apps/mcp"
 import { always } from "apps/operations/approval"
-import { provider, target } from "./provider.ts"
+import { ${fixedAccount ? "fixedProvider, " : ""}provider, target } from "./provider.ts"
 ${rules ? `import { approval, exposedName } from "./tools.ts"\n` : ""}
-export default defineApp({ user: { accounts: { service: provider.many() } } }, async ({ user, signal, cache }) => ({
-  tools: await accountRouter(user?.accounts.service ?? [], async (account) => {
-    const request = target(account)
+export default defineApp(${scopes.requirements}, async ({ ${scopes.context}, signal, cache }) => ({
+  tools: await accountRouter(${scopes.accounts}, async (account) => {
+    const request = target(account${fixedAccount ? ", app.accounts.fixed" : ""})
     return ${ruled(
       "await mcpRouter({ url: request.url, account, cache, headers: request.headers, signal })",
       rules,
@@ -419,11 +522,28 @@ export default defineApp({}, async ({ signal, cache }) => ({
     const provider =
       host === undefined
         ? undefined
-        : providerFile(options, [host], {
-            imports: `import { mcpHealth } from "apps/mcp"\n`,
-            health: `// Check an account by connecting to the server with it and listing its tools.
+        : providerFile(
+            options,
+            [host],
+            fixedAccount
+              ? {
+                  body: `
+export const url = ${JSON.stringify(options.url)}
+
+/** The URL and headers one account's requests use, with the fixed account's credentials. */
+export const target = (account: Account, fixedAccount: FixedAccount) => {
+  const sent = requestCredentials(account, fixedAccount)
+  const url = new URL(${JSON.stringify(options.url)})
+  for (const [name, value] of Object.entries({ ...fixed.query, ...sent.query })) url.searchParams.set(name, value)
+  return { url: url.href, headers: { ...fixed.headers, ...sent.headers } }
+}
+`,
+                }
+              : {
+                  imports: `import { mcpHealth } from "apps/mcp"\n`,
+                  health: `// Check an account by connecting to the server with it and listing its tools.
   health: (check) => mcpHealth(check, target(check.account)),`,
-            body: `
+                  body: `
 export const url = ${JSON.stringify(options.url)}
 
 /** The URL and headers one account's requests use. */
@@ -434,7 +554,8 @@ export const target = (account: Account) => {
   return { url: url.href, headers: { ...fixed.headers, ...sent.headers } }
 }
 `,
-          });
+                },
+          );
     return {
       files: yield* sourceFiles([
         { path: "index.ts", content: index },
@@ -458,8 +579,8 @@ export const openapiAppSource = (
     readonly document: Readonly<Record<string, unknown>>;
     readonly baseUrl?: string | undefined;
     /**
-     * The origins operations are sent to, which receive the credentials: one, or several hosts of
-     * one service. Operations on any other origin are left out.
+     * The origins operations are sent to, which receive the credentials and are the provider's
+     * hosts. Operations on any other origin are left out.
      */
     readonly allowedOrigins: readonly [string, ...string[]];
   },
@@ -473,6 +594,7 @@ export const openapiAppSource = (
       catch: () => failed("The API origin is not valid."),
     });
     const defaultRule = `tool.kind === "mutation" ? always() : undefined`;
+    const scopes = accountScopes(options);
     const routerImports = [
       "withApprovals",
       ...(rules ? ["renameTools"] : []),
@@ -481,14 +603,14 @@ export const openapiAppSource = (
     const router = `liveOpenapiRouter({
       ...configuration,
       cache,
-      fetch: send(fetch, ${accounts ? "credentials(account)" : "{ headers: {}, query: {} }"}),
+      fetch: send(fetch, ${accounts ? scopes.sent("account") : "{ headers: {}, query: {} }"}),
       ...(signal === undefined ? {} : { signal }),
     })`;
     const index = `${appImports(["defineApp", ...routerImports])}
 import { liveOpenapiRouter } from "apps/openapi"
 import { always } from "apps/operations/approval"
 import configuration from "./openapi.json"
-${accounts ? `import { credentials, fixed, provider } from "./provider.ts"\n` : ""}${rules ? `import { approval, exposedName } from "./tools.ts"\n` : ""}${
+${accounts ? `import { ${[...scopes.imports, "fixed", "provider"].sort().join(", ")} } from "./provider.ts"\n` : ""}${rules ? `import { approval, exposedName } from "./tools.ts"\n` : ""}${
       accounts
         ? ""
         : `
@@ -513,8 +635,8 @@ const send =
 
 ${
   accounts
-    ? `export default defineApp({ user: { accounts: { service: provider.many() } } }, async ({ user, cache, fetch, signal }) => ({
-  tools: await accountRouter(user?.accounts.service ?? [], (account) =>
+    ? `export default defineApp(${scopes.requirements}, async ({ ${scopes.context}, cache, fetch, signal }) => ({
+  tools: await accountRouter(${scopes.accounts}, (account) =>
     ${ruled(router, rules, defaultRule)},
     { signal },
   ),
@@ -565,6 +687,7 @@ export const graphqlAppSource = (options: ProtocolAppOptions & { readonly url: s
       catch: () => failed("The GraphQL endpoint is not valid."),
     });
     const defaultRule = `tool.kind === "mutation" ? always() : undefined`;
+    const scopes = accountScopes(options);
     const routerImports = [
       "withApprovals",
       ...(rules ? ["renameTools"] : []),
@@ -574,11 +697,11 @@ export const graphqlAppSource = (options: ProtocolAppOptions & { readonly url: s
       ? `${appImports(["defineApp", ...routerImports])}
 import { graphqlRouter } from "apps/graphql"
 import { always } from "apps/operations/approval"
-import { credentials, fixed, provider } from "./provider.ts"
+import { ${[...scopes.imports, "fixed", "provider"].sort().join(", ")} } from "./provider.ts"
 ${rules ? `import { approval, exposedName } from "./tools.ts"\n` : ""}
-export default defineApp({ user: { accounts: { service: provider.many() } } }, async ({ user, signal, cache }) => ({
-  tools: await accountRouter(user?.accounts.service ?? [], async (account) => {
-    const sent = credentials(account)
+export default defineApp(${scopes.requirements}, async ({ ${scopes.context}, signal, cache }) => ({
+  tools: await accountRouter(${scopes.accounts}, async (account) => {
+    const sent = ${scopes.sent("account")}
     const url = new URL(${JSON.stringify(options.url)})
     for (const [name, value] of Object.entries({ ...fixed.query, ...sent.query })) url.searchParams.set(name, value)
     return ${ruled(

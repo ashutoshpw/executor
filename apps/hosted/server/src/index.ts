@@ -38,7 +38,8 @@ export { taskArgumentRetention } from "./implementation/task-insights-settings.t
 export { organizationDefaults } from "./implementation/organization-defaults.ts";
 export { executorDefaultRedeployed } from "./implementation/executor-app-upgrades.ts";
 export { hostedAppCopies } from "./implementation/profile-app-copies.ts";
-export { linkUserAccount } from "./implementation/app-accounts.ts";
+export { linkAppAccount, linkUserAccount } from "./implementation/app-accounts.ts";
+export { memberSetupProgress, type SetupProgress } from "./implementation/setup-progress.ts";
 export {
   lookupMembership,
   lookupOrganizationSlug,
@@ -84,6 +85,7 @@ export {
   provisionHostedConnectionResources,
   provisionHostedOAuthResources,
   type HostedOAuthOrigins,
+  type GrantObservers,
   type RefreshRejection,
 } from "./implementation/mcp-oauth.ts";
 export { authEndpointTemplates, grantExpiry, type GrantExpiry } from "@executor-js/mcp-auth/oauth";

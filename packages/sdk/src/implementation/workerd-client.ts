@@ -36,7 +36,7 @@ import { userContentPath } from "./host-user-content.ts";
 import { userContentRequest } from "./user-content-host.ts";
 import { appRuntime, buildLoadSpan } from "./app-runtime.ts";
 import { appWorker } from "./app-runner.ts";
-import { encodeLoadedBuild } from "./remote-app-runner.ts";
+import { encodeLoadedBuild, runnerResult } from "./remote-app-runner.ts";
 import { invocationWorkflowControls } from "./worker-workflow-rpc.ts";
 import { loadWorkerBuild, retainWorkerBuild, workerBuildAsset } from "./worker-build-storage.ts";
 import { ownsDatabase } from "../contracts/apps.ts";
@@ -250,16 +250,15 @@ export const connectedWorkerdApps = (blobs: BlobStorage, transport: WorkerdTrans
             async () => encodeLoadedBuild(await capabilities.load()),
           );
           return yield* rpc((api) =>
-            Effect.tryPromise({
-              try: async () =>
-                Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Json))(
-                  await api.invoke(encoded, callbacks),
-                ),
-              catch: protocolFailure,
-            }),
+            runnerResult(
+              Effect.tryPromise({
+                try: () => api.invoke(encoded, callbacks),
+                catch: (cause) => cause,
+              }),
+            ),
           );
         }),
-      build: ({ files, public: publicPaths }) =>
+      build: ({ files, public: publicPaths, retain = true }) =>
         Effect.gen(function* () {
           const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(CompileWorkerApp))({
             files,
@@ -296,6 +295,8 @@ export const connectedWorkerdApps = (blobs: BlobStorage, transport: WorkerdTrans
             ),
           );
           const build = BuildId.make(`bld_${crypto.randomUUID()}`);
+          // A check keeps nothing; its build id names no stored build.
+          if (!retain) return { build, requirements };
           const { record } = yield* retainWorkerBuild(
             build,
             {

@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@better-auth/core": "1.7.5",
+    "@duckdb/node-api": "2.0.0-r.1",
     "@effect/platform-browser": "4.0.1",
     "@effect/platform-bun": "4.0.1",
     "@effect/platform-node": "4.0.1",
@@ -27,7 +28,6 @@
     "@executor-js/sdk": "workspace:*",
     "@executor-js/telemetry": "workspace:*",
     "@executor-js/utils": "workspace:*",
-    "@w3devx/duckdb-node-api": "link:@w3devx/duckdb-node-api",
     "apps": "workspace:*",
     "better-auth": "1.7.5",
     "effect": "4.0.1",

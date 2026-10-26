@@ -25,8 +25,10 @@ separate and is still kept; see below.
 ## What is sent
 
 Each event carries an anonymous install ID, made on first start and kept in the
-data directory, plus the product (`cli`, `desktop` or `self-host`) and its
-version.
+data directory, plus the product and its version. The product is `self-host` or
+`cli`: the desktop app uses the command line's background Executor, which sends
+its events as `cli`. Desktop app releases from before the background Executor
+send `desktop`.
 
 - **Startup:** product, version, release channel, operating system,
   architecture, and the number of apps and accounts. Self-host adds the number
@@ -55,6 +57,10 @@ names, the calling agent or key label, the outcome, the error type and the
 duration. Tool calls made by schedules and workflows are recorded too, under the
 schedule or workflow name. It is written to `usage.duckdb` in the data directory and is not sent
 to PostHog or anywhere else. Tool inputs and outputs are never recorded.
+
+Usage insights need DuckDB, which runs only when self-host is started directly
+with Bun or Node. The Docker image cannot load it, so there the home page shows
+usage insights as unavailable and no record is kept.
 
 The record is kept whether or not the variables above are set, because usage
 insights are a local feature. To remove the history, stop Executor and delete

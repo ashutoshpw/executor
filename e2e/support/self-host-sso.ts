@@ -65,14 +65,14 @@ export const selfHostSsoProvider = Effect.gen(function* () {
       },
     ),
   );
-  const { origin, plainOrigin } = yield* fs
+  // `issuer` is the HTTPS origin the instance reaches; `origin` is the same provider's plain
+  // loopback listener, which this helper drives because it does not trust the certificate.
+  const { origin: plainOrigin, issuer: origin } = yield* fs
     .readFileString(`${directory}/sso-idp.json`)
     .pipe(
       Effect.flatMap(
         Schema.decodeUnknownEffect(
-          Schema.fromJsonString(
-            Schema.Struct({ origin: Schema.String, plainOrigin: Schema.String }),
-          ),
+          Schema.fromJsonString(Schema.Struct({ origin: Schema.String, issuer: Schema.String })),
         ),
       ),
       Effect.retry({ schedule: Schedule.spaced("100 millis"), times: 100 }),

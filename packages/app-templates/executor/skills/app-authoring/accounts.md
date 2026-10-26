@@ -80,7 +80,10 @@ workflows they start run without a caller and use it; see
 Declare `hosts` so app code never holds the secret values. Each unmarked string
 field then reaches the app as an opaque handle. Executor's network replaces a
 handle with the real value only on requests to a declared host, in the URL,
-headers, Basic credentials, and JSON, form or text bodies up to 1 MiB. Executor
+headers, Basic credentials, and JSON, form or text bodies up to 1 MiB. A token
+the service takes in the URL path works the same way:
+``ctx.fetch(`https://api.telegram.org/bot${account.fields.token}/getMe`)``.
+For a generated router, pass a `fetch` that rewrites the URL. Executor
 refuses a request that sends a handle anywhere else: `ctx.fetch` rejects with
 `NetworkRefused`, naming the host and the provider's allowed hosts, and the
 global `fetch` receives status 421 with the same details. A request that carries
@@ -389,6 +392,20 @@ wholesale. Keep `openid`, `profile` and `email` only when the service or app nee
 identity; an access-token-only app can declare its resource scopes explicitly.
 The host adds `offline_access` when advertised and `scopes` is omitted.
 
+Sign-in sends one RFC 8707 resource indicator on authorization, exchange and
+renewal: `resource` when declared, otherwise the one the protected-resource
+metadata names. `accounts.oauthSetup` reports it as `resource: { value, source }`;
+`value` is null when it sends none, and `source` says why. When the service
+refuses it (`resource_rejected`) or refuses the token it issued, declare the
+identifier the service documents, or `resource: null` to send none. Declaring the
+value discovery already found changes nothing. With `source: "operator"` the
+instance's own OAuth client sets it, and only the instance administrator can
+change it; the provider's `resource` does not apply. With
+`source: "inferred_scope_audience"` Executor sent none because the authorization
+server's metadata looks like Microsoft identity platform v2.0's, which takes the
+audience from the scopes. That is Executor's guess from the service's metadata;
+if the service refuses the sign-in, declare `resource`.
+
 Standard discovery requires the metadata's `issuer` to equal the issuer used to
 construct the well-known metadata URL.
 Microsoft Entra ID's multi-tenant `common` and `organizations` endpoints publish
@@ -555,6 +572,11 @@ const connection = await tools.executor.accountConnections.get({
 return connection.state; // { status: "completed", account } means setup finished.
 // A pending state with `failure` holds the error the user saw, including the service's own error.
 ```
+
+Cloud and self-host have no `accountConnections`; read the request with
+`accounts.connection`, passing `path: { organization, connection }`. Its
+result also has `url` and `redirectUri`. On every host the connect tools
+require `body`; send `body: {}` when there is nothing to put in it.
 
 Completing a request saves the account and links it to the requirement in one
 transaction: for the caller for a user requirement, for everyone for an app

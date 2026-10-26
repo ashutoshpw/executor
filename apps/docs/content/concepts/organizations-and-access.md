@@ -73,7 +73,7 @@ not its dashboard page.
 | Apps | `/apps` |
 | An app | `/apps/<appId>` (`?view=accounts` for its accounts tab) |
 | An app's setup | `/apps/<appId>/setup` |
-| Add an app | `/apps/add`, and `/apps/add/custom` for a custom app |
+| Add an app | `/apps/add` |
 | Accounts | `/accounts` |
 | Connect | `/connect` |
 | A connection | `/connections/<connectionId>` |

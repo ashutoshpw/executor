@@ -1,5 +1,5 @@
 /** Self-host usage records: one DuckDB file beside the other local state, written in batches. */
-import type { DuckDBConnection, DuckDBValue } from "@w3devx/duckdb-node-api";
+import type { DuckDBConnection, DuckDBValue } from "@duckdb/node-api";
 import {
   emptyUsage,
   UsageStore,
@@ -37,14 +37,22 @@ class UnsupportedDuckDB extends Data.TaggedError("UnsupportedDuckDB")<{
   readonly version: string;
 }> {}
 
+/** The DuckDB library cannot be loaded: the Docker image runs under workerd, which has no Node addons. */
+class DuckDBUnavailable extends Data.TaggedError("DuckDBUnavailable")<{
+  readonly cause: unknown;
+}> {}
+
 const count = (value: DuckDBValue | undefined) => Number(value);
 
 /**
- * Open the usage database, or fall back to keeping nothing: usage records never stop the product
- * from starting. One process owns the file; a second instance on the same data directory runs without it.
+ * Open the usage database, or fall back to keeping nothing (the default store, which the home page
+ * shows as unavailable, as on Cloud): usage records never stop the product from starting. One process owns the file; a second instance on the same data directory runs without it.
  */
 export const selfHostUsageStore = Effect.gen(function* () {
-  const duckdb = yield* Effect.tryPromise(() => import("@w3devx/duckdb-node-api"));
+  const duckdb = yield* Effect.tryPromise({
+    try: () => import("@duckdb/node-api"),
+    catch: (cause) => new DuckDBUnavailable({ cause }),
+  });
   // The file format and SQL here target DuckDB 2; an older library could not reopen the file later.
   const library = duckdb.version();
   if (!library.startsWith("v2.")) return yield* new UnsupportedDuckDB({ version: library });
@@ -429,7 +437,18 @@ export const selfHostUsageStore = Effect.gen(function* () {
   };
   return store;
 }).pipe(
-  // Usage records never prevent the product from starting.
+  // Usage records never prevent the product from starting. The reason is logged once, at startup.
+  Effect.catchTags({
+    DuckDBUnavailable: (error) =>
+      Effect.logWarning(
+        "Usage insights are unavailable: DuckDB cannot be loaded here (the Docker image does not support it; run self-host directly with Bun or Node)",
+        error.cause,
+      ).pipe(Effect.as(undefined)),
+    UnsupportedDuckDB: (error) =>
+      Effect.logWarning(
+        `Usage insights are unavailable: DuckDB ${error.version} is not version 2`,
+      ).pipe(Effect.as(undefined)),
+  }),
   Effect.catch((cause) =>
     Effect.logWarning("Usage records are unavailable", cause).pipe(Effect.as(undefined)),
   ),

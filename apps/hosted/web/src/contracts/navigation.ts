@@ -1,4 +1,4 @@
-import { AccountConnectionId, AccountId } from "@executor-js/sdk";
+import { AccountConnectionId, AccountId, OAuthClientId } from "@executor-js/sdk";
 import { GrantId } from "@executor-js/mcp-auth/grants";
 import { AppView, AppViewFromUrl, AssistantId } from "@executor-js/ui/contracts/dashboard";
 import { AppId } from "@executor-js/sdk/core";
@@ -7,23 +7,25 @@ import { OrganizationId } from "@executor-js/hosted-server/organization";
 import { UsageRange } from "@executor-js/hosted-server/usage";
 import type { AgentBaseline } from "./mcp-connections.ts";
 
-/** A failed OAuth attempt can reopen its client fields without placing credentials in the URL. */
+/**
+ * A failed OAuth attempt can reopen its client fields without placing credentials in the URL:
+ * `change` enters new details, and a registered client's ID edits that client.
+ */
+export const ClientRecovery = Schema.Union([Schema.Literal("change"), OAuthClientId]);
 export const ConnectionSearch = Schema.Struct({
-  client: Schema.optionalKey(Schema.Literal("change")),
+  client: Schema.optionalKey(ClientRecovery),
 });
 
 /** Direct links and refreshes retain a connection dialog on its app page. */
 export function parseConnectionSearch(search: Record<string, unknown>): {
   readonly connection?: AccountConnectionId | undefined;
-  readonly client?: "change" | undefined;
+  readonly client?: typeof ClientRecovery.Type | undefined;
 } {
   return {
     connection: Option.getOrUndefined(
       Schema.decodeUnknownOption(AccountConnectionId)(search.connection),
     ),
-    client: Option.getOrUndefined(
-      Schema.decodeUnknownOption(Schema.Literal("change"))(search.client),
-    ),
+    client: Option.getOrUndefined(Schema.decodeUnknownOption(ClientRecovery)(search.client)),
   };
 }
 
@@ -71,6 +73,34 @@ export function parseAgentSetupSearch(
     Option.isSome(Schema.decodeUnknownOption(Schema.Literal("prompt"))(search.step));
   return prompt ? { assistant, step: "prompt", agent } : { assistant };
 }
+
+/**
+ * The assistant the assistant step set up and the agent that connected, carried through a later
+ * step so it can open that agent's first prompt. Only setup that shows its assistant first carries
+ * one, and only when an agent connected; a skipped assistant carries none.
+ */
+export const SetupHandoff = Schema.Struct({
+  assistant: AssistantId,
+  agent: GrantId,
+});
+export type SetupHandoff = typeof SetupHandoff.Type;
+
+/**
+ * The account step's URL carries the handoff when the assistant came first, so a reload, Back or
+ * an account sign-in still leads to the first prompt. A malformed handoff carries none.
+ */
+export function parseAccountsSetupSearch(search: Record<string, unknown>): Partial<SetupHandoff> {
+  return Option.match(Schema.decodeUnknownOption(SetupHandoff)(search), {
+    onNone: () => ({}),
+    onSome: ({ assistant, agent }) => ({ assistant, agent }),
+  });
+}
+
+/** The handoff an account step's search names, if it names one. */
+export const setupHandoff = (search: Partial<SetupHandoff>): SetupHandoff | undefined =>
+  search.assistant === undefined || search.agent === undefined
+    ? undefined
+    : { assistant: search.assistant, agent: search.agent };
 
 declare module "@tanstack/history" {
   interface HistoryState {
@@ -153,7 +183,7 @@ export function hostedPageTitle(
   if (pathname === "/mcp/authorize") return "Authorize client";
   if (pathname === "/device") return "Connect a device";
   if (pathname === "/oauth/callback") return "Connecting account";
-  const [root, section, page, item, action] = pathname.split("/").filter(Boolean);
+  const [root, section, page, item] = pathname.split("/").filter(Boolean);
   if (root === "account")
     return section === "tokens"
       ? "Tokens"
@@ -164,21 +194,15 @@ export function hostedPageTitle(
           : "Account";
   if (root !== "org" || page === undefined) return "Organizations";
   if (extraPages[page] !== undefined) return extraPages[page];
+  if (page === "setup") return item === "assistant" ? "Continue in your agent" : "Connect accounts";
   if (page === "organization") return "Settings";
   if (page === "approvals") return item ? "Review request" : "Approvals";
   if (page === "groups") return item ? "Group" : "Groups";
   if (page === "files") return "Files";
-  if (page === "connect") return "Connections";
+  if (page === "connect") return item ? "Connection" : "Connections";
   if (page === "webhooks") return "Webhook setup";
   if (page === "connections") return "Connect account";
-  if (page === "apps")
-    return item === "add"
-      ? action === "custom"
-        ? "Add custom app"
-        : "Add app"
-      : item
-        ? "App"
-        : "Apps";
+  if (page === "apps") return item === "add" ? "App catalog" : item ? "App" : "Apps";
   if (page === "accounts") return "Accounts";
   return "Dashboard";
 }

@@ -268,6 +268,11 @@ export class RuntimeBuildFailed extends Schema.TaggedError<RuntimeBuildFailed>()
     declaration: Schema.optional(DatabaseFieldReserved),
     message: Schema.optional(BuildMessage),
     location: Schema.optional(SourceLocation),
+    /**
+     * The compiler did not answer in time: a host failure that says nothing about the source, and
+     * that building again may not repeat.
+     */
+    unanswered: Schema.optional(Schema.Literal(true)),
   },
 ) {
   /** The message quotes the deployer's source or its errors; telemetry records only the stage. */
@@ -386,10 +391,15 @@ export interface Runtime<Requirements = never> {
    * Build the code files only. `public` lists the paths, relative to `ui/public/`, of the public
    * files served beside the build: the page may reference them, and compiled output may not
    * reuse their paths. Their bytes never reach the build.
+   *
+   * `retain: false` compiles and declares without writing anything: the build is neither
+   * retained nor cached, so its id names nothing and must not be loaded. For checks that must
+   * not create anything, such as the v1 import's dry run.
    */
   readonly build: (input: {
     readonly files: CodeFiles;
     readonly public?: ReadonlyArray<string>;
+    readonly retain?: boolean;
   }) => Effect.Effect<
     BuiltApp,
     | RuntimeBuildFailed
@@ -422,6 +432,12 @@ export interface Runtime<Requirements = never> {
       readonly tools?: readonly string[];
       /** Describe only declared operations with schedules. Send only to scheduledTools builds. */
       readonly scheduled?: true;
+      /**
+       * Have the build send each definition and each `$defs` its tools' schemas hold once, as a
+       * `HostedSharedCatalog`. Send only to sharedDefinitions builds. The catalog is the same
+       * either way; restored, its tools share one object for each `$defs` and definition.
+       */
+      readonly definitions?: "shared";
     } & HostContext,
   ) => Effect.Effect<HostedCatalog, RuntimeLoadError | typeof HostInspectError.Type, Requirements>;
   /** List the current tools without their schemas. */

@@ -134,13 +134,16 @@ export function OAuthCallbackPage() {
       const { organizationSlug, connection, app, reconnect } = resolved.value;
       // The organization's pages key their state by the route's slug reference.
       const organization = organizationSlug;
+      // Only the tab that started this connection knows the page it started from.
+      const started = Option.filter(stored, (value) => value.connection === connection);
+      const registeredClient = Option.flatMapNullishOr(started, (value) => value.registeredClient);
+      const returnTo = Option.getOrUndefined(started)?.returnTo;
       const context = {
         ...resolved.value,
         organization,
-        manualClient: Option.exists(
-          stored,
-          (value) => value.connection === connection && value.manualClient === true,
-        ),
+        manualClient: Option.exists(started, (value) => value.manualClient === true),
+        ...(Option.isSome(registeredClient) ? { registeredClient: registeredClient.value } : {}),
+        ...(returnTo === undefined ? {} : { returnTo }),
       };
       setPending(Option.some(context));
       const callback = new URL(context.redirectUri);
@@ -154,11 +157,17 @@ export function OAuthCallbackPage() {
       sessionStorage.removeItem("executor:hosted:oauth");
       // Reconnects keep their name; a new account is named on the page that follows.
       if (!reconnect) registry.set(accountToNameAtom, { organization, account: result.value.id });
-      await navigate({
-        to: "/org/$organizationSlug/apps/$appId",
-        params: { organizationSlug, appId: app },
-        search: { view: "accounts" },
-      });
+      await (returnTo !== undefined
+        ? navigate({
+            to: "/org/$organizationSlug/setup/accounts",
+            params: { organizationSlug },
+            search: returnTo.handoff ?? {},
+          })
+        : navigate({
+            to: "/org/$organizationSlug/apps/$appId",
+            params: { organizationSlug, appId: app },
+            search: { view: "accounts" },
+          }));
     })();
   }, [registry, navigate]);
   return (
@@ -184,7 +193,7 @@ export function OAuthCallbackPage() {
   );
 }
 
-/** Recovery links resume the original connection or return to its owning app. */
+/** Recovery links resume the original connection or return to the page that started it. */
 function OAuthRecoveryActions({
   pending,
   recovery,
@@ -201,15 +210,20 @@ function OAuthRecoveryActions({
       </Button>
     );
   const context = pending.value;
-  // Entered clients are saved only after a successful sign-in, so a retry reopens their fields.
+  // A client registered for this attempt stays registered, so a retry signs in with it and its
+  // details reopen only to be edited. Other entered clients are account-only, so a retry reopens
+  // their fields.
+  const registered = context.registeredClient;
   const retry =
     recovery === "restart" || recovery === "client"
       ? {
           label: recovery === "client" ? "Update client details" : "Try again",
           search:
-            recovery === "client" || context.manualClient === true
-              ? { client: "change" as const }
-              : {},
+            recovery === "client"
+              ? { client: registered ?? ("change" as const) }
+              : context.manualClient === true
+                ? { client: "change" as const }
+                : {},
         }
       : undefined;
   const primary = retry === undefined && fixPrompt === undefined;
@@ -240,14 +254,38 @@ function OAuthRecoveryActions({
         </Button>
       )}
       <Button variant={primary ? "default" : "outline"} asChild>
-        <Link
-          to="/org/$organizationSlug/apps/$appId"
-          params={{ organizationSlug: context.organizationSlug, appId: context.app }}
-          search={{ view: "accounts" }}
-        >
-          Back to app
-        </Link>
+        {context.returnTo !== undefined ? (
+          <Link
+            to="/org/$organizationSlug/setup/accounts"
+            params={{ organizationSlug: context.organizationSlug }}
+            search={context.returnTo.handoff ?? {}}
+          >
+            Back to setup
+          </Link>
+        ) : (
+          <Link
+            to="/org/$organizationSlug/apps/$appId"
+            params={{ organizationSlug: context.organizationSlug, appId: context.app }}
+            search={{ view: "accounts" }}
+          >
+            Back to app
+          </Link>
+        )}
       </Button>
+      {registered !== undefined && recovery !== "client" && (
+        <Button variant="link" size="sm" className="text-muted-foreground" asChild>
+          <Link
+            to="/org/$organizationSlug/connections/$connectionId"
+            params={{
+              organizationSlug: context.organizationSlug,
+              connectionId: context.connection,
+            }}
+            search={{ client: registered }}
+          >
+            Edit client details
+          </Link>
+        </Button>
+      )}
     </>
   );
 }

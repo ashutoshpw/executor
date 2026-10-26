@@ -34,8 +34,7 @@ repeating them in every item.
 
 `namespace` is an app slug, such as `gmail`, or a namespace inside it. Without
 it, search loads and searches every app, which is slower. A page holds at most
-`limit` items, 10 by default, and stops sooner at a quarter of the output limit
-(16 KB by default). `remaining` counts the matches after the page, and `next`
+`limit` items, 10 by default, and stops sooner at about 25 KB of JSON. `remaining` counts the matches after the page, and `next`
 is the input for the following page, or `null` after the last match: call
 `tools.search(next)` to continue.
 
@@ -101,14 +100,17 @@ arguments or source, and never search their files for tokens. The Executor app
 - Local: `appAccounts.userConnect` (or `appAccounts.appConnect` for the
   app's own requirement), naming the app and requirement in `path`, then
   `accountConnections.get` to check it.
-- Hosted: `appAccounts.userConnect` (or `appAccounts.appConnect` for the
-  app's own requirement, if you can edit the app), naming the requirement in
-  `path`, then `accounts.connection` to check it. Hosted
+- Hosted, Cloud and self-host alike: `appAccounts.userConnect` (or
+  `appAccounts.appConnect` for the app's own requirement, if you can edit the
+  app), naming the requirement in `path`, then `accounts.connection` to check
+  it. Hosted
   management calls need the organization: call `context.get({})` first and pass
   its `organization` as `path.organization`. For an OAuth sign-in,
-  `accounts.oauthSetup` lists the scopes it will request; tell the user.
+  `accounts.oauthSetup` lists the scopes it will request and the resource
+  indicator it will send; tell the user.
 
-Search for these tools and read their input types first. Give the user the
+Search for these tools and read their input types first; the connect tools
+require `body`, so pass `body: {}` when it has nothing. Give the user the
 returned `url`; hosted `accounts.connection` returns it again, with progress in
 `state.status`. To replace an account's credentials, pass its ID as `account`
 in the same request. After they finish, check the connection in a new
@@ -165,11 +167,16 @@ These are the defaults. The source limit is fixed; a host can change the others.
 
 - Program source: 65,536 characters, including app source passed as data. With
   a shell, deploy large apps with the `executor apps` CLI instead.
-- Output: 100,000 bytes for the returned value, warnings and logs together. A
-  larger value comes back as a truncated string that says so. Return fewer
-  fields, a count, or one page. A tool that returns a file handle keeps its
-  handle through `execute`: return the handle, never the file's bytes. The result
-  then carries a `resource_link` for it (see the executor skill).
+- Output: none. The returned value and logs come back whole, however large, but
+  they fill your context, so return only the fields, count or page you need.
+  A tool that returns a file handle keeps its handle through `execute`: return
+  the handle, never the file's bytes. The result then carries a `resource_link`
+  for it (see the executor skill).
+  The runtime limits one value crossing between an app and Executor, such as a
+  tool's result, to 32 MiB. On Cloud, a result of a few tens of megabytes can
+  also pass the session's 128 MB memory. Failures Executor recognizes get an
+  error naming the likely limit, never a cut value; a larger value can end with
+  no answer before your client's timeout.
 - Tool calls: 100 per execution.
 - Time: 5 minutes per execution, including discovery. Time spent waiting for
   the user does not count. Execute returns when the program ends or pauses for
@@ -198,8 +205,16 @@ Never rerun an entire `execute` program merely to retry one failed tool.
 - `ToolCallLimitExceeded`, `TimeoutExceeded`: split the work into smaller
   executions.
 
-Calls with outcome `success` took effect, and `interrupted` calls may have.
-Effects are never rolled back. When Executor could not confirm a failed write's
+A remote MCP tool returns its whole result. `isError: true` there means the
+tool says it failed: the call does not throw, and its outcome is `failure`.
+Check `isError` before using such a result. Other fields, such as `ok`, mean
+what the tool's description says.
+
+An outcome of `success` means only that the call returned normally, with no
+tool error reported to Executor. It does not show that the intended action
+happened: check the returned value, such as `isError` or the app's own status
+fields, before treating it as done. `failure` and `interrupted` calls may have
+had effects. Effects are never rolled back. When Executor could not confirm a failed write's
 outcome, its recovery says so: do not repeat it automatically.
 Inside a program, a caught tool error's `message` is the same JSON as
 `response`, so a program can handle expected failures itself.

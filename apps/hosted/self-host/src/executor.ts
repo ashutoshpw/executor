@@ -1,5 +1,5 @@
 /** Native development host resources. The packaged product uses workerd bindings. */
-import { nativeRepositories } from "@executor-js/app-source/node";
+import { nativeRepositories, systemGit } from "@executor-js/app-source/node";
 import { filesystemBlobStore, nodeSha256, workerdApps } from "@executor-js/sdk/node/workerd";
 import type { HostEgress } from "@executor-js/utils/url-policy";
 import { Config, Effect, Option, Path } from "effect";
@@ -54,7 +54,8 @@ export const selfHostExecutor = (egress: HostEgress) =>
         userContent,
         userContentRequiresSize: false,
         hasher: nodeSha256,
-        repositories: nativeRepositories(path.resolve(directory, "repositories")),
+        // The image installs Git on PATH.
+        repositories: nativeRepositories(path.resolve(directory, "repositories"), systemGit),
       };
     }),
   );

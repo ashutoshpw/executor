@@ -3,6 +3,7 @@ import { useAtomRefresh, useAtomSet, useAtomValue } from "@effect/atom-react";
 import { AuthFailed, sessionAtom } from "@executor-js/hosted-web/contracts/auth";
 import {
   ContinueAfterSignIn,
+  ContinueToSetup,
   LoginLegalFooter,
   type LoginProps,
 } from "@executor-js/hosted-web/pages/login";
@@ -16,6 +17,7 @@ import {
   selfHostSignInAtom,
   type SelfHostSignIn,
 } from "../../contracts/auth.ts";
+import { ssoRefusalExplanation } from "../../contracts/sso.ts";
 import { productTitle, useDocumentTitle } from "@executor-js/ui/hooks/document-title";
 import { SelfHostLoginPending } from "../components/login-pending.tsx";
 
@@ -45,16 +47,12 @@ export function SelfHostLoginPage({ redirect, error: callbackError }: LoginProps
       </div>
     );
   if (signedIn)
-    return (
+    return submittedKind === "setup" &&
+      !["/mcp/authorize", "/device"].includes(new URL(redirect, page.origin).pathname) ? (
+      <ContinueToSetup userId={session.value.user.id} />
+    ) : (
       <ContinueAfterSignIn
-        redirect={
-          submittedKind === "setup" &&
-          !["/mcp/authorize", "/device"].includes(new URL(redirect, page.origin).pathname)
-            ? "/setup/agent"
-            : submittedKind === "invite"
-              ? "/"
-              : redirect
-        }
+        redirect={submittedKind === "invite" ? "/" : redirect}
         userId={session.value.user.id}
       />
     );
@@ -170,7 +168,7 @@ export function SelfHostLoginPage({ redirect, error: callbackError }: LoginProps
         )}
         {(error || callbackError) && (
           <p className="auth-error text-destructive text-[13px]" role="alert">
-            {error ?? "SSO sign-in failed. Use an approved account or contact your administrator."}
+            {error ?? ssoRefusalExplanation(callbackError ?? "")}
           </p>
         )}
         {AsyncResult.isFailure(session) && (

@@ -2,7 +2,7 @@
 import { siteVisitorCookie } from "@executor-js/marketing/site-visitor";
 import type { BetterAuthOptions } from "better-auth";
 import { APIError } from "better-auth/api";
-import { authOptions, type RefreshRejection } from "@executor-js/hosted-server";
+import { authOptions, type GrantObservers } from "@executor-js/hosted-server";
 import { cloudHosts } from "../infrastructure/stage.ts";
 import { passkey } from "@better-auth/passkey";
 import { emailOTP } from "better-auth/plugins/email-otp";
@@ -24,6 +24,7 @@ import { emulatedSocialProviders } from "./emulated-auth.ts";
 import { cloudSso, ssoVerifiedEmail } from "./sso.ts";
 import { chatGptSettings, chatGptSignIn } from "./chatgpt-sign-in.ts";
 import { cloudMemberLimit } from "./member-limit.ts";
+import { v1HandoffSessions } from "./v1-session-handoff.ts";
 
 /** The better-auth endpoint that creates accounts from a verified email code. */
 const emailCodeSignInPath = "/sign-in/email-otp";
@@ -126,9 +127,9 @@ export const cloudAuthOptions = (
   onLogin?: (userId: string) => Promise<void>,
   onOperation?: (usage: NativeAuthUsage) => Promise<void>,
   allowsOrganization?: (userId: string) => Promise<boolean>,
-  onRefreshRejected?: (rejection: RefreshRejection) => void,
+  grants?: GrantObservers,
 ) => {
-  const base = authOptions(settings, ipAddressHeaders, onRefreshRejected);
+  const base = authOptions(settings, ipAddressHeaders, grants);
   // A test stage that signs in through production's proxy uses production's callback, which the
   // proxy sets. Every other deployment names its own social callback origin explicitly.
   const proxiedElsewhere = Option.exists(
@@ -261,6 +262,8 @@ export const cloudAuthOptions = (
             clientId: settings.googleClientId,
             clientSecret: Redacted.value(settings.googleClientSecret),
             includeGrantedScopes: false,
+            // Without it Google silently reuses an account that already approved Executor.
+            prompt: "select_account" as const,
           },
           github: {
             ...redirectURI("github"),
@@ -361,6 +364,8 @@ export const cloudAuthOptions = (
           ),
       }),
       ...(billing === undefined ? [] : [cloudMemberLimit(billing)]),
+      // Server only: sessions for members v1 vouches for (`v1-session-handoff.ts`).
+      v1HandoffSessions(),
       // The native migrator creates tables in plugin order; SSO references organization.
       cloudSso(billing),
       emailOTP({

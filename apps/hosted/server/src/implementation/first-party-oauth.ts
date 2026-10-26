@@ -21,8 +21,9 @@ export type FirstPartyOAuthClientDefinition = typeof FirstPartyOAuthClientDefini
  * presets (Calendar, Meet, Gmail, Sheets, Drive, Docs, Slides, Forms, Tasks, People, Photos
  * Library, Photos Picker and Search Console), each with `openid email profile`, and
  * `gmail.modify`, which Gmail connections made before the full-Gmail review keep. It is the scope
- * set submitted for the production app's review. Google reports `email` and `profile` as granted
- * under their `userinfo` names, and a grant holds only allowed scopes, so those two are allowed
+ * set approved for the production app, extended on 2026-10-25 for YouTube, Google Ads,
+ * BigQuery and Apps Script. Apps Script metrics is non-sensitive. Google reports `email` and
+ * `profile` as granted under their `userinfo` names, and a grant holds only allowed scopes, so those two are allowed
  * as well.
  */
 const googleAllowedScopes = [
@@ -60,13 +61,23 @@ const googleAllowedScopes = [
   "https://www.googleapis.com/auth/photoslibrary.readonly.appcreateddata",
   "https://www.googleapis.com/auth/photospicker.mediaitems.readonly",
   "https://www.googleapis.com/auth/webmasters",
+  "https://www.googleapis.com/auth/youtube",
+  "https://www.googleapis.com/auth/youtube.force-ssl",
+  "https://www.googleapis.com/auth/adwords",
+  "https://www.googleapis.com/auth/bigquery",
+  "https://www.googleapis.com/auth/script.projects",
+  "https://www.googleapis.com/auth/script.deployments",
+  "https://www.googleapis.com/auth/script.processes",
+  "https://www.googleapis.com/auth/script.metrics",
 ];
 
 /**
  * The user scopes Executor for Slack may ask for and a grant may hold: v1's `slackMcpUserScopes`
  * (`packages/react/src/lib/slack-mcp-oauth.ts` in UsefulSoftwareCo/executor), the user scopes
- * approved on v1's Slack MCP app. Slack's MCP resource advertises more, which a sign-in with this
- * client leaves out, as v1 did.
+ * approved on v1's Slack MCP app, and the ones Slack granted v1's connections of that app beyond
+ * them (`im:read`, `lists:read`, `lists:write`, `files:write`), which the app is therefore
+ * configured for. Slack's MCP resource advertises more, which a sign-in with this client leaves
+ * out, as v1 did.
  */
 const slackMcpUserScopes = [
   "search:read.public",
@@ -95,6 +106,10 @@ const slackMcpUserScopes = [
   "channels:read",
   "groups:read",
   "mpim:read",
+  "im:read",
+  "lists:read",
+  "lists:write",
+  "files:write",
 ];
 
 /**

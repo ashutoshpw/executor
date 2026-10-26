@@ -119,6 +119,11 @@
       "name": "apps",
       "range": "0.0.1-beta.91",
       "transitive": false
+    },
+    {
+      "name": "apps",
+      "range": "0.0.1-beta.95",
+      "transitive": false
     }
   ],
   "packages": {
@@ -344,6 +349,14 @@
         "0.0.1-beta.91": {
           "tarball": "https://registry.npmjs.org/apps/-/apps-0.0.1-beta.91.tgz",
           "integrity": "sha512-ViSmK2s2QhuXaohJinOsTIom/LTZMvFk0/LdPZJyXDMdxEe3vMNIeHQQOVCtSEVkkcNIY5XnpFmsZrUTfQeSFg==",
+          "dependencies": {
+            "effect": "4.0.1",
+            "@cloudflare/workers-types": "5.20260729.1"
+          }
+        },
+        "0.0.1-beta.95": {
+          "tarball": "https://registry.npmjs.org/apps/-/apps-0.0.1-beta.95.tgz",
+          "integrity": "sha512-225vcyu5AEL+e43OlpJmHeSZOdZE2l8SR6W55p3ejxdJDwPe+KcNZoCi8HddhTkqSqGkYJTAuf4hJHNhp7qk3w==",
           "dependencies": {
             "effect": "4.0.1",
             "@cloudflare/workers-types": "5.20260729.1"

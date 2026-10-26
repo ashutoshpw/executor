@@ -14,7 +14,7 @@ slug as its namespace. Credentials go only through Executor's secure connection
 links, never through chat or source code. Some calls pause for user approval.
 
 This is the Executor app's `executor` skill. Read its other skills with
-`skills`, such as `{app: "executor", name: "code-mode"}`; `{}` lists them all.
+`skills({app: "executor", name: "code-mode"})`; `skills({})` lists them all.
 
 ## Find and call tools
 
@@ -43,10 +43,11 @@ large content: an approval request is capped at 100,000 bytes.
 ## Build an app
 
 Build an app when no existing app provides the tools, data, UI or automation
-the user needs. For a known service, first check Quick Add on the Add app page
-(`/org/<slug>/apps/add`), which installs published apps and remote MCP servers without code. With a
-shell, deploy a source directory with the `executor apps` CLI; without one,
-build through `execute`. Read the `app-authoring` skill before writing an app.
+the user needs. For a known service, search the catalog first:
+`organization.catalog({ query: { search: "gmail", limit: "20" } })`, then
+`apps.install` a match or `apps.importCustom` a remote MCP URL. The dashboard
+shows the same catalog at `/org/<slug>/apps/add`. With a shell, use the
+`executor apps` CLI, else `execute`; read the `app-authoring` skill first.
 
 ## Dashboard links
 
