@@ -17,6 +17,7 @@ import {
   isAPIError,
 } from "better-auth/api";
 import { setSessionCookie } from "better-auth/cookies";
+import { inviterMayInvite } from "@executor-js/hosted-server";
 import { SsoRefusal } from "@executor-js/hosted-self-host-web/sso";
 import { Cause, Effect, Exit, Schema } from "effect";
 import { OrganizationSlug } from "@executor-js/hosted-server/organization";
@@ -43,6 +44,7 @@ const Invitation = Schema.Struct({
   id: Schema.String,
   email: Schema.String,
   organizationId: Schema.String,
+  inviterId: Schema.String,
   role: Schema.Literals(["admin", "member"]),
   status: Schema.String,
   expiresAt: Schema.Date,
@@ -311,6 +313,10 @@ const register = (
                   return yield* deny(
                     "This invitation is invalid, expired, or for a different email.",
                   );
+                if (!(yield* call(() => inviterMayInvite(adapter, invitation))))
+                  return yield* deny(
+                    "The person who sent this invitation can no longer invite members. Ask an administrator for a new invitation.",
+                  );
                 // The invitation names its organization; it must still exist.
                 const org = yield* call(() =>
                   adapter.findOne({
@@ -574,4 +580,13 @@ export const selfHostRegistration = (settings: Effect.Success<typeof selfHostAut
         (ctx) => register(ctx, ctx.body, { invitation: ctx.body.invitation }),
       ),
     },
+    // Both routes check a password (registration does for an existing account), so they take
+    // Better Auth's sign-in limit: three requests per address every ten seconds.
+    rateLimit: [
+      {
+        pathMatcher: (path) => path === "/self-host/setup" || path === "/self-host/register",
+        window: 10,
+        max: 3,
+      },
+    ],
   }) satisfies BetterAuthPlugin;

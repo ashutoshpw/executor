@@ -1,11 +1,14 @@
 import { CurrentActor } from "../contracts/executor.ts";
 import { observeAutomationTool } from "../contracts/scheduler.ts";
 /** Retained run identities pin code/accounts; the backend owns timers and checkpoint execution. */
-import { Cause, Clock, Effect, Exit, Redacted, Result, Schema, type Crypto } from "effect";
+import { Cause, Clock, Effect, Exit, Redacted, Result, Schema } from "effect";
+import { Digest } from "effect/crypto";
+import type { HostCrypto } from "./host-crypto.ts";
 import { Hex } from "effect/encoding";
 import { UserFacingError } from "@executor-js/utils/user-facing-error";
 import {
   HostedWorkflow,
+  ProviderError,
   WorkflowFailure,
   WorkflowRun,
   WorkflowRunId,
@@ -37,6 +40,8 @@ import { resolve, snapshot, type InvocationSnapshot } from "./tools.ts";
 import { invocationScope, scopedSelection } from "./selection.ts";
 import type { Declarations } from "./declarations.ts";
 import { ownsDatabase } from "../contracts/apps.ts";
+import { AppEvaluationFailed, evaluationFailure } from "../contracts/tools.ts";
+import { appProviderFailure } from "./provider-error.ts";
 
 const StoredRun = Schema.Struct({
   id: WorkflowRunId,
@@ -139,7 +144,7 @@ export const makeWorkflowRuns = (
   runtime: Runtime,
   resolveAccount: ReturnType<typeof makeOAuth>["resolveSelected"],
   credentials: Credentials,
-  crypto: Crypto.Crypto,
+  crypto: HostCrypto,
   declarations: Declarations,
   backend?: WorkflowRuntime,
 ) => {
@@ -237,6 +242,7 @@ export const makeWorkflowRuns = (
           ...(yield* resolve(state, resolveAccount).pipe(
             Effect.provideService(CurrentActor, state.actor),
           )),
+          hostApi: declarations.hostApi(state.version),
           database: ownsDatabase(state.version.requirements),
           workflowControls: controls(state),
         };
@@ -258,10 +264,12 @@ export const makeWorkflowRuns = (
               set: { status: "running" },
             }),
           );
+        const hostApi = declarations.hostApi(state.version);
         return {
           runId: run,
           app: row.app,
           build: state.version.build,
+          ...(hostApi === undefined ? {} : { hostApi }),
           version: row.version,
           name: row.name,
           input: payload.input,
@@ -300,8 +308,8 @@ export const makeWorkflowRuns = (
                   replay: {
                     key: input.stepId,
                     fingerprint: Hex.encode(
-                      yield* crypto.digest(
-                        "SHA-256",
+                      yield* crypto.digest.digest(
+                        Digest.sha256,
                         new TextEncoder().encode(
                           stable({
                             version: current.version,
@@ -384,9 +392,23 @@ export const makeWorkflowRuns = (
         "execution",
       ).pipe(Effect.result);
       if (Result.isFailure(result)) {
-        if (result.failure.reason === "engine" && result.failure.retryable)
-          return yield* result.failure;
         const detail = workflowFailureDetail(result.failure);
+        if (result.failure.reason === "engine" && result.failure.retryable) {
+          // The engine retries steps, not the body, so this failure ends the run. One whose cause
+          // is known is recorded now, for its owner to read, while the engine reports the run
+          // running or waiting. A paused, terminated or other run is left to the engine, and an
+          // unreadable status to the next status read, as before.
+          if (detail !== undefined && backend !== undefined) {
+            const state = yield* backend.status(run).pipe(Effect.result);
+            if (
+              Result.isSuccess(state) &&
+              (state.success.status === "running" || state.success.status === "waiting")
+            )
+              // A failed write leaves the run to the next status read, which records the reason.
+              yield* finish(run, { ok: false, error: "engine", detail }).pipe(Effect.ignore);
+          }
+          return yield* result.failure;
+        }
         yield* finish(run, {
           ok: false,
           error: result.failure.reason,
@@ -454,9 +476,7 @@ export const makeWorkflowRuns = (
     Effect.gen(function* () {
       if (backend === undefined) return yield* unavailable();
       yield* storedApp(db, { app: input.app });
-      const id = WorkflowRunId.make(
-        `wfr_${yield* crypto.randomUUIDv4.pipe(Effect.mapError(() => new StorageError()))}`,
-      );
+      const id = WorkflowRunId.make(`wfr_${yield* crypto.random.uuidV4()}`);
       const key = input.key ?? id;
       const actor = inherited === undefined ? yield* CurrentActor : inherited.actor;
       // A key is the caller's within one scope: a run started without a caller never answers a
@@ -485,6 +505,7 @@ export const makeWorkflowRuns = (
             .workflow({
               app: input.app,
               build: state.version.build,
+              hostApi: declarations.hostApi(state.version),
               ...bound,
               command: { operation: "workflow-validate", name: input.workflow, input: input.input },
             })
@@ -742,20 +763,31 @@ export const makeWorkflowRuns = (
     definitions: (input: typeof WorkflowApp.Type) =>
       Effect.gen(function* () {
         const state = yield* snapshot(db, input);
+        const identity = { app: state.app.id, version: state.version.id };
+        // Listing workflows evaluates the app's definition, as listing its tools or skills does,
+        // so it keeps the same account of what failed: the app's own error, a service's refusal
+        // or the runtime failure Executor observed, attributed to this app alone.
         const value = yield* declarations.read("workflows", state, (context) =>
-          safe(
-            runtime.workflow({
+          runtime
+            .workflow({
               app: input.app,
               build: state.version.build,
+              hostApi: declarations.hostApi(state.version),
               ...context,
               command: { operation: "workflows" },
-            }),
-            "execution",
-          ),
+            })
+            .pipe(
+              Effect.mapError((error) =>
+                Schema.is(ProviderError)(error)
+                  ? appProviderFailure(state, error)
+                  : evaluationFailure(identity, error, "Workflow evaluation failed"),
+              ),
+            ),
         );
-        return yield* safe(
-          Schema.decodeUnknownEffect(Schema.Array(HostedWorkflow))(value),
-          "execution",
+        return yield* Schema.decodeUnknownEffect(Schema.Array(HostedWorkflow))(value).pipe(
+          Effect.mapError(
+            () => new AppEvaluationFailed({ ...identity, reason: "Invalid workflow catalog" }),
+          ),
         );
       }).pipe(Effect.withSpan("sdk.workflows.definitions")),
     runs: {

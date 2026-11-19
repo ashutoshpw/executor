@@ -3,6 +3,7 @@ import { SqlClient } from "effect/sql";
 import { fumadb } from "fumadb-effect";
 import { column, idColumn, schema, table } from "fumadb-effect/schema";
 import { sqlAdapter } from "fumadb-effect/sql";
+import { invitingRoles } from "@executor-js/hosted-server";
 import { SetupOrder, SetupSkip } from "@executor-js/hosted-server/setup";
 import {
   CompanyProfile,
@@ -65,7 +66,8 @@ export const makeOnboardingStore = Effect.gen(function* () {
       Effect.map((rows) => rows[0]),
     );
   // This statement must follow the user lock so a waiting request sees the
-  // previous transaction's committed membership under READ COMMITTED.
+  // previous transaction's committed membership under READ COMMITTED. The invitation is one that
+  // can still be accepted: its inviter still holds a role that may invite (`inviterMayInvite`).
   const state = (id: string, email: string) =>
     sql`select
     coalesce((select jsonb_agg(jsonb_build_object(
@@ -73,8 +75,11 @@ export const makeOnboardingStore = Effect.gen(function* () {
     ) order by o."createdAt", o.id) from organization o join member m on m."organizationId" = o.id
       where m."userId" = ${id}
         and not exists (select 1 from hosted_organization_removal r where r.organization_id = o.id)), '[]'::jsonb) as organizations,
-    (select id from invitation where lower(email) = lower(${email}) and status = 'pending'
-      and "expiresAt" > now() order by "expiresAt", id limit 1) as invitation,
+    (select i.id from invitation i where lower(i.email) = lower(${email}) and i.status = 'pending'
+      and i."expiresAt" > now()
+      and exists (select 1 from member im where im."userId" = i."inviterId"
+        and im."organizationId" = i."organizationId" and im.role in ${sql.in(invitingRoles)})
+      order by i."expiresAt", i.id limit 1) as invitation,
     (exists(select 1 from cloud_organization_setup where user_id = ${id})
       or exists(select 1 from invitation where lower(email) = lower(${email}) and status = 'accepted')) as provisioned
   `.pipe(
@@ -148,16 +153,6 @@ export const makeOnboardingStore = Effect.gen(function* () {
         rows[0] ? Effect.succeed(rows[0].allowed) : Effect.fail(new OnboardingUnavailable()),
       ),
     );
-  /** Whether the user set up a team through onboarding, which runs the v1 check first. */
-  const setUpTeam = (userId: string) =>
-    sql`select exists(select 1 from cloud_organization_setup where user_id = ${userId}) as set_up`.pipe(
-      Effect.flatMap(
-        Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ set_up: Schema.Boolean }))),
-      ),
-      Effect.flatMap((rows) =>
-        rows[0] ? Effect.succeed(rows[0].set_up) : Effect.fail(new OnboardingUnavailable()),
-      ),
-    );
   /** Keep the first assignment: a retried creation never changes the order already shown. */
   const assignSetup = (userId: string, organizationId: string, variant: SetupOrder) =>
     sql`insert into cloud_setup_assignment (user_id, organization_id, variant)
@@ -218,7 +213,6 @@ export const makeOnboardingStore = Effect.gen(function* () {
     setupAssignment,
     claimSetupExposure,
     canReadIcon,
-    setUpTeam,
     user,
     lockUser,
     state,

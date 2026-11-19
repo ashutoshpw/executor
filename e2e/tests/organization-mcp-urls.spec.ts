@@ -34,16 +34,26 @@ layer(HostedLive, { excludeTestServices: true })("Organization MCP URLs", (it) =
         };
 
         yield* browser.login(actors.owner);
-        yield* browser.use("Open Connect a service", (page) =>
-          page.goto(`/org/${slug}/apps/add/custom`),
+        yield* browser.use("Open Apps", (page) => page.goto(`/org/${slug}/apps`));
+        yield* browser.use("Choose From scratch", (page) =>
+          page
+            .getByRole("button", { name: "Add app", exact: true })
+            .click()
+            .then(() => page.getByRole("menuitem", { name: /^From scratch/ }).click()),
         );
         const prompt = yield* browser.use("Read the agent prompt", (page) =>
-          page.getByRole("region", { name: "Any other service" }).textContent(),
+          page.getByRole("region", { name: "Send this to your agent" }).textContent(),
         );
         expectOrganization(prompt ?? "");
         expect(prompt).toContain("connection is for a different organization");
 
         yield* browser.use("Open Connect", (page) => page.goto(`/org/${slug}/connect`));
+        yield* browser.use("Connect with full access", (page) =>
+          page
+            .getByRole("listitem", { name: "Full access", exact: true })
+            .getByRole("button", { name: "Connect", exact: true })
+            .click(),
+        );
         yield* browser.use("Open the prompt tab", (page) =>
           page.getByRole("tab", { name: "Prompt", exact: true }).click(),
         );

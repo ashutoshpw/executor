@@ -8,6 +8,7 @@ import {
   routerFailure,
   approvalRequired,
   ToolListingTimedOut,
+  ToolSearchStale,
   ToolSearchUnavailable,
   resolveLinkedAccounts,
   AccountChoiceUnsupported,
@@ -36,14 +37,17 @@ import {
   type FailureSite,
 } from "./diagnostics.ts";
 import { nearest } from "./suggestions.ts";
+import { withOperationSpan } from "./telemetry.ts";
 import type { McpAppAccounts } from "../contracts/targets.ts";
-import type { McpBackend } from "../contracts/backend.ts";
+import { ToolCallRecorded, type McpBackend } from "../contracts/backend.ts";
 import { accountSummary, accountsKey, discoveryAccounts } from "./accounts.ts";
 import {
   AppAccountRequired,
   CallInput,
+  callLogNote,
   CallRequest,
   CatalogUnavailable,
+  type CallLog,
   type CallOutcome,
   type ExecuteResult,
   AppDiscoveryTimedOut,
@@ -876,10 +880,10 @@ function catalog(
             );
           }),
         );
-      }).pipe(Effect.withSpan(name));
+      }).pipe(withOperationSpan(name));
     const apps = yield* backend
       .listApps({ toolsOnly: true })
-      .pipe(Effect.withSpan("mcp.discovery.apps"));
+      .pipe(withOperationSpan("mcp.discovery.apps"));
     yield* Effect.annotateCurrentSpan({
       "executor.discovery.apps": apps.length,
       "executor.discovery.concurrency": concurrency,
@@ -902,6 +906,8 @@ function catalog(
     const namespaces: Namespaces = new Map();
     /** The version each loaded namespace's tools came from. */
     const loadedFrom = new Map<string, VersionId>();
+    /** The app and accounts each loaded app's tools were listed with. */
+    const loadedWith = new Map<string, { readonly app: AppId; readonly accounts: AppAccounts }>();
     const unavailableOf = (app: AppId) => {
       const seen = new Set<string>();
       return [
@@ -944,37 +950,53 @@ function catalog(
     const call =
       (entry: Entry) =>
       (input: unknown): Effect.Effect<Json, ToolError> =>
-        Schema.decodeUnknownEffect(Json)(input).pipe(
-          Effect.mapError(() => toolError("Tool arguments must be JSON")),
-          Effect.flatMap((input) =>
-            Effect.gen(function* () {
-              if (Schema.is(JsonObject)(input) && Object.hasOwn(input, accountsKey)) {
-                const schemas = yield* renderSchemas(entry.tool);
-                if (schemas.input.properties?.[accountsKey] === undefined)
-                  return yield* new AccountChoiceUnsupported({ app: entry.target.id });
-              }
-              const accounts = yield* resolveLinkedAccounts({
-                app: entry.target.id,
-                version: entry.target.version,
-                // The host fills app requirements from the app links.
-                appLinks: {},
-                userLinks: entry.target.linked,
-              });
-              const result = yield* backend.callTool({
-                app: entry.target.id,
-                accounts,
-                tool: entry.tool.name,
-                kind: entry.tool.readOnly === true ? "query" : "mutation",
-                input,
-              });
-              if (result.status !== "completed") return yield* approvalRequired(result);
-              // The tool's result says it failed, as an MCP server's `isError` does. The program
-              // still gets the whole result; the call is reported as a failure.
-              if (result.toolError === true) yield* toolReportedError(progress);
-              return result.value;
-            }).pipe(Effect.mapError((error) => toolError(diagnostic(error, site("call"))))),
-          ),
-        );
+        Effect.gen(function* () {
+          // The host's reference for this call, once it recorded it, for the call's own report
+          // and for the error the program catches; the error's message is unchanged.
+          const recorded = yield* callRecorder(progress);
+          return yield* Schema.decodeUnknownEffect(Json)(input).pipe(
+            Effect.mapError(() => toolError("Tool arguments must be JSON")),
+            Effect.flatMap((input) =>
+              Effect.gen(function* () {
+                if (Schema.is(JsonObject)(input) && Object.hasOwn(input, accountsKey)) {
+                  const schemas = yield* renderSchemas(entry.tool);
+                  if (schemas.input.properties?.[accountsKey] === undefined)
+                    return yield* new AccountChoiceUnsupported({ app: entry.target.id });
+                }
+                const accounts = yield* resolveLinkedAccounts({
+                  app: entry.target.id,
+                  version: entry.target.version,
+                  // The host fills app requirements from the app links.
+                  appLinks: {},
+                  userLinks: entry.target.linked,
+                });
+                const result = yield* backend
+                  .callTool({
+                    app: entry.target.id,
+                    accounts,
+                    tool: entry.tool.name,
+                    kind: entry.tool.readOnly === true ? "query" : "mutation",
+                    input,
+                  })
+                  .pipe(Effect.provideService(ToolCallRecorded, recorded.record));
+                if (result.status !== "completed") return yield* approvalRequired(result);
+                // The tool's result says it failed, as an MCP server's `isError` does. The program
+                // still gets the whole result; the call is reported as a failure.
+                if (result.toolError === true) yield* toolReportedError(progress);
+                return result.value;
+              }).pipe(
+                Effect.mapError((error) => {
+                  const reference = recorded.reference();
+                  return toolError(
+                    diagnostic(error, site("call")),
+                    undefined,
+                    reference === undefined ? undefined : { reference },
+                  );
+                }),
+              ),
+            ),
+          );
+        });
     /** The program's own tool for an entry, built when the program's catalog takes its app. */
     const program = (entry: Entry) =>
       renderSchemas(entry.tool).pipe(
@@ -1057,10 +1079,13 @@ function catalog(
           ? []
           : [
               {
-                namespace: `${app.slug}.${toolPath(router.path)}`,
+                // The app's own router failed only for some of its accounts: its tools stay
+                // callable, so the failure is reported without closing the app's namespace.
+                namespace: router.path === "" ? undefined : `${app.slug}.${toolPath(router.path)}`,
                 entry: {
                   app: app.id,
-                  name: `${app.name} ${router.title ?? router.path}`,
+                  name:
+                    router.path === "" ? app.name : `${app.name} ${router.title ?? router.path}`,
                   router: router.path,
                   reason: diagnostic(
                     routerFailure({ app: app.id, version }, router.error),
@@ -1103,11 +1128,13 @@ function catalog(
         const namespace = app.slug;
         namespaces.set(namespace, "available");
         loadedFrom.set(namespace, catalog.version);
+        const accounts = discoveryAccounts(linked);
+        if (accounts !== undefined) loadedWith.set(namespace, { app: app.id, accounts });
         // A router that could not list its tools is reported like an app, at its own namespace,
         // so a call into it explains why instead of reporting an unknown tool.
         for (const { namespace, entry } of routerFailures(app, catalog.version, catalog.routers)) {
           failed.push(entry);
-          namespaces.set(namespace, entry);
+          if (namespace !== undefined) namespaces.set(namespace, entry);
         }
         const described: Target = {
           ...placeOf(app, linked),
@@ -1143,6 +1170,20 @@ function catalog(
           const { linked, value: searchable } = discovered;
           for (const { entry } of routerFailures(app, searchable.version, searchable.routers))
             failed.push(entry);
+          // The app's earlier tools are still searched; this says why they may be out of date.
+          if (searchable.stale !== undefined)
+            failed.push({
+              app: app.id,
+              name: app.name,
+              reason: diagnostic(
+                new ToolSearchStale({
+                  app: app.id,
+                  listedAt: searchable.stale.listedAt,
+                  cause: searchable.stale.failure.description,
+                }),
+                site("discover"),
+              ),
+            });
           found.push({
             ...placeOf(app, linked),
             listing: searchable.listing,
@@ -1170,13 +1211,28 @@ function catalog(
         ),
       ).pipe(Effect.map((load) => ({ app, load }))),
     );
+    /**
+     * The batch each app is made searchable in: the apps the first search that reached it reached
+     * and no earlier search had, so the backend reads a search's apps together and never with an
+     * app only another search reaches.
+     */
+    const searchBatches = new Map<AppId, ReadonlyArray<AppId>>();
+    const claimSearchBatch = (selected: ReadonlyArray<{ readonly app: ListedApp }>) =>
+      Effect.sync(() => {
+        const batch = selected.map(({ app }) => app.id).filter((app) => !searchBatches.has(app));
+        for (const app of batch) searchBatches.set(app, batch);
+      });
     const searchedApps = yield* Effect.forEach(apps, (app) =>
       Effect.cached(
         discoverApp(app, "mcp.discovery.search", (accounts) =>
           backend.searchableTools(
             { app: app.id, accounts },
             // Search reads every app's rows; refreshing aged ones would load each app's Worker.
-            { reportRunningAfterMillis: discoveryWaitMs, refreshStale: false },
+            {
+              reportRunningAfterMillis: discoveryWaitMs,
+              refreshStale: false,
+              searchBatch: searchBatches.get(app.id) ?? [app.id],
+            },
           ),
         ).pipe(
           Effect.flatMap((result) => projectSearch(app, result)),
@@ -1263,7 +1319,7 @@ function catalog(
           "executor.discovery.tools": entries.length,
         });
         return entries;
-      }).pipe(Effect.withSpan("mcp.describe.discovery"));
+      }).pipe(withOperationSpan("mcp.describe.discovery"));
     /**
      * Report targets whose listing search no longer keeps, as discovery reports a target it could
      * not load, and leave them out of later searches.
@@ -1300,6 +1356,7 @@ function catalog(
     const searchable = (names: ReadonlyArray<string> | "all") =>
       Effect.gen(function* () {
         const selected = named(searchedApps, names);
+        yield* claimSearchBatch(selected);
         yield* load(selected);
         if (names !== "all") yield* revealNamed(selected);
         const targets = selected
@@ -1310,7 +1367,7 @@ function catalog(
           "executor.discovery.targets": targets.length,
         });
         return targets;
-      }).pipe(Effect.withSpan("mcp.search.discovery"));
+      }).pipe(withOperationSpan("mcp.search.discovery"));
     const reachable = (names: ReadonlySet<string>) =>
       discovered.filter(({ app }) => names.has(app.slug));
     const slugs = new Set(apps.map((app) => app.slug));
@@ -1351,7 +1408,7 @@ function catalog(
             loaded === undefined ? 0 : Object.keys(loaded).length,
           );
           return loaded;
-        }).pipe(Effect.withSpan("mcp.discovery.namespace")),
+        }).pipe(withOperationSpan("mcp.discovery.namespace")),
       ).pipe(Effect.map((open) => ({ app: selected.app, open }))),
     );
     /** Namespaces for the program over every app it does not hold, each loaded on first use. */
@@ -1376,9 +1433,30 @@ function catalog(
       lost,
       unavailableApps,
       unknownTool: (error: CodeMode.Diagnostic) => unknownTool(error, loadedFrom, slugs),
+      /**
+       * Have the app a program named an unknown tool of checked for new tools. Its listing is read
+       * as one that refreshes when it is past its freshness: the refresh runs the app, whose
+       * cached tool list, such as an MCP server's, refreshes in turn once it is stale, and a
+       * changed list makes every process list the app again. Nothing waits for that refresh.
+       */
+      recheck: (error: CodeMode.Diagnostic) => {
+        const loaded = loadedWith.get(unknownPath(error)?.split(".")[0] ?? "");
+        return loaded === undefined
+          ? Effect.void
+          : backend.listTools({ app: loaded.app, accounts: loaded.accounts, limit: 1 }).pipe(
+              // A listing this read evaluates runs on as the host's background work, where
+              // there is one, after the answer stops waiting for it.
+              Effect.timeoutOption(recheckWaitMillis),
+              Effect.ignore,
+              Effect.withSpan("mcp.execute.recheck"),
+            );
+      },
     };
   });
 }
+
+/** How long an execute that named an unknown tool waits for the app's listing it rechecks. */
+const recheckWaitMillis = 2_000;
 
 /** Unavailable namespaces map to their reason; loaded ones are marked available. */
 type Namespaces = Map<string, typeof UnavailableApp.Type | "available">;
@@ -1392,6 +1470,8 @@ export type ExecutionProgress = {
     durationMs?: number;
     /** The call returned a result that says the tool failed (`toolError`), so it did not succeed. */
     toolError?: true;
+    /** The host's reference for the call, once it recorded it. */
+    reference?: string;
   }>;
   /** The call index each running tool fiber serves, so the driver can mark its approval wait. */
   readonly callFibers: Map<number, number>;
@@ -1422,6 +1502,26 @@ const recordFailure = (progress: ExecutionProgress, error: Error) =>
   Effect.sync(() => {
     progress.failures.push(error);
   });
+/**
+ * Collect the host's reference for the call this fiber makes. The host reports it from whichever
+ * fiber makes the call, so the call's index is read here, where the program's call runs.
+ */
+const callRecorder = (progress: ExecutionProgress) =>
+  Effect.map(Effect.fiberId, (fiber) => {
+    const index = progress.callFibers.get(fiber);
+    let reference: string | undefined;
+    return {
+      record: (recorded: string) => {
+        reference = recorded;
+        const call = index === undefined ? undefined : progress.calls[index];
+        if (call !== undefined) call.reference = recorded;
+      },
+      reference: () => reference,
+    };
+  });
+/** A call's reference as its failure reports it, beside the error. */
+export const callLog = (reference: string | undefined): { callLog: CallLog } | {} =>
+  reference === undefined ? {} : { callLog: { reference, note: callLogNote } };
 /** Mark the call this fiber makes as one whose result says its tool failed. */
 const toolReportedError = (progress: ExecutionProgress) =>
   Effect.map(Effect.fiberId, (fiber) => {
@@ -1456,7 +1556,7 @@ const unknownTool = (
   for (let length = segments.length; length > 0; length--) {
     const version = loadedFrom.get(segments.slice(0, length).join("."));
     if (version !== undefined)
-      return `This execute loaded '${slug}' from version ${version} when it first reached the app. If the app was deployed after that, call its new tools in a new execute. Otherwise use search to find the app's tools.`;
+      return `This execute loaded '${slug}' from version ${version} when it first reached the app. If the app was deployed after that, call its new tools in a new execute. If the tool was added to the service behind the app, Executor is checking the app for new tools now; they appear within a few minutes, so call it again in a new execute. Otherwise use search to find the app's tools.`;
   }
   if (!slugs.has(slug))
     return `No app '${slug}' existed when this execute started. If it was created or deployed during this execute, call it in a new execute. Otherwise use search to find available tools.`;
@@ -1494,22 +1594,46 @@ const unavailableMessage = (unavailable: typeof UnavailableApp.Type) =>
  * lists only calls whose start was recorded.
  */
 export const reportedCalls = (progress: ExecutionProgress): Array<McpToolCall> =>
-  progress.calls.flatMap((call) =>
-    call === undefined
-      ? []
-      : [
-          {
-            name: call.name,
-            outcome:
-              call.outcome === "running"
-                ? "interrupted"
-                : call.outcome === "success" && call.toolError === true
-                  ? "failure"
-                  : call.outcome,
-            ...(call.durationMs === undefined ? {} : { durationMs: call.durationMs }),
-          },
-        ],
-  );
+  progress.calls.flatMap((call) => {
+    if (call === undefined) return [];
+    const outcome =
+      call.outcome === "running"
+        ? "interrupted"
+        : call.outcome === "success" && call.toolError === true
+          ? "failure"
+          : call.outcome;
+    return [
+      {
+        name: call.name,
+        outcome,
+        ...(call.durationMs === undefined ? {} : { durationMs: call.durationMs }),
+        // Successful calls need no reference.
+        ...(call.reference === undefined || outcome === "success"
+          ? {}
+          : { reference: call.reference }),
+      },
+    ];
+  });
+
+/**
+ * Added to a program failure that left other calls running: those calls were interrupted, and
+ * calls that finished first did run.
+ */
+const interruptedSiblingsNote =
+  "Other tool calls were still running when the program stopped and were interrupted. toolCalls lists every call with its outcome: calls marked success did run.";
+
+/**
+ * Added after that note only when a tool call's rejection stopped the program, as when one call
+ * in a Promise.all rejects; a program that threw on its own gains nothing from it.
+ */
+const settleSiblingsAdvice =
+  "To keep the results of the calls that succeed when one fails, use Promise.allSettled or a .catch on each call.";
+
+/** The interrupted-calls note for a failure of this kind. */
+const interruptedNote = (kind: CodeMode.DiagnosticKind) =>
+  kind === "ToolFailure"
+    ? `${interruptedSiblingsNote} ${settleSiblingsAdvice}`
+    : interruptedSiblingsNote;
 
 /** The phase a timed-out execution was in, so callers can tell slow discovery from a slow program. */
 export const timeoutMessage = (timeoutMs: number, phase: "discovery" | "program") =>
@@ -1609,7 +1733,7 @@ function runProgram(
         });
         return discovered;
       }).pipe(
-        Effect.withSpan("mcp.catalog"),
+        withOperationSpan("mcp.catalog"),
         Effect.map(Option.some),
         Effect.raceFirst(deadline.pipe(Effect.as(Option.none()))),
       );
@@ -1694,11 +1818,14 @@ function runProgram(
         yield* Effect.annotateCurrentSpan("executor.unavailable_app.called", true);
       const unknown =
         result.ok || unavailable !== undefined ? undefined : prepared.unknownTool(result.error);
-      const execution = executionDiagnostic({
+      if (unknown !== undefined && !result.ok) yield* prepared.recheck(result.error);
+      const toolCalls = reportedCalls(progress);
+      const reported = executionDiagnostic({
         ...result,
+        ...(result.ok ? {} : { error: programFailure(result.error) }),
         ...(unknown === undefined || result.ok
           ? {}
-          : { error: { ...result.error, suggestions: [unknown] } }),
+          : { error: { ...programFailure(result.error), suggestions: [unknown] } }),
         ...(unavailable === undefined
           ? {}
           : {
@@ -1715,8 +1842,18 @@ function runProgram(
               },
             }
           : {}),
-        toolCalls: reportedCalls(progress),
+        toolCalls,
       });
+      const execution =
+        reported.ok || timedOut || !toolCalls.some(({ outcome }) => outcome === "interrupted")
+          ? reported
+          : {
+              ...reported,
+              error: {
+                ...reported.error,
+                message: `${reported.error.message} ${interruptedNote(reported.error.kind)}`,
+              },
+            };
       if (timedOut) yield* Effect.annotateCurrentSpan("executor.timeout.phase", "program");
       // Signatures cost CPU per tool; a program renders them only for its global `search()` pages.
       yield* Effect.annotateCurrentSpan(
@@ -1740,17 +1877,28 @@ function runProgram(
   });
 }
 
+/**
+ * The program's uncaught failure as agents read it: a failed tool's properties are not passed on
+ * whole; its reference becomes the failure's `callLog`, beside the unchanged message.
+ */
+const programFailure = ({ properties, ...error }: CodeMode.Diagnostic) => ({
+  ...error,
+  ...(error.kind === "ToolFailure" ? callLog(properties?.["reference"]) : {}),
+});
+
 /** A failed direct call, in the shape every outcome of a batch shares. */
 const callFailure = (
   path: string,
   kind: CodeMode.DiagnosticKind,
   message: string,
   matches?: ReadonlyArray<string>,
+  reference?: string,
 ): CallOutcome => ({
   path,
   ok: false,
   error: failureDetail({ kind, message }),
   ...(matches === undefined ? {} : { matches }),
+  ...callLog(reference),
 });
 
 /**
@@ -1787,7 +1935,7 @@ export function callTools(input: typeof CallInput.Type): Program {
           const entries = yield* discovered.described(named.filter((path) => path !== ""));
           return { discovered, entries };
         }).pipe(
-          Effect.withSpan("mcp.catalog"),
+          withOperationSpan("mcp.catalog"),
           Effect.map(Option.some),
           Effect.raceFirst(deadline.pipe(Effect.as(Option.none()))),
         );
@@ -1837,10 +1985,28 @@ export function callTools(input: typeof CallInput.Type): Program {
               .pipe(
                 Effect.matchEffect({
                   onSuccess: (value) =>
-                    finish("success").pipe(Effect.as<CallOutcome>({ path: name, ok: true, value })),
+                    finish("success").pipe(
+                      Effect.as<CallOutcome>({
+                        path: name,
+                        ok: true,
+                        value,
+                        // A value that says the tool failed is a failure the host recorded.
+                        ...(progress.calls[index]?.toolError === true
+                          ? callLog(progress.calls[index]?.reference)
+                          : {}),
+                      }),
+                    ),
                   onFailure: (error) =>
                     finish("failure").pipe(
-                      Effect.as(callFailure(name, "ToolFailure", error.message)),
+                      Effect.as(
+                        callFailure(
+                          name,
+                          "ToolFailure",
+                          error.message,
+                          undefined,
+                          progress.calls[index]?.reference,
+                        ),
+                      ),
                     ),
                 }),
                 Effect.ensuring(Effect.sync(() => progress.callFibers.delete(fiber))),

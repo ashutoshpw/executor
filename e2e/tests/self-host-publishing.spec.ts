@@ -3,14 +3,18 @@ import { expect, layer } from "@effect/vitest";
 import { Effect, Exit, Layer, Schema } from "effect";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { randomUUID } from "node:crypto";
-import { Api, SessionClients, body, type Session } from "../support/api.ts";
+import { Api, SessionClients, body, currentClient, type Session } from "../support/api.ts";
 import { password } from "../support/actors.ts";
 import { TestLive, withCase } from "../support/case.ts";
 import { App, Organization, Resource } from "../support/contracts.ts";
 import { withApps } from "../support/apps-release.ts";
 import { startFreshSelfHost } from "../support/managed-server.ts";
 import { Target } from "../support/platform.ts";
-import { registryPublication, registryUpstream } from "../support/registry-upstream.ts";
+import {
+  registryCatalog,
+  registryPublication,
+  registryUpstream,
+} from "../support/registry-upstream.ts";
 import { scenarios } from "../test-plan.ts";
 
 const Workspace = Schema.Struct({ revision: Schema.Struct({ commit: Schema.String }) });
@@ -100,12 +104,16 @@ const freshServer = (environment: Readonly<Record<string, string>>) =>
       api
         .request(owner, "GET", `/api/organizations/${organizationId}/apps/${app}/workspace/display`)
         .pipe(Effect.flatMap((response) => body(Readiness, response)));
-    /** A request with no credentials, as another server or the CLI makes it. */
+    /** A request with no credentials, as another server or the current CLI makes it. */
     const anonymous = (path: string) =>
       Effect.scoped(
         Effect.gen(function* () {
           const client = yield* HttpClient.HttpClient;
-          const response = yield* client.execute(HttpClientRequest.get(new URL(path, origin)));
+          const response = yield* client.execute(
+            HttpClientRequest.get(new URL(path, origin)).pipe(
+              HttpClientRequest.setHeaders(currentClient),
+            ),
+          );
           return {
             status: response.status,
             headers: response.headers,
@@ -318,7 +326,7 @@ layer(TestLive, { excludeTestServices: true })("Self-host publishing", (it) => {
           expect(both.status, JSON.stringify(both.body)).toBe(200);
           const entries = yield* body(Schema.Array(Publication), both);
           expect(entries.map((entry) => entry.name)).toEqual(
-            [registryPublication.name, taken, name].sort(),
+            [...registryCatalog.map((listing) => listing.name), taken, name].sort(),
           );
           expect(entries.find((entry) => entry.name === name)?.commit).toBe(original.commit);
 

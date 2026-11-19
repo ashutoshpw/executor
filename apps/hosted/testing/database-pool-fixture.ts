@@ -18,10 +18,19 @@
  *   cancellation bound, and the pool replaces it; with the cancel delivered, the connection is kept.
  * - `sibling`: a statement of a group that finishes while another statement of the group drains
  *   returns at once.
+ * - `connect-abandoned`: a connect attempt that times out, and one interrupted while it waits, close
+ *   their sockets: a server that accepts and never answers sees each closed.
  * - `batch`: a `PgConnection.pipelined` batch with `BEGIN` runs on one held connection in one
  *   snapshot inside `PgPool.held`, and refuses to write `BEGIN` outside a hold. A batch whose
  *   pool cannot connect (both attempts closed at once, as by a restarting pooler) returns each
  *   leaf's failure rather than failing itself.
+ * - `commit-unanswered`: a batch leaf's statement after the one its batch sent is not written while
+ *   the batch's `COMMIT` is unanswered (through Hyperdrive such a statement is never answered); it
+ *   is written, and answered, once the `COMMIT` is. A proxy holds the server's answer to the
+ *   `COMMIT` for a moment and counts what the client writes meanwhile.
+ * - `commit-rollback`: the same when a statement inside the batch fails, so its `COMMIT` is
+ *   answered as a rollback: the later statement still waits for that answer, then is written and
+ *   answered.
  */
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -38,10 +47,12 @@ import {
   Cause,
   Context,
   Deferred,
+  Duration,
   Exit,
   Fiber,
   FileSystem,
   Layer,
+  Option,
   Redacted,
   Schedule,
   Schema,
@@ -60,6 +71,9 @@ const cases = [
   "drain",
   "sibling",
   "batch",
+  "connect-abandoned",
+  "commit-unanswered",
+  "commit-rollback",
 ] as const;
 
 /** The protocol code of a `CancelRequest`, the first message on its own connection. */
@@ -104,6 +118,78 @@ const proxy = (target: URL, dropCancels: boolean) =>
           for (const socket of sockets) socket.destroy();
         });
         server.listen(0, "127.0.0.1", () => resume(Effect.succeed({ server, cancels })));
+      },
+    ),
+    ({ server }) =>
+      Effect.callback<void>((resume) => {
+        server.close(() => resume(Effect.void));
+        server.emit("close");
+      }),
+  );
+
+/**
+ * A TCP proxy to the database that holds the server's answer to each `COMMIT` (its
+ * `CommandComplete`, `COMMIT` or, for a transaction that failed, `ROLLBACK`, and every message
+ * after it) for `holdMillis`, and counts the client's writes that arrive while it holds one: writes
+ * made while a `COMMIT` is unanswered, as the client sees it.
+ */
+const commitHoldingProxy = (target: URL, holdMillis: number) =>
+  Effect.acquireRelease(
+    Effect.callback<{ readonly server: Net.Server; readonly behindCommit: { count: number } }>(
+      (resume) => {
+        const behindCommit = { count: 0 };
+        const sockets = new Set<Net.Socket>();
+        const server = Net.createServer((client) => {
+          sockets.add(client);
+          const upstream = Net.connect(Number(target.port || 5432), target.hostname);
+          sockets.add(upstream);
+          let holding = false;
+          let held: Array<Buffer> = [];
+          // The server's messages, cut at their boundaries: a type byte and a length that counts
+          // itself. The startup reply begins with messages too.
+          let rest = Buffer.alloc(0);
+          upstream.on("data", (chunk: Buffer) => {
+            rest = Buffer.concat([rest, chunk]);
+            while (rest.length >= 5) {
+              const length = rest.readInt32BE(1) + 1;
+              if (rest.length < length) break;
+              const message = rest.subarray(0, length);
+              rest = rest.subarray(length);
+              const tag =
+                message[0] === 0x43 ? message.subarray(5, length - 1).toString("latin1") : "";
+              const commit = tag === "COMMIT" || tag === "ROLLBACK";
+              if (commit && !holding) {
+                holding = true;
+                setTimeout(() => {
+                  holding = false;
+                  const out = Buffer.concat(held);
+                  held = [];
+                  if (!client.destroyed) client.write(out);
+                }, holdMillis);
+              }
+              if (holding) held.push(Buffer.from(message));
+              else client.write(message);
+            }
+          });
+          client.on("data", (chunk) => {
+            if (holding) behindCommit.count++;
+            upstream.write(chunk);
+          });
+          upstream.once("close", () => {
+            sockets.delete(upstream);
+            client.destroy();
+          });
+          client.once("close", () => {
+            sockets.delete(client);
+            upstream.destroy();
+          });
+          upstream.on("error", () => client.destroy());
+          client.on("error", () => upstream.destroy());
+        });
+        server.on("close", () => {
+          for (const socket of sockets) socket.destroy();
+        });
+        server.listen(0, "127.0.0.1", () => resume(Effect.succeed({ server, behindCommit })));
       },
     ),
     ({ server }) =>
@@ -428,6 +514,132 @@ const command = Command.make("database-pool-fixture", {
                   }),
                 );
               return { dropped: yield* arm("dropped"), delivered: yield* arm("delivered") };
+            }
+            case "connect-abandoned": {
+              // A server that accepts and never answers, as a path that drops everything after
+              // the TCP handshake does. It reads and discards, so it sees each client's close.
+              const silent = yield* Effect.acquireRelease(
+                Effect.callback<{
+                  readonly server: Net.Server;
+                  readonly sockets: { accepted: number; open: number };
+                  readonly held: Set<Net.Socket>;
+                }>((resume) => {
+                  const sockets = { accepted: 0, open: 0 };
+                  const held = new Set<Net.Socket>();
+                  const server = Net.createServer((socket) => {
+                    sockets.accepted++;
+                    sockets.open++;
+                    held.add(socket);
+                    socket.on("close", () => {
+                      sockets.open--;
+                      held.delete(socket);
+                    });
+                    socket.on("error", () => undefined);
+                    socket.resume();
+                  });
+                  server.listen(0, "127.0.0.1", () =>
+                    resume(Effect.succeed({ server, sockets, held })),
+                  );
+                }),
+                // Sockets a client left open would keep the server from closing.
+                ({ server, held }) =>
+                  Effect.callback<void>((resume) => {
+                    for (const socket of held) socket.destroy();
+                    server.close(() => resume(Effect.void));
+                  }),
+              );
+              const address = silent.server.address();
+              if (address === null || typeof address === "string")
+                return yield* Effect.die("The silent server has no port");
+              const url = new URL(target.toString());
+              url.hostname = "127.0.0.1";
+              url.port = String(address.port);
+              /** Sockets the server still has open once closes have had time to arrive. */
+              const leftOpen = Effect.sleep("500 millis").pipe(
+                Effect.map(() => silent.sockets.open),
+              );
+              // Each attempt reaches its connect timeout; the second is the retry.
+              const timedOut = yield* Effect.exit(
+                Effect.scoped(
+                  PgConnection.make({
+                    url: Redacted.make(url.toString()),
+                    connectTimeout: Duration.millis(300),
+                    connectRetries: 1,
+                  }),
+                ),
+              );
+              const afterTimeout = { attempts: silent.sockets.accepted, open: yield* leftOpen };
+              // The caller gives up while the attempt waits, well before its own timeout.
+              const interrupted = yield* Effect.exit(
+                Effect.scoped(
+                  PgConnection.make({
+                    url: Redacted.make(url.toString()),
+                    connectTimeout: Duration.seconds(10),
+                  }),
+                ).pipe(Effect.timeout(Duration.millis(200))),
+              );
+              return {
+                timedOut:
+                  Exit.isFailure(timedOut) &&
+                  String(timedOut.cause).includes("Connection timed out")
+                    ? "timed out"
+                    : outcome(timedOut),
+                afterTimeout,
+                interrupted: outcome(interrupted),
+                afterInterrupt: {
+                  attempts: silent.sockets.accepted - afterTimeout.attempts,
+                  open: yield* leftOpen,
+                },
+              };
+            }
+            case "commit-unanswered":
+            case "commit-rollback": {
+              const holding = yield* commitHoldingProxy(target, 300);
+              const address = holding.server.address();
+              if (address === null || typeof address === "string")
+                return yield* Effect.die("The proxy has no port");
+              const url = new URL(target.toString());
+              url.hostname = "127.0.0.1";
+              url.port = String(address.port);
+              // A client of the session objects' shape, whose statements `pipelined` claims.
+              const client = yield* Layer.build(
+                PgClient.layer({
+                  url: Redacted.make(url.toString()),
+                  applicationName,
+                  maxConnections: 2,
+                  multiplex: true,
+                  multiplexConcurrency: 1,
+                  prepare: false,
+                }),
+              ).pipe(Effect.orDie);
+              const sql = Context.get(client, SqlClient.SqlClient);
+              // The first leaf reads again once its first statement answers, as a bearer recheck
+              // whose key was contended does: its batch's `COMMIT` has not answered yet. It runs
+              // outside the batch's transaction, so a failure inside the transaction does not
+              // reach it.
+              let later = "not read";
+              const recheck = Effect.gen(function* () {
+                yield* sql`SELECT 1 AS first`;
+                const rows = yield* sql<{ readonly later: number }>`SELECT 2 AS later`;
+                later = rows[0]?.later === 2 ? "answered" : "wrong rows";
+              });
+              // A statement that fails inside the transaction aborts it, so its `COMMIT` is
+              // answered as a rollback.
+              const inside = args.case === "commit-rollback" ? sql`SELECT 1 / 0` : sql`SELECT 3`;
+              const exits = yield* PgPool.held(
+                PgConnection.pipelined([recheck, inside, sql`SELECT 4`], {
+                  outside: 1,
+                  begin: "ISOLATION LEVEL REPEATABLE READ READ ONLY",
+                }),
+              ).pipe(Effect.timeoutOption("10 seconds"));
+              return {
+                leaves: Option.match(exits, {
+                  onNone: () => "timed out",
+                  onSome: (exits) => exits.map((exit) => (Exit.isSuccess(exit) ? "ok" : "failed")),
+                }),
+                behindCommit: holding.behindCommit.count,
+                later,
+              };
             }
             case "batch": {
               // A client of the session objects' shape: its statements go through the borrower

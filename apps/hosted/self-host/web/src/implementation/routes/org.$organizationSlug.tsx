@@ -7,8 +7,10 @@ import { NameAccountDialog } from "@executor-js/hosted-web/pages/name-account-di
 import { useAtomValue } from "@effect/atom-react";
 import { Option } from "effect";
 import { AsyncResult } from "effect/reactivity";
+import type { ReactNode } from "react";
 import { instanceOwnerAtom } from "../../contracts/auth.ts";
 import { Navigation } from "../navigation.tsx";
+import { SelfHostUpdateBlock, useSelfHostUpdate } from "../update.tsx";
 
 /** The URL owns this tab's organization; all product pages inherit this boundary. */
 export const Route = createFileRoute("/org/$organizationSlug")({
@@ -18,20 +20,34 @@ export const Route = createFileRoute("/org/$organizationSlug")({
 });
 function OrganizationLayout() {
   const { organizationSlug } = Route.useParams();
+  return (
+    <OrganizationBoundary slug={organizationSlug}>
+      <SelfHostShell>
+        <OrganizationContent pending={<PagePending />}>
+          <Outlet />
+          <NameAccountDialog />
+        </OrganizationContent>
+      </SelfHostShell>
+    </OrganizationBoundary>
+  );
+}
+
+/** The shell, with the update block above the links once an owner's or admin's server has one. */
+function SelfHostShell({ children }: { readonly children: ReactNode }) {
+  const update = useSelfHostUpdate();
   // Only the instance owner is offered creation; the server enforces it regardless.
   const instanceOwner = Option.getOrElse(
     AsyncResult.value(useAtomValue(instanceOwnerAtom)),
     () => false,
   );
   return (
-    <OrganizationBoundary slug={organizationSlug}>
-      <DashboardShell allowCreateOrganization={instanceOwner} navigation={<Navigation />}>
-        <OrganizationContent pending={<PagePending />}>
-          <Outlet />
-          <NameAccountDialog />
-        </OrganizationContent>
-      </DashboardShell>
-    </OrganizationBoundary>
+    <DashboardShell
+      allowCreateOrganization={instanceOwner}
+      navigation={<Navigation />}
+      notice={Option.isSome(update) && <SelfHostUpdateBlock update={update.value} />}
+    >
+      {children}
+    </DashboardShell>
   );
 }
 

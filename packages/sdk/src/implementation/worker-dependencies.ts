@@ -6,6 +6,7 @@ import type { WorkerHost } from "./worker-build.ts";
 import type { Plugin } from "esbuild";
 import { boundBuildMessage, describeBuildCause, RuntimeBuildFailed } from "../contracts/runtime.ts";
 import tailwind from "tailwindcss/package.json" with { type: "json" };
+import { withoutUrlSecrets } from "@executor-js/utils/url-policy";
 
 const Package = Schema.Struct({
   dependencies: Schema.optional(Schema.Record(Schema.String, Schema.String)),
@@ -14,10 +15,18 @@ const Package = Schema.Struct({
 /**
  * Framework archives are loaded alone; direct npm imports retain their authored declarations and
  * dependency graphs. `registry` replaces the public npm registry when the host configures one.
+ * The installer's errors quote the URLs it fetched, which start with that registry. An operator's
+ * registry URL can carry credentials or a token, and the deployer reading a failed build is not
+ * always the operator, so a failure loses each URL's userinfo, query and fragment. A token the
+ * registry takes as a path segment is kept and reaches the deployer: it cannot be told from a path.
+ * Requests off the registry's origin, including where its redirects land, use the host's
+ * `tarballFetch`. The installer words every failure itself: it names the declared package, an
+ * HTTP status or a fixed reason, never a dependency's name, a URL a server chose, or anything a
+ * server or an archive sent.
  */
 export const workerDependencies = (filesystem: InMemoryFileSystem, host: WorkerHost) =>
   Effect.gen(function* () {
-    const { registry } = host;
+    const { registry, tarballFetch } = host;
     const manifest = filesystem.read("package.json");
     const dependencies =
       manifest === null
@@ -44,14 +53,20 @@ export const workerDependencies = (filesystem: InMemoryFileSystem, host: WorkerH
                   list: (prefix) => filesystem.list(prefix),
                   flush: () => filesystem.flush(),
                 },
-                { transitive, ...(registry === undefined ? {} : { registry }) },
+                {
+                  transitive,
+                  ...(registry === undefined ? {} : { registry }),
+                  ...(tarballFetch === undefined ? {} : { tarballFetch }),
+                },
               ),
             catch: (cause) =>
               new RuntimeBuildFailed({
                 stage: "dependencies",
                 dependency: name,
                 message: boundBuildMessage(
-                  `Installing ${name}@${version} failed: ${describeBuildCause(cause)}`,
+                  withoutUrlSecrets(
+                    `Installing ${name}@${version} failed: ${describeBuildCause(cause)}`,
+                  ),
                 ),
               }),
           });
@@ -63,9 +78,11 @@ export const workerDependencies = (filesystem: InMemoryFileSystem, host: WorkerH
               stage: "dependencies",
               dependency: name,
               message: boundBuildMessage(
-                result.warnings.length > 0
-                  ? `Installing ${name}@${version} failed: ${result.warnings.join("; ")}`
-                  : `Installing ${name}@${version} did not produce node_modules/${name}/package.json.`,
+                withoutUrlSecrets(
+                  result.warnings.length > 0
+                    ? `Installing ${name}@${version} failed: ${result.warnings.join("; ")}`
+                    : `Installing ${name}@${version} did not produce node_modules/${name}/package.json.`,
+                ),
               ),
             });
           yield* Effect.annotateCurrentSpan({

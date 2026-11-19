@@ -12,10 +12,12 @@ import {
   protocol2,
   protocol3,
   type DeclaredProvider,
-  type HostAccount,
   type HostAccounts,
   type HostInvocation,
   type HostRequest,
+  type ResolvedAccount,
+  type ResolvedAccounts,
+  type ResolvedAccountSlots,
   type WorkflowExecution,
 } from "apps/contracts";
 import type { SourceTextFile as SourceFile } from "../contracts/source.ts";
@@ -57,13 +59,18 @@ export interface AppProtocol {
    * account was connected through a later app that declared hosts.
    */
   readonly sealedCredentials: boolean;
+  /**
+   * The accounts, already sealed or unsealed, as this protocol's bundles read them, in the
+   * invocation and in each workflow step's context.
+   */
+  readonly accounts: (accounts: ResolvedAccounts) => ResolvedAccounts;
 }
 
-/** Protocol 14 is the host's current protocol, so its messages need no conversion. */
-const protocol14: AppProtocol = {
-  version: 14,
+/** Protocol 15 is the host's current protocol, so its messages need no conversion. */
+const protocol15: AppProtocol = {
+  version: 15,
   workerEntry: appBridge,
-  nodeEntry: nodeAppEntry(14),
+  nodeEntry: nodeAppEntry(15),
   invocation: (input) => JSON.stringify(input),
   request: (command) => command,
   refuse: () => undefined,
@@ -71,11 +78,29 @@ const protocol14: AppProtocol = {
   workflow: (execution) => execution,
   concurrentData: true,
   sealedCredentials: true,
+  accounts: (accounts) => accounts,
+};
+
+/** The accounts of an invocation with `change` applied to each, in both scopes. */
+const mapAccounts = (
+  accounts: ResolvedAccounts,
+  change: (account: ResolvedAccount) => ResolvedAccount,
+): ResolvedAccounts => {
+  const slots = (scope: ResolvedAccountSlots): ResolvedAccountSlots =>
+    Object.fromEntries(
+      Object.entries(scope).map(([slot, selected]) => [
+        slot,
+        "provider" in selected ? change(selected) : selected.map(change),
+      ]),
+    );
+  return accounts.user === undefined
+    ? { app: slots(accounts.app) }
+    : { app: slots(accounts.app), user: slots(accounts.user) };
 };
 
 /**
  * A bundle reads an account's fields and placements, never how the host signs in. Bundles of
- * protocol 13 and earlier cannot declare an OAuth method that signs in with a service account key
+ * protocol 14 and earlier cannot declare an OAuth method that signs in with a service account key
  * (`jwt_bearer`), so the host sends it to them as the `secrets` method it behaves as: the same
  * fields, exposure and placements.
  */
@@ -98,50 +123,49 @@ const bundleProvider = (provider: DeclaredProvider): DeclaredProvider => ({
   ),
 });
 
-const bundleSlots = (slots: NonNullable<HostAccounts["user"]>): NonNullable<HostAccounts["user"]> =>
-  Object.fromEntries(
-    Object.entries(slots).map(([slot, selection]) => [
-      slot,
-      Array.isArray(selection)
-        ? selection.map(bundleAccount)
-        : bundleAccount(selection as HostAccount),
-    ]),
-  );
-
-const bundleAccount = (account: HostAccount): HostAccount => ({
+const withSecretsMethod = (account: ResolvedAccount): ResolvedAccount => ({
   ...account,
   provider: bundleProvider(account.provider),
 });
 
-/** An invocation's accounts as bundles of protocol 13 and earlier read them. */
-const bundleAccounts = (accounts: HostAccounts): HostAccounts => ({
-  app: bundleSlots(accounts.app),
-  ...(accounts.user === undefined ? {} : { user: bundleSlots(accounts.user) }),
-});
+/**
+ * Protocol 14 is protocol 15 without the `jwt_bearer` OAuth method. Its bundles never declare it,
+ * so requirements and every reply are unchanged; the accounts the host sends carry it as the
+ * `secrets` method it behaves as. The same conversion applies to every earlier protocol, whose
+ * adapters extend this one, and to the accounts of each workflow step, which pass through
+ * `accounts` as an invocation's do.
+ */
+const protocol14: AppProtocol = {
+  ...protocol15,
+  version: 14,
+  nodeEntry: nodeAppEntry(14),
+  accounts: (accounts) => mapAccounts(accounts, withSecretsMethod),
+};
 
-/** The workflow steps a bundle of protocol 13 or earlier invokes, with accounts it can read. */
-const bundleWorkflow = (execution: WorkflowExecution): WorkflowExecution => ({
-  ...execution,
-  resolve: () =>
-    execution.resolve().pipe(
-      Effect.map((context) => ({
-        ...context,
-        accounts: Redacted.make(bundleAccounts(Redacted.value(context.accounts))),
-      })),
-    ),
-});
+/** A credential host with an underscore, which bundles of protocol 13 and earlier reject. */
+const underscored = (host: string) => host.includes("_");
+
+const withoutUnderscoredHosts = (account: ResolvedAccount): ResolvedAccount => {
+  const hosts = account.provider.hosts;
+  return hosts?.some(underscored) === true
+    ? { ...account, provider: { ...account.provider, hosts: hosts.filter((h) => !underscored(h)) } }
+    : account;
+};
 
 /**
- * Protocol 13 is protocol 14 without the `jwt_bearer` OAuth method. Its bundles never declare it,
- * so requirements and every reply are unchanged; the accounts the host sends carry it as the
- * `secrets` method it behaves as.
+ * Protocol 13 is protocol 14 with credential hosts that never hold an underscore. An account its
+ * bundle uses can still carry one: connected through a later app that declared it, and granted by
+ * this app's wildcard. Its bundles read each account's hosts but never decide from them where a
+ * credential goes: a sealed handle carries the hosts it was sealed for and the outbound network
+ * checks those. So such a bundle receives each account without its underscored hosts, which it
+ * would otherwise reject with the whole invocation. Every other message and reply is unchanged.
  */
 const protocol13: AppProtocol = {
   ...protocol14,
   version: 13,
   nodeEntry: nodeAppEntry(13),
-  invocation: (input) => JSON.stringify({ ...input, accounts: bundleAccounts(input.accounts) }),
-  workflow: bundleWorkflow,
+  accounts: (accounts) =>
+    mapAccounts(accounts, (account) => withoutUnderscoredHosts(withSecretsMethod(account))),
 };
 
 /**
@@ -149,7 +173,10 @@ const protocol13: AppProtocol = {
  * declare no app requirements, so they have no app accounts: the host sends them the invocation's
  * user accounts, and none for work without a caller.
  */
-const unscopedAccounts = (accounts: HostAccounts) => bundleAccounts(accounts).user ?? {};
+const unscopedAccounts = <Slots>(accounts: {
+  readonly app: Slots;
+  readonly user?: Slots;
+}): Slots | Record<string, never> => accounts.user ?? {};
 
 const RequirementsReply = Schema.Struct({
   ok: Schema.Literal(true),
@@ -324,6 +351,7 @@ const legacyProtocol = (version: LegacyVersion): AppProtocol => {
     }),
     concurrentData: false,
     sealedCredentials: false,
+    accounts: protocol13.accounts,
   };
 };
 
@@ -343,6 +371,7 @@ const protocols: ReadonlyMap<number, AppProtocol> = new Map(
     protocol12,
     protocol13,
     protocol14,
+    protocol15,
   ].map((protocol) => [protocol.version, protocol]),
 );
 

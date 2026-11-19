@@ -2,7 +2,7 @@
 import { Effect, FileSystem, Option, Path, Predicate, Schema, Stream } from "effect";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { BlobKey, BlobStoreError, type BlobStorage } from "../contracts/blobs.ts";
-import { pageOf, rangeWindow } from "./blob-streams.ts";
+import { pageOf, rangeWindow, removeEach } from "./blob-streams.ts";
 
 /** Marks a failure of the caller's stream, so it passes through while storage failures are mapped. */
 class SourceFailure<E> {
@@ -50,6 +50,14 @@ export const filesystemBlobStore = (options: {
       }
       return { fs, path, target };
     });
+  const remove = (key: BlobKey) =>
+    Effect.gen(function* () {
+      const found = yield* location(key, false);
+      if (found !== undefined) yield* found.fs.remove(found.target, { force: true });
+    }).pipe(
+      Effect.mapError(() => new BlobStoreError({ operation: "remove" })),
+      Effect.provide(NodeServices.layer),
+    );
   return {
     get: (key) =>
       Effect.gen(function* () {
@@ -134,14 +142,8 @@ export const filesystemBlobStore = (options: {
         ),
         Effect.provide(NodeServices.layer),
       ),
-    remove: (key) =>
-      Effect.gen(function* () {
-        const found = yield* location(key, false);
-        if (found !== undefined) yield* found.fs.remove(found.target, { force: true });
-      }).pipe(
-        Effect.mapError(() => new BlobStoreError({ operation: "remove" })),
-        Effect.provide(NodeServices.layer),
-      ),
+    remove,
+    removeAll: (keys) => removeEach(keys, remove),
     list: (folder, options) =>
       Effect.gen(function* () {
         const found = yield* location(folder, false);

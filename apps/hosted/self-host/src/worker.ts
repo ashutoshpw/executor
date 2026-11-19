@@ -1,5 +1,5 @@
 /** Product Worker. One durable actor owns PostgreSQL, auth, sessions and background work. */
-import * as BrowserCrypto from "@effect/platform-browser/BrowserCrypto";
+import { Digest } from "effect/crypto";
 import { DurableObject, WorkerEntrypoint } from "cloudflare:workers";
 import type { DurableObjectState, Fetcher } from "@cloudflare/workers-types";
 import { PGlite } from "@electric-sql/pglite";
@@ -26,6 +26,7 @@ import {
 import {
   FetchHttpClient,
   HttpEffect,
+  HttpMiddleware,
   HttpRouter,
   HttpServer,
   HttpServerRequest,
@@ -37,6 +38,8 @@ import {
   SelfHostWorkflowRequests,
 } from "./implementation/executor-services.ts";
 import { selfHostRouteMap } from "./implementation/routes.ts";
+import { UpdateCheckNotRecorded } from "./implementation/update-check.ts";
+import { SelfHostSettingInvalid } from "./contracts/config.ts";
 import {
   bindingBlobStore,
   bindingDashboard,
@@ -50,6 +53,7 @@ import {
   prepareProductFilesystem,
   completeProductBootstrap,
 } from "./implementation/workerd/storage-migration.ts";
+import { endsWithRequest } from "./implementation/workerd/request-lifetime.ts";
 import skills from "executor:skills";
 import dashboard from "executor:dashboard";
 import pgliteWasmModule from "executor:pglite.wasm";
@@ -72,7 +76,7 @@ interface Environment {
   readonly PUBLIC_FETCH: HttpBinding;
   readonly PRIVATE_FETCH: HttpBinding;
   /** The bundled collector's private Unix socket, which the host connects. */
-  readonly MOTEL: HttpBinding;
+  readonly COLLECTOR: HttpBinding;
   /** This product's own `SelfOrigin` entrypoint, for requests to the dashboard origin. */
   readonly SELF: HttpBinding;
   readonly APPS: Fetcher;
@@ -103,6 +107,9 @@ const configuration = (native: HttpBinding) =>
       ),
     ),
   );
+
+/** The product actor's storage key for the release check's last answer. */
+const updateCheckKey = "update-check";
 
 const prepare = (state: DurableObjectState, env: Environment) =>
   Effect.gen(function* () {
@@ -143,12 +150,12 @@ const prepare = (state: DurableObjectState, env: Environment) =>
               logs: { url: `${collectorOrigin}/v1/logs` },
             }).pipe(
               Layer.provideMerge(
-                Layer.effect(CurrentTelemetryClient, bindingTelemetryClient(env.MOTEL)),
+                Layer.effect(CurrentTelemetryClient, bindingTelemetryClient(env.COLLECTOR)),
               ),
             )
           : telemetryLayer(telemetry),
         HttpServer.layerServices,
-        BrowserCrypto.layer,
+        Digest.layerWebCrypto,
         Layer.succeed(ScheduleHostReady, Effect.void),
       ),
     );
@@ -188,6 +195,21 @@ const prepare = (state: DurableObjectState, env: Environment) =>
         egress,
         executorServices: Layer.succeedContext(services),
         dashboard: bindingDashboard(env.DASHBOARD, dashboard),
+        // The release check's last answer, in the product actor's own storage.
+        updateCheckStore: {
+          location: `the product's storage under the data volume's product directory, key "${updateCheckKey}"`,
+          read: Effect.promise(() => state.storage.get<string>(updateCheckKey)).pipe(
+            Effect.map(Option.fromUndefinedOr),
+          ),
+          write: (value) =>
+            Effect.tryPromise({
+              try: () => state.storage.put(updateCheckKey, value),
+              catch: (error) =>
+                new UpdateCheckNotRecorded({
+                  reason: error instanceof Error ? error.message : String(error),
+                }),
+            }),
+        },
       });
       const http = yield* HttpRouter.toHttpEffect(routes).pipe(
         Effect.provideService(Layer.CurrentMemoMap, yield* Layer.makeMemoMap),
@@ -196,7 +218,7 @@ const prepare = (state: DurableObjectState, env: Environment) =>
       const context = yield* Effect.context<never>();
       const addressed = Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
-        return yield* http.pipe(
+        const response = yield* http.pipe(
           Effect.provideService(
             HttpServerRequest.HttpServerRequest,
             request.modify({
@@ -204,11 +226,12 @@ const prepare = (state: DurableObjectState, env: Environment) =>
             }),
           ),
         );
+        return endsWithRequest(request, response);
       });
       return {
-        fetch: HttpEffect.toWebHandlerWith<never, Effect.Services<typeof addressed>>(context)(
-          addressed,
-        ),
+        fetch: HttpEffect.toWebHandlerWith<never, Effect.Services<typeof addressed>>(
+          Context.add(context, HttpMiddleware.TracerDisabledWhen, isHostProbe),
+        )(addressed),
         workflow: HttpEffect.toWebHandlerWith<never, Effect.Services<typeof workflow>>(context)(
           workflow,
         ),
@@ -216,6 +239,16 @@ const prepare = (state: DurableObjectState, env: Environment) =>
       };
     }).pipe(Effect.provideContext(common));
   });
+
+/**
+ * The image's host asks /health every second to notice when the product stops answering; that
+ * request records no trace, or it would fill the telemetry store. Only the host sends the header:
+ * it removes it from every request it proxies, and `SelfOrigin` removes it from the requests apps
+ * send to their own instance.
+ */
+const hostProbeHeader = "x-executor-host-probe";
+const isHostProbe = (request: HttpServerRequest.HttpServerRequest) =>
+  request.url === "/health" && request.headers[hostProbeHeader] === "1";
 
 /**
  * The product store has its own disk service, namespace and migration journal.
@@ -265,7 +298,11 @@ export class ExecutorProduct extends DurableObject<Environment> implements Produ
         return opened.value;
       }
       const squashed = Cause.squash(opened.cause);
-      if (Schema.is(FirstPartyOAuthClientsInvalid)(squashed)) settings = squashed.message;
+      if (
+        Schema.is(FirstPartyOAuthClientsInvalid)(squashed) ||
+        Schema.is(SelfHostSettingInvalid)(squashed)
+      )
+        settings = squashed.message;
       failure = opened.cause;
     } catch (error) {
       failure = error;
@@ -312,6 +349,7 @@ export class SelfOrigin extends WorkerEntrypoint<Environment> {
   async fetch(request: Request): Promise<Response> {
     const internal = new Request(request);
     internal.headers.set("x-executor-client-ip", "127.0.0.1");
+    internal.headers.delete(hostProbeHeader);
     return this.env.PRODUCT.getByName("product").fetch(internal);
   }
 }

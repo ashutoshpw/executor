@@ -3,7 +3,8 @@ import { AppWorkflowsActive } from "../contracts/apps.ts";
 import { AppWebhooksActive } from "../contracts/apps.ts";
 import { appSlug } from "../contracts/app-slug.ts";
 /** Durable configured apps and immutable versions, sharing one execution path. */
-import { Clock, type Crypto, Effect, Schema, Struct } from "effect";
+import { Clock, Effect, Schema, Struct } from "effect";
+import type { HostCrypto } from "./host-crypto.ts";
 import { SqlError } from "effect/sql";
 import {
   App,
@@ -47,6 +48,8 @@ import { StoredApp, StoredVersion } from "../contracts/storage.ts";
 import { query, transaction, type Query } from "./database.ts";
 import { removeToolSearch } from "./tool-search-store.ts";
 import { identifyProvider } from "./provider.ts";
+import { setupHelp, setupHelpProblems } from "./help-text.ts";
+import type { MarkdownReader } from "../contracts/markdown.ts";
 import {
   CodeFiles,
   SourceError,
@@ -57,7 +60,7 @@ import {
 import type { Registry } from "../contracts/registry.ts";
 import { resolvePublication } from "./registry.ts";
 
-import type { BlobStorage } from "../contracts/blobs.ts";
+import { BlobStoreError, type BlobStorage } from "../contracts/blobs.ts";
 import { readVersionSource, writeVersionSource } from "./version-source.ts";
 import { readInitialSource, writeInitialSource } from "./initial-source.ts";
 import {
@@ -233,15 +236,28 @@ const appWriteFailure = (app: Pick<StoredApp, "owner" | "name" | "slug">) => (er
 /** Insert app identity while preserving name and derived-slug uniqueness errors. */
 /**
  * A new active version re-registers the app's managed webhooks; removed sources keep removing. It is
- * new intent, so each source runs again with no failures counted.
+ * new intent, so each source runs again with no failures counted. A source without a lease joins
+ * the pending queue now (its `leaseUntil`, which `tick` orders pending sources by); one whose lease
+ * is held keeps it, and its holder queues it again when it finishes.
  */
 const webhookSourcesPending = (db: Query, app: AppId) =>
-  query(() =>
-    db.updateMany("webhookSources", {
-      where: (b) => b.and(b("app", "=", app), b("status", "!=", "removing")),
-      set: { status: "pending", failure: null, retries: 0 },
-    }),
-  );
+  Effect.gen(function* () {
+    const joined = new Date(yield* Clock.currentTimeMillis);
+    yield* query(() =>
+      db.updateMany("webhookSources", {
+        where: (b) =>
+          b.and(b("app", "=", app), b("status", "!=", "removing"), b("lease", "is", null)),
+        set: { status: "pending", failure: null, retries: 0, leaseUntil: joined },
+      }),
+    );
+    yield* query(() =>
+      db.updateMany("webhookSources", {
+        where: (b) =>
+          b.and(b("app", "=", app), b("status", "!=", "removing"), b("lease", "is not", null)),
+        set: { status: "pending", failure: null, retries: 0 },
+      }),
+    );
+  });
 
 export const createApp = (db: Query, app: StoredApp) => {
   // Storage keeps the column's former name.
@@ -255,25 +271,26 @@ export const createApp = (db: Query, app: StoredApp) => {
 export const makeApps = (
   db: Query,
   runtime: Runtime,
-  crypto: Crypto.Crypto,
+  crypto: HostCrypto,
   sources: AppSourceStorage,
   repositories: RepositoryBackend,
   registry: Registry,
   blobs: BlobStorage,
+  markdown: MarkdownReader,
   lifecycle?: ResourceLifecycle,
 ) => {
   const authoring = makeAppAuthoring(db, sources, repositories, blobs, crypto, lifecycle);
   /**
    * Build source files and read the requirements they declare, as a deploy does before it writes
    * anything; no app, version or source is saved. A deploy's build is retained in the runtime's
-   * build store. A `check` writes nothing at all, and reports a compiler that did not answer with
-   * its own failure rather than as a failed build.
+   * build store; a check (`retain: false`) writes nothing at all. With `unanswered`, a build the
+   * host's compiler or runner did not answer fails with that rather than as a failed build.
    */
   const buildSource = <E = never>(
     owner: OwnerId,
     name: string,
     suppliedFiles: unknown,
-    check?: { readonly unanswered: () => E },
+    options?: { readonly retain?: false; readonly unanswered?: () => E },
   ) =>
     Effect.gen(function* () {
       const files = yield* Schema.decodeUnknownEffect(SourceFiles)(suppliedFiles).pipe(
@@ -305,16 +322,16 @@ export const makeApps = (
         .build({
           files: codeFiles,
           public: split.public.map((file) => servedPath(file.path)),
-          ...(check === undefined ? {} : { retain: false }),
+          ...(options?.retain === false ? { retain: false } : {}),
         })
         .pipe(
           Effect.mapError((error) =>
             Schema.is(BuildMemoryExceeded)(error)
               ? error
-              : check !== undefined &&
+              : options?.unanswered !== undefined &&
                   Schema.is(RuntimeBuildFailed)(error) &&
                   error.unanswered === true
-                ? check.unanswered()
+                ? options.unanswered()
                 : Schema.is(RuntimeProtocolUnsupported)(error)
                   ? new VersionBuildFailed({
                       owner,
@@ -329,7 +346,11 @@ export const makeApps = (
                         reason: error.message,
                         message: error.message,
                       })
-                    : versionBuildFailed(owner, name, error),
+                    : // Storage failed while keeping the build: nothing about the app, and
+                      // deploying again may succeed.
+                      Schema.is(BlobStoreError)(error)
+                      ? new StorageError()
+                      : versionBuildFailed(owner, name, error),
           ),
         );
       // Each requirement records its scope; a name is used in one scope only.
@@ -364,6 +385,25 @@ export const makeApps = (
           })),
         ),
       );
+      // The connect form renders setup help as Markdown; refuse what it would not show safely.
+      // All of it is read at once, and a version without help reads nothing.
+      const helpProblems = yield* setupHelpProblems(
+        markdown,
+        entries.flatMap(({ slot, provider }) =>
+          setupHelp(provider.definition).map((help) => ({
+            ...help,
+            where: `Requirement "${slot}" (provider "${provider.definition.name}") ${help.where}`,
+          })),
+        ),
+      );
+      if (helpProblems.length > 0)
+        return yield* new VersionBuildFailed({
+          owner,
+          name,
+          reason: "Invalid setup help",
+          stage: "declaration",
+          message: `App build failed: setup help must be Markdown with absolute https links and no HTML or images. ${helpProblems.map((problem) => `${problem}.`).join(" ")}`,
+        });
       const requirements: AppRequirements = {
         ...(built.requirements.capabilities === undefined
           ? {}
@@ -393,11 +433,23 @@ export const makeApps = (
    * `stored` reads the bytes of stored public files that a copy names from another app; an
    * existing app's own stored files are read from its repository.
    */
-  const deploy = (
+  const deploy = <E = never, U = never>(
     input: DeployInput,
     copiedFrom: AppCopyOrigin | null = null,
     stored?: StoredBytes,
     reserved?: AppId,
+    replacing?: {
+      /**
+       * Checked under the app's lock when the deploy reserves its order (`activates` true) and
+       * when it records its version; a failure records nothing.
+       */
+      readonly guard: (
+        app: { readonly id: AppId; readonly activeVersion: VersionId | null },
+        activates: boolean,
+      ) => Effect.Effect<void, E>;
+      /** A build the compiler or runner did not answer fails with this, not as a failed build. */
+      readonly unanswered: (name: string) => U;
+    },
   ) =>
     Effect.gen(function* () {
       // Reserve an order before building. Only successful promotions advance the other counter.
@@ -407,6 +459,7 @@ export const makeApps = (
           : yield* transaction(db, (tx) =>
               Effect.gen(function* () {
                 const current = yield* lockApp(tx, { app: input.app, owner: input.owner });
+                if (replacing !== undefined) yield* replacing.guard(current, true);
                 const deploySequence = current.deploySequence + 1;
                 yield* query(() =>
                   tx.updateMany("apps", {
@@ -429,26 +482,24 @@ export const makeApps = (
           return yield* new AppNameTaken({ owner: input.owner, name: deployName });
       }
       const code =
-        before === null
-          ? AppCodeId.make(
-              `code_${yield* crypto.randomUUIDv4.pipe(Effect.mapError(() => new StorageError()))}`,
-            )
-          : before.code;
+        before === null ? AppCodeId.make(`code_${yield* crypto.random.uuidV4()}`) : before.code;
       const sequence = before === null ? 1 : before.deploySequence;
       const suppliedFiles =
         input.commit === undefined
           ? input.files
           : yield* sources.read({ code, commit: input.commit });
       const { files, built, entries, requirements, codeFiles, split, invalidSource } =
-        yield* buildSource(input.owner, deployName, suppliedFiles);
+        yield* buildSource(
+          input.owner,
+          deployName,
+          suppliedFiles,
+          replacing === undefined
+            ? undefined
+            : { unanswered: () => replacing.unanswered(deployName) },
+        );
       // The app's database lives in its data facet, keyed by app ID, so a new app's ID is chosen
       // before its migrations run. A failed migration fails the deploy before anything activates.
-      const appId =
-        before?.id ??
-        reserved ??
-        AppId.make(
-          `app_${yield* crypto.randomUUIDv4.pipe(Effect.mapError(() => new StorageError()))}`,
-        );
+      const appId = before?.id ?? reserved ?? AppId.make(`app_${yield* crypto.random.uuidV4()}`);
       // Migrations are the database. A build without any would drop the ones an earlier version
       // applied, whichever version is active now, so the app's whole version history decides.
       // The build is not asked: bundles of earlier protocols cannot answer. Checked again under the
@@ -519,9 +570,7 @@ export const makeApps = (
         );
 
       const version = {
-        id: VersionId.make(
-          `dpl_${yield* crypto.randomUUIDv4.pipe(Effect.mapError(() => new StorageError()))}`,
-        ),
+        id: VersionId.make(`dpl_${yield* crypto.random.uuidV4()}`),
         code,
         owner: input.owner,
         sourceCommit: input.commit ?? null,
@@ -554,6 +603,8 @@ export const makeApps = (
           if (existing !== undefined) yield* droppedMigrations(tx, existing.code);
           const createdAt = new Date(yield* Clock.currentTimeMillis);
           const promote = existing === undefined || sequence > existing.activatedSequence;
+          if (replacing !== undefined && existing !== undefined)
+            yield* replacing.guard(existing, promote);
           for (const { provider } of entries) {
             // Apps sharing a provider ID can declare different hosts; the row keeps what they share.
             const definition = yield* Schema.decodeUnknownEffect(JsonObject)(provider.shared).pipe(
@@ -681,8 +732,30 @@ export const makeApps = (
   return {
     ...authoring,
     deploy: (input: DeployInput) => deploy(input),
+    // Records nothing unless it activates over the version the caller checked.
+    deployReplacing: (input: Parameters<Executor["apps"]["deployReplacing"]>[0]) =>
+      deploy(
+        { owner: input.owner, app: input.app, files: input.files },
+        null,
+        undefined,
+        undefined,
+        {
+          guard: (app, activates) =>
+            app.activeVersion === input.expectedVersion && activates
+              ? Effect.void
+              : Effect.fail(
+                  new AppVersionChanged({
+                    app: app.id,
+                    expected: input.expectedVersion,
+                    current: app.activeVersion,
+                  }),
+                ),
+          unanswered: (name) => new BuildUnanswered({ owner: input.owner, name }),
+        },
+      ).pipe(Effect.withSpan("sdk.apps.deploy_replacing")),
     build: (input: Parameters<Executor["apps"]["build"]>[0]) =>
       buildSource(input.owner, input.name, input.files, {
+        retain: false,
         unanswered: () => new BuildUnanswered({ owner: input.owner, name: input.name }),
       }).pipe(
         Effect.map(({ requirements }) => ({ requirements })),

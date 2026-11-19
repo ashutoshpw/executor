@@ -1,7 +1,7 @@
 import { usePageUrl } from "@executor-js/dashboard-start/page";
 import { McpConsentLoading } from "@executor-js/ui/dashboard/mcp-consent";
 import { AsyncResult } from "effect/reactivity";
-import { Avatar, AvatarFallback, AvatarImage } from "@executor-js/ui/components/avatar";
+import { MemberAvatar } from "./member-avatar.tsx";
 import { useAtomRefresh, useAtomSet, useAtomValue } from "@effect/atom-react";
 // oxlint-disable-next-line no-restricted-imports -- AuthBoundary renders it only away from /login, and its own navigation there unmounts it
 import { Link, Navigate, useLocation } from "@tanstack/react-router";
@@ -15,7 +15,6 @@ import {
   Settings05Icon,
   Sun01Icon,
   UnfoldMoreIcon,
-  UserIcon,
 } from "@hugeicons/core-free-icons";
 import { useTheme, type ThemePreference } from "@executor-js/ui/hooks/theme";
 import { useEffect, useState, type ReactNode } from "react";
@@ -149,14 +148,7 @@ export function SessionMenu({
   const email = session.value.user.email;
   const identity = name.length > 0 ? name : email;
   const image = session.value.user.image;
-  const avatar = (
-    <Avatar className="size-7 border" aria-hidden>
-      {image && <AvatarImage src={image} alt="" referrerPolicy="no-referrer" />}
-      <AvatarFallback>
-        <HugeiconsIcon icon={UserIcon} strokeWidth={2} aria-hidden size={14} />
-      </AvatarFallback>
-    </Avatar>
-  );
+  const avatar = <MemberAvatar name={identity} image={image ?? null} className="size-7" />;
   const leave = async () => {
     setError(null);
     onSignOut?.();

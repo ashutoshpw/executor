@@ -18,6 +18,7 @@ import { WebSocket as NodeWebSocket } from "ws";
 import { newWebSocketRpcSession, type RpcStub } from "capnweb";
 import {
   Cause,
+  Config,
   ConfigProvider,
   Effect,
   FileSystem,
@@ -48,9 +49,54 @@ import type { Executor } from "../contracts/executor.ts";
 import type { DurableDeclarations } from "../contracts/declarations.ts";
 import { runtimeAdapter } from "./runtime.ts";
 
-import { connectedWorkerdApps, workerdHostHandler } from "./workerd-client.ts";
+import {
+  connectedWorkerdApps,
+  TransportClosed,
+  workerdHostHandler,
+  type RegistryRead,
+} from "./workerd-client.ts";
 import { workerdHostModules } from "./workerd-bundle.ts";
 import { appWorkerIdleSeconds, appWorkerLimit } from "./app-worker-residency.ts";
+import { EngineFaults } from "../contracts/engine-faults.ts";
+
+/**
+ * E2E runs only: delays that make a data supervisor's reset meet other work on purpose. Each is read
+ * from its `EXECUTOR_TEST_SUPERVISOR_*_MS` setting, from 1 to 25,000 ms (workerd resets an object
+ * itself after 30 s of blocked input). Any other run has none.
+ * - `resetDelayMs`: the reset waits this long, its input open, before checking it may reset, so
+ *   a call or a release can be running then.
+ * - `replyDelayMs`: a call's reply waits this long after the call has left the facet, as a reply
+ *   waits for its object's output gate, so a reset can meet a call that already ran.
+ * - `resetHoldMs`: after its checks, the reset holds its input this long before it resets, so a
+ *   request sent then is accepted but cannot start, and the reset meets it.
+ */
+const supervisorFaults = Effect.gen(function* () {
+  const environment = yield* Config.option(Config.String("EXECUTOR_ENVIRONMENT"));
+  if (Option.getOrUndefined(environment) !== "e2e") return null;
+  const delay = (name: string) =>
+    Config.option(
+      Config.schema(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 25_000 })), name),
+    ).pipe(Effect.map(Option.getOrUndefined));
+  const faults = {
+    resetDelayMs: yield* delay("EXECUTOR_TEST_SUPERVISOR_RESET_DELAY_MS"),
+    resetHoldMs: yield* delay("EXECUTOR_TEST_SUPERVISOR_RESET_HOLD_MS"),
+    replyDelayMs: yield* delay("EXECUTOR_TEST_SUPERVISOR_REPLY_DELAY_MS"),
+  };
+  return Object.values(faults).some((value) => value !== undefined) ? faults : null;
+});
+/** E2E runs only: engine call faults for the runtime's workflows; see `engine-faults.ts`. */
+const engineFaults = Effect.gen(function* () {
+  const environment = yield* Config.option(Config.String("EXECUTOR_ENVIRONMENT"));
+  if (Option.getOrUndefined(environment) !== "e2e") return null;
+  const configured = yield* Config.option(Config.String("EXECUTOR_TEST_WORKFLOW_ENGINE_FAULTS"));
+  return Option.isNone(configured)
+    ? null
+    : yield* Schema.decodeUnknownEffect(Schema.fromJsonString(EngineFaults))(configured.value).pipe(
+        Effect.orDie,
+      );
+});
+import { runtimeHops, type SocketRecord } from "./runtime-hop.ts";
+import { repeatingAtConnect, repeatUnopened, type Opening } from "./runtime-connect.ts";
 
 /** Existing stores need an explicit migration; opening a new empty store would hide retained app data. */
 export class WorkerdMigrationRequired extends Schema.TaggedError<WorkerdMigrationRequired>()(
@@ -183,6 +229,7 @@ export const workerdApps = (options: {
     readonly runtime: ReturnType<typeof runtimeAdapter>;
     readonly workflows: WorkflowRuntime;
     readonly declarations: DurableDeclarations;
+    readonly readRegistry: RegistryRead;
   },
   RuntimeBuildFailed | WorkerdMigrationRequired | WorkflowFailure,
   Scope.Scope
@@ -229,6 +276,28 @@ export const workerdApps = (options: {
       ),
     );
     const engine = yield* LocalRuntime.pipe(Effect.provideContext(runtimeContext));
+    // A workerd that exits on its own, such as when V8 runs out of heap, is replaced on the same
+    // ports, and every RPC session into it breaks. Record each replacement so a failed call can be
+    // matched to one. Only the exit's code and signal are kept: its stderr can quote app output.
+    const services = yield* Effect.context<never>();
+    let restarts = 0;
+    let lastRestartAt: number | undefined;
+    const restarted = (exit: {
+      readonly exitCode: number | null;
+      readonly signal: string | null;
+    }) => {
+      restarts += 1;
+      lastRestartAt = performance.now();
+      Effect.runForkWith(services)(
+        Effect.logWarning("App runtime restarted").pipe(
+          Effect.annotateLogs({
+            restarts,
+            ...(exit.exitCode === null ? {} : { exitCode: exit.exitCode }),
+            ...(exit.signal === null ? {} : { signal: exit.signal }),
+          }),
+        ),
+      );
+    };
     const secret = crypto.randomUUID();
     const privateAppFetch = options.allowPrivateAppFetch === true;
     const origin = yield* engine
@@ -261,6 +330,8 @@ export const workerdApps = (options: {
             "APP_WORKER_IDLE_SECONDS",
             Option.getOrNull(yield* appWorkerIdleSeconds),
           ),
+          JsonBinding.local("WORKFLOW_ENGINE_FAULTS", yield* engineFaults),
+          JsonBinding.local("SUPERVISOR_FAULTS", yield* supervisorFaults),
           publicEgressBinding,
           JsonBinding.local("SELF_ORIGIN", options.selfOrigin?.origin ?? ""),
           JsonBinding.local("NPM_REGISTRY", options.npmRegistry ?? ""),
@@ -276,9 +347,16 @@ export const workerdApps = (options: {
         ],
         // Raw authored console output is not a host log. Apps return bounded telemetry through their protocol.
         logging: { onOutput: () => {} },
+        onRestart: restarted,
       })
       .pipe(Effect.provideContext(runtimeContext));
     const headers = { authorization: `Bearer ${secret}` };
+    // How far a failed exchange with the runtime got, with its restarts; see runtime-hop.ts. A
+    // supervisor's probe events would go in `probe`.
+    const hops = runtimeHops({
+      restarts: () => ({ count: restarts, lastAt: lastRestartAt }),
+      probe: () => ({}),
+    });
     const websocketUrl = (pathname: string) => {
       const url = new URL(pathname, origin);
       url.protocol = "ws:";
@@ -289,7 +367,16 @@ export const workerdApps = (options: {
     // delivered to the host Worker. The session then waits forever for its result.
     const connect = (pathname: string) =>
       new NodeWebSocket(websocketUrl(pathname), { headers, perMessageDeflate: false });
+    // An RPC exchange sends nothing until its socket has opened. One whose socket never opened is
+    // run once more from `session`'s start; see runtime-connect.ts.
     const rpc = <A, E>(
+      work: (api: RpcStub<WorkerdAppApi>, signal: AbortSignal) => Effect.Effect<A, E>,
+    ) =>
+      repeatUnopened((opening) =>
+        session(opening, (api, signal) => Effect.andThen(opening.opened, () => work(api, signal))),
+      );
+    const session = <A, E>(
+      opening: Opening,
       work: (api: RpcStub<WorkerdAppApi>, signal: AbortSignal) => Effect.Effect<A, E>,
     ) =>
       Effect.scoped(
@@ -298,16 +385,29 @@ export const workerdApps = (options: {
             Effect.sync(() => new AbortController()),
             (controller) => Effect.sync(() => controller.abort()),
           );
+          let socketRecord: SocketRecord | undefined;
           const peer = yield* Effect.acquireRelease(
             Effect.sync(() => {
+              const socket = connect("/rpc");
+              // Measured only, for a failed call's span: see runtime-hop.ts.
+              socketRecord = hops.track(socket);
+              opening.watch(socket);
+              // Registered before Cap'n Web's own listeners, so the session knows its socket
+              // closed by the time it breaks; see `TransportClosed`.
+              let closed = false;
+              const close = () => {
+                closed = true;
+              };
+              socket.on("close", close);
+              socket.on("error", close);
               // SAFETY: ws implements the WebSocket methods used by Cap'n Web's transport;
               // its Node-specific constructor only supplies the private authorization header.
               const peer = newWebSocketRpcSession<WorkerdAppApi>(
-                connect("/rpc") as unknown as WebSocket,
+                socket as unknown as WebSocket,
                 undefined,
                 { onSendError: () => new Error("App host callback failed") },
               );
-              peer.onRpcBroken(() => lifetime.abort());
+              peer.onRpcBroken(() => lifetime.abort(closed ? TransportClosed : undefined));
               return peer;
             }),
             (peer) =>
@@ -320,7 +420,7 @@ export const workerdApps = (options: {
                 }
               }).pipe(Effect.catchCause(() => Effect.void)),
           );
-          return yield* work(peer, lifetime.signal);
+          return yield* hops.rpc(() => socketRecord, work(peer, lifetime.signal));
         }),
       );
     const changes = (app: string) =>
@@ -361,23 +461,29 @@ export const workerdApps = (options: {
       );
     // workerd closes an idle keep-alive connection after 5 seconds, and reconciliation polls
     // every 5 seconds. A pooled socket can then close while a request is written to it, and
-    // the fetch fails with a transport error. Each workflow request uses its own connection.
+    // the fetch fails with a transport error. Each workflow request asks for its connection to be
+    // closed after the response. Bun can still send it on an idle pooled connection, which only a
+    // request without that header would leave; none to this origin does.
     const backend = (operation: "start" | "status" | "terminate", run: WorkflowRunId) =>
-      Effect.scoped(
+      repeatingAtConnect(
         Effect.gen(function* () {
           const request = yield* HttpClientRequest.post(new URL("/workflow", origin), {
             headers: { ...headers, connection: "close" },
           }).pipe(HttpClientRequest.bodyJson({ operation, run }));
-          const response = yield* http.execute(request);
-          if (response.status !== 200) return yield* engineFailure();
-          return yield* response.json.pipe(
-            Effect.flatMap(Schema.decodeUnknownEffect(WorkflowBackendState)),
+          return yield* hops.http("/workflow", http.execute(request), (response) =>
+            Effect.gen(function* () {
+              if (response.status !== 200) return yield* engineFailure();
+              return yield* response.json.pipe(
+                Effect.flatMap(Schema.decodeUnknownEffect(WorkflowBackendState)),
+              );
+            }),
           );
         }),
       ).pipe(Effect.mapError(engineFailure));
-    // Each command uses its own connection, like workflow requests above.
+    // Each command asks for its connection to be closed after the response, like workflow requests
+    // above.
     const evaluated = (app: string, command: EvaluatedCommand) =>
-      Effect.scoped(
+      repeatingAtConnect(
         Effect.gen(function* () {
           const url = new URL("/evaluated", origin);
           url.searchParams.set("app", app);
@@ -389,10 +495,13 @@ export const workerdApps = (options: {
               "application/json",
             ),
           );
-          const response = yield* http.execute(request);
-          if (response.status !== 200) return yield* protocolFailure();
-          return yield* response.text.pipe(
-            Effect.flatMap(Schema.decodeUnknownEffect(EvaluatedReplyJson)),
+          return yield* hops.http("/evaluated", http.execute(request), (response) =>
+            Effect.gen(function* () {
+              if (response.status !== 200) return yield* protocolFailure();
+              return yield* response.text.pipe(
+                Effect.flatMap(Schema.decodeUnknownEffect(EvaluatedReplyJson)),
+              );
+            }),
           );
         }),
       ).pipe(Effect.mapError(protocolFailure));

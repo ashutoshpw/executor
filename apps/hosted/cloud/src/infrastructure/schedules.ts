@@ -24,6 +24,7 @@ import { lookupColo } from "./colo.ts";
 import { appDataSupervisors } from "./app-data.ts";
 import { cloudAuthDatabase } from "./auth-database.ts";
 import { cloudBackgroundJobs } from "./background-jobs.ts";
+import { cloudDirectDatabaseConnection } from "./database.ts";
 import { cloudObjectDatabase, ObjectDatabase } from "./object-database.ts";
 
 /**
@@ -49,6 +50,18 @@ const handoverKey = "handover";
  */
 const restoreKey = "restore";
 
+/**
+ * What a wake did to the coordinator's alarm, on the coordinator's clock: when it ran, the alarm
+ * it found (`null` for none) and the alarm it left. The caller records it on its `schedule.wake`
+ * span, so whether a wake postponed a pending alarm can be checked without timing the runtime's
+ * alarm delivery.
+ */
+interface WakeAlarm {
+  readonly at: number;
+  readonly pending: number | null;
+  readonly armed: number;
+}
+
 /** Who asked for a wake: a change in a placed request, or the `schedule-wake` job. */
 type WakeSource = "change" | "job";
 
@@ -56,7 +69,8 @@ const makePlacedScheduleCoordinator = Effect.gen(function* () {
   const analytics = yield* cloudAnalytics;
   const report = yield* cloudSentry;
   const resources = yield* cloudProduct(yield* appDataSupervisors, yield* cloudArtifactsTokensLive);
-  const objectDatabase = yield* cloudObjectDatabase;
+  // The one coordinator connects directly: its few connections stay beside the database.
+  const objectDatabase = yield* cloudObjectDatabase(cloudDirectDatabaseConnection);
   const retired = yield* ScheduleCoordinator;
   return Effect.gen(function* () {
     const state = yield* Cloudflare.DurableObjectState;
@@ -157,10 +171,10 @@ const makePlacedScheduleCoordinator = Effect.gen(function* () {
         Effect.gen(function* () {
           const executor = yield* Effect.flatten(HostedExecutor);
           // Event deliveries due for a retry wake this coordinator too.
-          const [schedule, delivery] = yield* Effect.all([
-            executor.scheduler.nextWake,
-            executor.events.nextWake,
-          ]);
+          const [schedule, delivery] = yield* Effect.all(
+            [executor.scheduler.nextWake, executor.events.nextWake],
+            { concurrency: "unbounded" },
+          );
           const next =
             schedule === null || delivery === null
               ? (schedule ?? delivery)
@@ -194,20 +208,27 @@ const makePlacedScheduleCoordinator = Effect.gen(function* () {
           Effect.gen(function* () {
             const executor = yield* Effect.flatten(HostedExecutor);
             const authorize = yield* ScheduledAuthority;
-            yield* Effect.annotateCurrentSpan({
-              "executor.schedule.runner": "cloud",
-              "cloudflare.colo": yield* colo,
-            });
-            yield* lifecycle.withPermits(1)(
-              Effect.gen(function* () {
-                if (initialized) return;
-                // One bounded attempt at most, unless a wake's attempt failed and its retry is not
-                // due. Dispatch then proceeds: Postgres claims keep each occurrence to one run
-                // even if old code still answers, and the stored retry hands over later.
-                yield* restore;
-                yield* executor.scheduler.recover("cloud");
-                initialized = true;
-              }),
+            yield* Effect.annotateCurrentSpan("executor.schedule.runner", "cloud");
+            // A fresh object's colo lookup and its first-pass recovery both wait on the network;
+            // neither needs the other.
+            yield* Effect.all(
+              [
+                colo.pipe(
+                  Effect.flatMap((code) => Effect.annotateCurrentSpan("cloudflare.colo", code)),
+                ),
+                lifecycle.withPermits(1)(
+                  Effect.gen(function* () {
+                    if (initialized) return;
+                    // One bounded attempt at most, unless a wake's attempt failed and its retry is
+                    // not due. Dispatch then proceeds: Postgres claims keep each occurrence to one
+                    // run even if old code still answers, and the stored retry hands over later.
+                    yield* restore;
+                    yield* executor.scheduler.recover("cloud");
+                    initialized = true;
+                  }),
+                ),
+              ],
+              { concurrency: "unbounded", discard: true },
             );
             // Alarm callbacks own this work through waitUntil; new wakes can discover other due apps meanwhile.
             yield* dispatch.run(
@@ -264,7 +285,7 @@ const makePlacedScheduleCoordinator = Effect.gen(function* () {
           if (yield* lifetime.isBackgroundStopped) return yield* stop;
           // `executor` is armed before this object is. A failed attempt arms this object for its retry.
           yield* restore;
-          yield* alarms.withPermits(1)(
+          return yield* alarms.withPermits(1)(
             Effect.gen(function* () {
               // Webhook source changes wake the coordinator; the request outlives a pass already running.
               yield* dispatch.request;
@@ -274,9 +295,15 @@ const makePlacedScheduleCoordinator = Effect.gen(function* () {
               const now = yield* Clock.currentTimeMillis;
               const due = now + defaultScheduleWorkerOptions.pollMilliseconds;
               const pending = yield* state.storage.getAlarm();
+              const armed =
+                pending === null || pending > due
+                  ? due
+                  : alarmEvents === 0 && pending < now - heldAlarmMilliseconds
+                    ? now
+                    : pending;
               if (pending === null || pending > due) yield* state.storage.setAlarm(due);
-              else if (alarmEvents === 0 && pending < now - heldAlarmMilliseconds)
-                yield* rearm(now, pending);
+              else if (armed !== pending) yield* rearm(now, pending);
+              return { at: now, pending, armed } satisfies WakeAlarm;
             }),
           );
         }),
@@ -431,6 +458,18 @@ export const cloudSchedules = Effect.gen(function* () {
   // The namespace binding only exists at runtime, so resolve the stub when the wake runs.
   const wake = (source: WakeSource) =>
     Effect.scoped(report(Effect.suspend(() => coordinator.getByName(coordinatorName).wake()))).pipe(
+      // A stopped background deletes the alarm and reports nothing.
+      Effect.flatMap((alarm) =>
+        alarm === undefined
+          ? Effect.void
+          : Effect.annotateCurrentSpan({
+              "executor.schedule.wake.at": alarm.at,
+              "executor.schedule.wake.armed": alarm.armed,
+              ...(alarm.pending === null
+                ? {}
+                : { "executor.schedule.wake.pending": alarm.pending }),
+            }),
+      ),
       Effect.withSpan("schedule.wake", { attributes: { "executor.schedule.wake": source } }),
       Effect.provide(RuntimeContext.phantom),
     );

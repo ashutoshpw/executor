@@ -1,7 +1,8 @@
 import { defineConfig } from "vitest/config";
 import { Schema } from "effect";
 import { Target } from "./report-model.ts";
-import { filesForTarget } from "./test-plan.ts";
+import { filesForTarget, patternForTarget } from "./test-plan.ts";
+import { hookTimeoutMs, scenarioTimeoutMs } from "./timeouts.ts";
 
 // Vitest's process boundary receives an explicit target and output directory from run.ts.
 const directory = process.env.EXECUTOR_E2E_RUN;
@@ -9,19 +10,33 @@ if (!directory) throw new Error("Use bun run e2e to start an isolated target fir
 const target = Schema.decodeUnknownSync(Target)(process.env.E2E_TARGET);
 const suite = Schema.decodeUnknownSync(Schema.Literals(["all", "hosted"]))(process.env.E2E_SUITE);
 const cloudMode = Schema.decodeUnknownSync(
-  Schema.Literals(["managed", "attached", "rate-limited", "rolled-back", "oauth-proxy-preview"]),
+  Schema.Literals([
+    "managed",
+    "attached",
+    "rate-limited",
+    "rolled-back",
+    "oauth-proxy-preview",
+    "revocation-budget",
+    "empty-release-notes",
+    "fix-release-notes",
+    "feature-release-notes",
+  ]),
 )(process.env.E2E_CLOUD_MODE);
 export default defineConfig({
   test: {
     name: target,
     setupFiles: ["e2e/setup.ts"],
     include: filesForTarget(target, suite, cloudMode, process.env.E2E_TEST_NAME ?? ""),
+    // Every scheduled title the run's filter selects, worked out here rather than passed as an
+    // argument: with no filter it names the whole suite, past the 128 KiB one argument may hold.
+    testNamePattern: patternForTarget(target, suite, process.env.E2E_TEST_NAME ?? "", cloudMode),
     fileParallelism: true,
     maxWorkers: Schema.decodeUnknownSync(
       Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 32 })),
     )(Number(process.env.E2E_WORKERS)),
-    testTimeout: process.env.E2E_INTERACTIVE === "1" ? 0 : 60000,
-    hookTimeout: 60000,
+    // A hang detector sized for slow runners, not a performance bound (timeouts.ts).
+    testTimeout: process.env.E2E_INTERACTIVE === "1" ? 0 : scenarioTimeoutMs,
+    hookTimeout: hookTimeoutMs,
     teardownTimeout: 30000,
     retry: 0,
     reporters: [

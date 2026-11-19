@@ -199,6 +199,7 @@ export function hostedPageTitle(
   if (page === "approvals") return item ? "Review request" : "Approvals";
   if (page === "groups") return item ? "Group" : "Groups";
   if (page === "files") return "Files";
+  if (page === "activity") return "Activity";
   if (page === "connect") return item ? "Connection" : "Connections";
   if (page === "webhooks") return "Webhook setup";
   if (page === "connections") return "Connect account";

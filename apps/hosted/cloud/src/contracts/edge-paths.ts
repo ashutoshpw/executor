@@ -1,8 +1,8 @@
 /**
  * The requests v1's edge on `executor.sh` forwards to v2 through its service binding, with the
  * original URL (`notes/cloud-domains.md`). v1 owns every other path. A test stage's forwarding
- * Worker forwards exactly these, v2's edge router serves them, and production's list is the
- * contract v1 implements.
+ * Worker forwards exactly these and v2's edge router serves them. Production no longer goes
+ * through v1's edge: v2's gateway serves `executor.sh` itself (`notes/v1-shutdown.md`).
  */
 
 /**
@@ -12,6 +12,7 @@
  */
 export const accountOAuthStatePrefix = "x2.";
 
+import { clientMetadataDocumentPath } from "@executor-js/hosted-server/oauth-client-metadata";
 import { Option } from "effect";
 import {
   agentSkills,
@@ -20,7 +21,6 @@ import {
   sitePages,
   v1SiteFiles,
   v1SitePages,
-  type SitePattern,
 } from "./site-paths.ts";
 
 /** One forwarded request shape, with the form v1's edge documents it in. */
@@ -89,6 +89,9 @@ const routedEdgeForwards: ReadonlyArray<EdgeForward> = [
       url.pathname === "/api/oauth/callback" &&
       (url.searchParams.get("state") ?? "").startsWith(accountOAuthStatePrefix),
   },
+  // The OAuth client metadata document connected-account sign-ins name as their client ID, on the
+  // edge's origin like their callback. v1's own document is `/oauth/client-id-metadata.json`.
+  exact(clientMetadataDocumentPath),
   // Git smart HTTP for app repositories.
   { rule: "/git/*", matches: (url) => url.pathname.startsWith("/git/") },
   // The site: the homepage for visitors without a v1 session, its pages, their files and the
@@ -99,36 +102,6 @@ const routedEdgeForwards: ReadonlyArray<EdgeForward> = [
   site(agentSkills),
 ];
 
-/**
- * Production's forwards: the contract v1's edge implements. `edge-contract.json` publishes it
- * with example requests (`scripts/edge-contract.ts`); v1 tests its edge against a pinned copy.
- */
-export const productionEdgeForwards = edgeForwardsFor({
-  analyticsProxy: Option.some(productionSiteTelemetry.analyticsProxy),
-  errorTunnel: Option.some(productionSiteTelemetry.errorTunnel),
-});
-
-/**
- * Forwarded site pages that match only themselves, such as `/pricing`. v1's edge answers a `GET`
- * or `HEAD` for one's slashed form (`/pricing/`) with a 308 to the page, query kept, as the site's
- * own build does on v2's hosts (`scripts/build-site.ts`), and forwards that. Pages with a
- * forwarded `/x/*` already forward their slashed form; deeper paths stay v1's.
- */
-export const slashRedirectedSitePages: ReadonlyArray<SitePattern> = sitePages.filter(
-  (page) =>
-    !page.endsWith("/*") &&
-    !page.includes(".") &&
-    !v1SitePages.includes(page) &&
-    !sitePages.includes(`${page}/*`),
-);
-
 /** Whether `forwards` include `url`. */
 export const forwardsToV2 = (forwards: ReadonlyArray<EdgeForward>, url: URL) =>
   forwards.some((forward) => forward.matches(url));
-
-/**
- * What v2 answers on the edge whatever the deployment's telemetry: every forward, and any
- * `/api/<16 hex>/...` path, which only the telemetry handlers answer and only at their own path.
- */
-export const servedOnEdge = (url: URL) =>
-  forwardsToV2(routedEdgeForwards, url) || /^\/api\/[0-9a-f]{16}\//.test(url.pathname);

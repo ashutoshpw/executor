@@ -10,6 +10,7 @@ export function DashboardShell({
   support,
   notice,
   commandItems,
+  news,
   children,
   allowCreateOrganization = true,
 }: {
@@ -18,6 +19,7 @@ export function DashboardShell({
   readonly support?: ReactNode;
   readonly notice?: ReactNode;
   readonly commandItems?: ReadonlyArray<CommandBarItem> | undefined;
+  readonly news?: ReactNode;
   readonly children: ReactNode;
   readonly allowCreateOrganization?: boolean;
 }) {
@@ -31,6 +33,7 @@ export function DashboardShell({
       support={support}
       notice={notice}
       commandItems={commandItems}
+      news={news}
     >
       {children}
     </DashboardFrame>

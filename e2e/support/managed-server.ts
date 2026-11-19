@@ -3,6 +3,7 @@ import { createServer } from "node:http";
 import { randomBytes } from "node:crypto";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import {
+  Clock,
   Config,
   Deferred,
   Effect,
@@ -12,7 +13,6 @@ import {
   Layer,
   Option,
   Path,
-  Redacted,
   Schedule,
   Schema,
   Scope,
@@ -36,13 +36,18 @@ import {
   LegacyResults,
   LegacyStatements,
 } from "./legacy-storage.ts";
+import { reservedPort } from "./ports.ts";
 import { scenarios } from "../test-plan.ts";
 import { recordWorkerdCoverage, workerdCoverageFlags } from "./workerd-coverage.ts";
 import { localEntryCommand } from "./local-entry.ts";
+import { reveal } from "./failure-text.ts";
 
 class ServerFailed extends Schema.TaggedError<ServerFailed>()("ServerFailed", {
   message: Schema.String,
 }) {}
+
+/** How many of its last lines a server that exits before readiness quotes in the failure. */
+const startupLinesQuoted = 20;
 
 /** The furthest a scenario may move the product's clock; `wall-clock.mjs` enforces it too. */
 const maxClockOffset = 40 * 86_400_000;
@@ -57,12 +62,21 @@ export const OperatorSettings = Schema.Struct({
   SSO_CLIENT_SECRET: Schema.optionalKey(Schema.NonEmptyString),
   SSO_ALLOWED_DOMAINS: Schema.optionalKey(Schema.NonEmptyString),
   EXECUTOR_OAUTH_CLIENT_METADATA_URL: Schema.optionalKey(Schema.NonEmptyString),
-  /** The registry app builds install from; a scenario points it at one that lacks a version. */
-  EXECUTOR_NPM_REGISTRY: Schema.optionalKey(Schema.NonEmptyString),
   /** Install every `apps` release from the registry, including the host's own version. */
   EXECUTOR_APPS_FRAMEWORK_DISABLED: Schema.optionalKey(Schema.String),
   /** The build an upgrade installs. */
   EXECUTOR_BUILD_VERSION: Schema.optionalKey(Schema.NonEmptyString),
+  /** The npm registry builds install from, as when an operator's mirror is out of reach. */
+  EXECUTOR_NPM_REGISTRY: Schema.optionalKey(Schema.NonEmptyString),
+  /**
+   * E2E only: the product's calls to its compiler fail as a lost connection does, for every build
+   * (`all`) or only builds a deploy keeps (`retained`). An empty value ends the outage.
+   */
+  EXECUTOR_TEST_COMPILER_UNAVAILABLE: Schema.optionalKey(Schema.Literals(["all", "retained", ""])),
+  /** The copies the next start's catalog-copy rebuild stage may change; unset, every copy. */
+  EXECUTOR_CATALOG_COPY_REBUILD_SCOPE: Schema.optionalKey(Schema.String),
+  /** E2E only: the most compiler builds each start's catalog-copy rebuild starts, as Cloud's pace. */
+  EXECUTOR_TEST_CATALOG_COPY_REBUILD_PACE: Schema.optionalKey(Schema.NonEmptyString),
   /**
    * The operator's OAuth clients (notes/oauth.md, "First-party clients"): test client definitions
    * an E2E host adds to the reviewed ones, and the credentials of the clients scenarios turn on.
@@ -79,6 +93,22 @@ export const OperatorSettings = Schema.Struct({
   EXECUTOR_FILE_HANDLE_SWEEP_SECONDS: Schema.optionalKey(Schema.String),
 });
 /** The runner owns every process generation and keeps the same synthetic secrets across restarts. */
+/** In a managed server's directory: the process group its current product process leads. */
+export const serverProcessFile = "server-process.json";
+export const ServerProcess = Schema.Struct({ processGroup: Schema.Number });
+
+/** Whether any process of `group` still runs. The spawner starts each product as a group leader. */
+export const processGroupRunning = (group: number) =>
+  Effect.sync(() => {
+    try {
+      process.kill(-group, 0);
+      return true;
+    } catch (error) {
+      // EPERM: a process of that group exists but belongs to another user.
+      return error instanceof Error && "code" in error && error.code === "EPERM";
+    }
+  });
+
 export const startManagedServer = (
   target: typeof Target.Service,
   mode: "product" | "development" = "product",
@@ -90,8 +120,15 @@ export const startManagedServer = (
       processes = yield* ChildProcessSpawner.ChildProcessSpawner,
       path = yield* Path.Path,
       http = yield* HttpClient.HttpClient;
-    const port = new URL(target.metadata.origin).port;
-    let origin = target.metadata.origin;
+    // A product asked to choose its own port (port 0) gets a reserved one instead and keeps it
+    // across restarts: a port the OS chose goes back to its ephemeral range whenever the product
+    // stops, and another socket on the machine can be handed it before the product starts again.
+    const requested = new URL(target.metadata.origin);
+    const port = requested.port === "0" ? String(yield* reservedPort) : requested.port;
+    let origin =
+      requested.port === "0"
+        ? `${requested.protocol}//${requested.hostname}:${port}`
+        : target.metadata.origin;
     const runtimePath = yield* Config.String("EXECUTOR_E2E_RUNTIME_PATH").pipe(
       Config.withDefault(process.env.PATH ?? ""),
     );
@@ -141,6 +178,11 @@ export const startManagedServer = (
     let current: Scope.Closeable | undefined;
     /** The running product process, for an abrupt kill that runs none of its shutdown. */
     let running: ChildProcessSpawner.ChildProcessHandle | undefined;
+    /**
+     * Completes when the running generation writes its exit line ("Local server exited"), the last
+     * thing it does before its process ends. Its coverage profile is written after that line.
+     */
+    let exitLine: Deferred.Deferred<void> | undefined;
     /** Writes the running generation's workerd coverage; see `workerd-coverage.ts`. */
     let saveWorkerdCoverage: Effect.Effect<void> = Effect.void;
     const env = {
@@ -151,7 +193,7 @@ export const startManagedServer = (
       HOST: "127.0.0.1",
       PORT: port,
       EXECUTOR_PORT: port,
-      EXECUTOR_API_KEY: Redacted.value(target.apiKey),
+      EXECUTOR_API_KEY: reveal(target.apiKey),
       EXECUTOR_ENCRYPTION_KEY: randomBytes(32).toString("hex"),
       EXECUTOR_DATA_DIR: `${target.directory}/data`,
       BETTER_AUTH_URL: target.metadata.origin,
@@ -186,11 +228,36 @@ export const startManagedServer = (
     // budget retrying. On Windows the scope's tree kill awaits only the product, so a collector still
     // terminating held the data directory open when the scenario removed it. Releasing the process
     // scope afterwards ends anything it left behind.
+    /**
+     * Stop the running product and say how long it took, in milliseconds: from the request until
+     * the product wrote its exit line or ended, whichever came first. The time excludes what only
+     * the suite does after that: the product's coverage profile, written as its process exits, and
+     * its workerd's coverage, saved here once it has stopped.
+     */
     const shutdown = Effect.suspend(() => {
       const child = running;
-      if (child === undefined) return Effect.void;
-      // workerd's function logs are complete once it has stopped with the product.
-      return stopProduct(child).pipe(Effect.andThen(saveWorkerdCoverage));
+      if (child === undefined) return Effect.succeed(undefined);
+      const exited = exitLine;
+      return Effect.gen(function* () {
+        const started = yield* Clock.currentTimeMillis;
+        const [stopped] = yield* Effect.all(
+          [
+            Effect.raceFirst(
+              child.exitCode.pipe(Effect.ignore),
+              exited === undefined ? Effect.never : Deferred.await(exited),
+            ).pipe(
+              Effect.andThen(Clock.currentTimeMillis),
+              Effect.map((now) => now - started),
+              Effect.timeoutOption("15 seconds"),
+            ),
+            stopProduct(child),
+          ],
+          { concurrency: "unbounded" },
+        );
+        // workerd's function logs are complete once it has stopped with the product.
+        yield* saveWorkerdCoverage;
+        return Option.getOrUndefined(stopped);
+      });
     });
     const stopProduct = (child: ChildProcessSpawner.ChildProcessHandle) => {
       // The request goes through a pipe only the product holds (see stop-request.mjs), not to its
@@ -211,18 +278,19 @@ export const startManagedServer = (
         Effect.ignore,
       );
     };
-    const stop = Effect.suspend(() =>
-      current === undefined
-        ? Effect.void
+    const stop = Effect.suspend(() => {
+      const closing = current;
+      return closing === undefined
+        ? Effect.succeed(undefined)
         : shutdown.pipe(
-            Effect.andThen(Scope.close(current, Exit.succeed(undefined))),
+            Effect.tap(() => Scope.close(closing, Exit.succeed(undefined))),
             Effect.tap(() =>
               Effect.sync(() => {
                 current = undefined;
               }),
             ),
-          ),
-    );
+          );
+    });
     yield* Effect.addFinalizer(() => stop);
     const start = Effect.gen(function* () {
       if (current !== undefined) return;
@@ -290,6 +358,15 @@ export const startManagedServer = (
           }),
         );
         running = child;
+        // The product's process group, so a scenario can tell the product stopped by the process,
+        // not by its port: a port it bound with 0 can be handed to another server once it is free.
+        yield* fs
+          .writeFileString(
+            `${target.directory}/${serverProcessFile}`,
+            JSON.stringify({ processGroup: child.pid }),
+            { mode: 0o600 },
+          )
+          .pipe(Effect.orDie);
         yield* Scope.addFinalizer(
           scope,
           Effect.sync(() => {
@@ -310,16 +387,26 @@ export const startManagedServer = (
           );
         }
         const ready = yield* Deferred.make<void>();
+        const exited = yield* Deferred.make<void>();
+        exitLine = exited;
+        // This generation's last lines, quoted when it exits before readiness: the job log keeps
+        // them when a rerun has replaced the failed attempt's evidence artifact.
+        const lastLines: Array<string> = [];
         const output = yield* Stream.merge(child.stdout, child.stderr).pipe(
           Stream.decodeText(),
           Stream.splitLines,
           Stream.runForEach((line) =>
             Effect.gen(function* () {
-              yield* fs.writeFileString(
-                `${target.directory}/server.log`,
-                `${line.replace(/#pair=[a-f0-9]{64}/g, "#pair=<redacted>")}\n`,
-                { flag: "a", mode: 0o600 },
-              );
+              // Before the line's write to disk, so a stop is timed by the product alone.
+              if (line.includes('"message":"Local server exited"'))
+                yield* Deferred.succeed(exited, undefined);
+              const redacted = line.replace(/#pair=[a-f0-9]{64}/g, "#pair=<redacted>");
+              lastLines.push(redacted);
+              if (lastLines.length > startupLinesQuoted) lastLines.shift();
+              yield* fs.writeFileString(`${target.directory}/server.log`, `${redacted}\n`, {
+                flag: "a",
+                mode: 0o600,
+              });
               const clock = /^Executor test clock: (\d+)$/.exec(line);
               if (clock !== null) confirmedOffset = Number(clock[1]);
               if (/^Executor: http:\/\/127\.0\.0\.1:\d+$/.test(line)) {
@@ -359,14 +446,11 @@ export const startManagedServer = (
                 Effect.timeoutOption("3 seconds"),
                 // The log's tail names why startup stopped, such as a rejected setting.
                 Effect.andThen(
-                  fs.readFileString(`${target.directory}/server.log`).pipe(
-                    Effect.orElseSucceed(() => ""),
-                    Effect.flatMap((log) =>
-                      Effect.fail(
-                        new ServerFailed({
-                          message: `Server exited before readiness (${code})\n${log.slice(-2000)}`,
-                        }),
-                      ),
+                  Effect.suspend(() =>
+                    Effect.fail(
+                      new ServerFailed({
+                        message: `Server exited before readiness (${code}) on port ${env.PORT}; its last output:\n${lastLines.length === 0 ? "(none)" : lastLines.join("\n")}`,
+                      }),
                     ),
                   ),
                 ),
@@ -392,20 +476,26 @@ export const startManagedServer = (
     const control = (action: "start" | "stop" | "restart" | "kill") =>
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
-        if (request.headers.authorization !== `Bearer ${Redacted.value(target.apiKey)}`)
+        if (request.headers.authorization !== `Bearer ${reveal(target.apiKey)}`)
           return HttpServerResponse.empty({ status: 401 });
-        yield* gate.withPermits(1)(
+        const stopped = yield* gate.withPermits(1)(
           Effect.gen(function* () {
             // A kill models a crash or out-of-memory stop: the whole process group ends at once.
             if (action === "kill" && running !== undefined) {
               yield* running.kill({ killSignal: "SIGKILL" });
               yield* saveWorkerdCoverage;
             }
-            if (action !== "start") yield* stop;
+            const stopped = action === "start" ? undefined : yield* stop;
             if (action === "start" || action === "restart") yield* start;
+            return stopped;
           }),
         );
-        return HttpServerResponse.jsonUnsafe({ ok: true });
+        // How long the product took to stop, when it was running and the action stopped it.
+        return HttpServerResponse.jsonUnsafe(
+          action === "stop" && stopped !== undefined
+            ? { ok: true, stoppedMs: stopped }
+            : { ok: true },
+        );
       }).pipe(Effect.catch(() => Effect.succeed(HttpServerResponse.empty({ status: 500 }))));
     const routes = Layer.mergeAll(
       HttpRouter.add(
@@ -413,7 +503,7 @@ export const startManagedServer = (
         "/clock/advance",
         Effect.gen(function* () {
           const request = yield* HttpServerRequest.HttpServerRequest;
-          if (request.headers.authorization !== `Bearer ${Redacted.value(target.apiKey)}`)
+          if (request.headers.authorization !== `Bearer ${reveal(target.apiKey)}`)
             return HttpServerResponse.empty({ status: 401 });
           const body = yield* request.json.pipe(
             Effect.flatMap(
@@ -454,7 +544,7 @@ export const startManagedServer = (
         "/environment",
         Effect.gen(function* () {
           const request = yield* HttpServerRequest.HttpServerRequest;
-          if (request.headers.authorization !== `Bearer ${Redacted.value(target.apiKey)}`)
+          if (request.headers.authorization !== `Bearer ${reveal(target.apiKey)}`)
             return HttpServerResponse.empty({ status: 401 });
           const body = yield* request.json.pipe(
             Effect.flatMap(Schema.decodeUnknownEffect(OperatorSettings)),
@@ -474,7 +564,7 @@ export const startManagedServer = (
         "/data-steps",
         Effect.gen(function* () {
           const request = yield* HttpServerRequest.HttpServerRequest;
-          if (request.headers.authorization !== `Bearer ${Redacted.value(target.apiKey)}`)
+          if (request.headers.authorization !== `Bearer ${reveal(target.apiKey)}`)
             return HttpServerResponse.empty({ status: 401 });
           const body = yield* request.json.pipe(
             Effect.flatMap(
@@ -497,7 +587,7 @@ export const startManagedServer = (
         "/storage/legacy",
         Effect.gen(function* () {
           const request = yield* HttpServerRequest.HttpServerRequest;
-          if (request.headers.authorization !== `Bearer ${Redacted.value(target.apiKey)}`)
+          if (request.headers.authorization !== `Bearer ${reveal(target.apiKey)}`)
             return HttpServerResponse.empty({ status: 401 });
           // Only scenarios that declare this in the reviewed test plan may write rows directly.
           const declared = Object.values(scenarios).some(
@@ -569,22 +659,9 @@ const startIsolatedSelfHost = (
 ) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
-    const port =
-      entry === "product"
-        ? 0
-        : yield* Effect.scoped(
-            Effect.gen(function* () {
-              const services = yield* Layer.build(
-                NodeHttpServer.layer(createServer, { host: "127.0.0.1", port: 0 }),
-              );
-              const server = yield* HttpServer.HttpServer.pipe(Effect.provideContext(services));
-              if (!("port" in server.address))
-                return yield* new ServerFailed({
-                  message: "Isolated self-host listener must use TCP",
-                });
-              return server.address.port;
-            }),
-          );
+    // Both entries keep one reserved port for the server's life, through every restart (see
+    // `reservedPort`).
+    const port = yield* reservedPort;
     const directory = yield* fs.makeTempDirectory({ directory: target.directory, prefix: entry });
     const origin = `http://127.0.0.1:${port}`;
     const server = yield* startManagedServer(
@@ -609,6 +686,18 @@ export const startFreshSelfHost = (
   target: typeof Target.Service,
   environment: Readonly<Record<string, string>> = {},
 ) => startIsolatedSelfHost(target, "product", environment).pipe(Effect.map(({ origin }) => origin));
+
+/**
+ * Start an unconfigured product instance as `startFreshSelfHost` does, and return its origin and
+ * the file its output is written to.
+ */
+export const startLoggedSelfHost = (
+  target: typeof Target.Service,
+  environment: Readonly<Record<string, string>> = {},
+) =>
+  startIsolatedSelfHost(target, "product", environment).pipe(
+    Effect.map(({ origin, directory }) => ({ origin, log: `${directory}/server.log` })),
+  );
 
 /**
  * Start an unconfigured product instance as `startFreshSelfHost` does, and return the target that

@@ -346,8 +346,14 @@ layer(HostedLive, { excludeTestServices: true })("OAuth refresh resilience", (it
         {
           const pair = yield* deploy(`${name} pair`, ["service", "backup"]);
           // Connecting from the app links the account to `service`; link it to `backup` too.
-          const shared = yield* connect("Synthetic shared account", pair.id);
+          const shared = yield* connect("Synthetic paired account", pair.id);
           yield* linkAccount(actors.owner, `${prefix}/apps/${pair.id}`, "backup", shared);
+          // The new link is new intent for the account's webhook source, whose background pass
+          // resolves, and so may renew, the account again. Let it finish too, so the one renewal
+          // counted below is the call's.
+          yield* settleWebhookSources(actors.owner, `${prefix}/apps/${pair.id}`, (sources) =>
+            sources.some((source) => source.account === shared && source.status !== "pending"),
+          );
           const renewed = (yield* refreshes) + 1;
           const response = yield* api.request(
             actors.owner,
@@ -481,6 +487,12 @@ layer(HostedLive, { excludeTestServices: true })("OAuth refresh resilience", (it
             ).toMatchObject({
               "oauth.provider.id": provider,
               "oauth.renewal.outcome": "service_unavailable",
+              // Who the credentials were decrypted for, whose account and why; never their values.
+              "oauth.resolve.purpose": "run",
+              "oauth.resolve.credential_type": "oauth2",
+              "executor.account.id": expect.any(String),
+              "executor.organization.id": actors.organization.id,
+              "executor.user.id": expect.any(String),
             });
             expect(
               trace.data.find(({ span }) => span.operationName === "oauth.refresh")?.span.tags,
@@ -791,10 +803,11 @@ layer(HostedLive, { excludeTestServices: true })("OAuth refresh resilience", (it
         yield* issuer.configure({ expiresIn: null });
         /**
          * The service refuses `read` once. Executor renews the grant but, with no kept listing
-         * confirming the query only reads, does not repeat it: one failed call that may have
-         * written. The next call uses the renewed token.
+         * confirming the query only reads, does not repeat it. Unlisted, it is a failed call that
+         * may have written; a kept listing that marks it read-only (`declared`) does not say so,
+         * and the call is still not repeated. The next call uses the renewed token.
          */
-        const refusedOnce = (appId: string, session: string) =>
+        const refusedOnce = (appId: string, session: string, declared: boolean) =>
           Effect.gen(function* () {
             yield* issuer.expireAccessTokens;
             const before = yield* refreshes;
@@ -806,10 +819,14 @@ layer(HostedLive, { excludeTestServices: true })("OAuth refresh resilience", (it
               reason: "unauthorized",
               status: 401,
               credentialsRenewed: true,
-              mayHaveWritten: true,
               account: { id: session },
-              recovery: { action: unknownOutcomeAction },
             });
+            if (declared) expect(refused.body).not.toHaveProperty("mayHaveWritten");
+            else
+              expect(refused.body).toMatchObject({
+                mayHaveWritten: true,
+                recovery: { action: unknownOutcomeAction },
+              });
             assertPrivate(refused.body);
             expect(yield* refreshes).toBe(before + 1);
             expect((yield* issuer.metrics).resourceRequests.GET).toBe(gets + 1);
@@ -822,17 +839,17 @@ layer(HostedLive, { excludeTestServices: true })("OAuth refresh resilience", (it
 
         // Nobody has listed the app's tools yet.
         const session = yield* connect("Synthetic unlisted account");
-        yield* refusedOnce(app.id, session);
+        yield* refusedOnce(app.id, session, false);
 
-        // The same app built on `apps` beta.95, from before `kindConfirmed`: its kept listing names
-        // `read` a query, but nothing confirms it.
+        // The same app built on `apps` beta.95, from before `kindConfirmed`: its kept listing marks
+        // `read` read-only, but nothing confirms it.
         const legacy = yield* deploy(`${name} beta.95`, ["service"], {
           path: "package.json",
           content: JSON.stringify({ dependencies: { apps: "0.0.1-beta.95" } }),
         });
         const legacySession = yield* connect("Synthetic beta.95 account", legacy.id);
         yield* list(legacy.id);
-        yield* refusedOnce(legacy.id, legacySession);
+        yield* refusedOnce(legacy.id, legacySession, true);
 
         // Built on the current release and listed, the app confirms `read`, so the refused call
         // is repeated with the renewed token and succeeds.
@@ -1121,10 +1138,7 @@ export default defineApp({ user: { accounts: { service } } }, async ({ user: { a
           yield* issuer.configure({ tokenError: null, expiresIn: 20 });
           // The calls ran where the case says: the facet loads its build in facet mode.
           yield* telemetry
-            .spans("runtime.app.build.load", {
-              "executor.app.id": app.id,
-              "executor.runtime.mode": mode,
-            })
+            .spans("runtime.app.build.load", { app: app.id }, { "executor.runtime.mode": mode })
             .pipe(
               Effect.flatMap((spans) =>
                 spans.length > 0

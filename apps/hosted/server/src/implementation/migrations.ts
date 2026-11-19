@@ -2,13 +2,13 @@
 import type { BetterAuthOptions } from "better-auth";
 import { getMigrations } from "better-auth/db/migration";
 import { createDataStepJournal } from "@executor-js/app-management/data-steps";
-import { makeExecutorStorage } from "@executor-js/sdk/core";
+import { makeExecutorStorage, StorageMigrationFailed } from "@executor-js/sdk/core";
 import { Effect, Schema } from "effect";
 import { SqlClient } from "effect/sql";
 import * as Migrator from "effect/sql/Migrator";
 import { migrateProvisioning } from "./provisioning-schema.ts";
 import { migrateGroups } from "./group-schema.ts";
-import { migrateResourceAccess } from "./resource-schema.ts";
+import { migrateResourceAccess, removeGroupAccountConnections } from "./resource-schema.ts";
 import { migrateOAuthClientAccess } from "./oauth-client-schema.ts";
 import { migrateOrganizationRemovals } from "./organization-removal-schema.ts";
 import { migrateApiKeyMemberships } from "./api-key-membership-schema.ts";
@@ -20,6 +20,8 @@ import {
   migrateTaskInsightsDefaultOn,
   migrateTaskInsightsResponses,
 } from "./task-insights-schema.ts";
+import { migrateToolCallLog } from "./tool-call-log.ts";
+import { migratePersonalAccounts } from "./personal-account-schema.ts";
 
 /**
  * Migration failures stop startup; callers must not log the driver's secret-bearing cause. The
@@ -32,11 +34,12 @@ export class HostedMigrationFailed extends Schema.TaggedError<HostedMigrationFai
     stage: Schema.Literals(["auth", "product"]),
     causeTags: Schema.optionalKey(Schema.Array(Schema.String)),
     sqlState: Schema.optionalKey(Schema.String),
+    migrationVersion: Schema.optionalKey(Schema.String),
   },
 ) {
   override get message() {
     const tags = this.causeTags?.join(" > ") ?? "unknown cause";
-    return `${this.stage} migration failed: ${tags}${this.sqlState ? ` (SQLSTATE ${this.sqlState})` : ""}`;
+    return `${this.stage} migration failed${this.migrationVersion ? ` at executor version ${this.migrationVersion}` : ""}: ${tags}${this.sqlState ? ` (SQLSTATE ${this.sqlState})` : ""}`;
   }
 }
 
@@ -44,6 +47,15 @@ export class HostedMigrationFailed extends Schema.TaggedError<HostedMigrationFai
 export const migrationFailed =
   (stage: HostedMigrationFailed["stage"]) =>
   (cause: unknown): HostedMigrationFailed => {
+    if (cause instanceof StorageMigrationFailed)
+      return new HostedMigrationFailed({
+        stage,
+        causeTags: ["StorageMigrationFailed", ...cause.causeTags],
+        ...(cause.sqlState === undefined ? {} : { sqlState: cause.sqlState }),
+        ...(cause.migrationVersion === undefined
+          ? {}
+          : { migrationVersion: cause.migrationVersion }),
+      });
     const causeTags: Array<string> = [];
     let sqlState: string | undefined;
     let current: unknown = cause;
@@ -128,6 +140,19 @@ const hostedProductMigrations = migrateProductSteps("private_hosted_migrations",
   // Recording is on by default: new column defaults, and organizations that opted into arguments
   // before responses existed record responses too. The running server writes every column.
   "14_task_insights_default_on": migrateTaskInsightsDefaultOn,
+  // Steps 15 to 17 are upstream's steps 10 to 12, in their order. This fork recorded its own
+  // steps 10 to 14 before merging them, and the journal runs only ids above its latest, so
+  // upstream's steps follow the fork's instead of taking their ids. Every step is independent of
+  // the others. Never renumber a step that has been recorded; the next upstream step goes at 18.
+  //
+  // Accounts are no longer shared with groups; pending sign-ins for one are refused. The running
+  // server already refuses a connection without an access record.
+  "15_group_account_connections": removeGroupAccountConnections,
+  // Additive: the tool call log, two new tables with no backfill; the running server never reads them.
+  "16_tool_call_log": migrateToolCallLog,
+  // Every shared account becomes one member's personal account; pending sign-ins for one are
+  // refused. The running server reads personal accounts as this leaves them.
+  "17_personal_accounts": migratePersonalAccounts,
 });
 
 /**

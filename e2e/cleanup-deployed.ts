@@ -1,11 +1,18 @@
 /** A separate CI step recovers cleanup after GitHub kills a cancelled test process. */
+// First: the harness's outbound connect time-out (support/connect-timeout.ts).
+import "./support/connect-timeout.ts";
+// Second: each stage request on a connection of its own (support/stage-connections.ts).
+import "./support/stage-connections.ts";
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { Console, Effect, FileSystem, Path, Schema } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
+import { FetchHttpClient } from "effect/http";
+import { confirmBranchDeleted } from "./sdk/branch-deleted.ts";
 
 const Environment = Schema.Struct({
   slug: Schema.String.check(Schema.isPattern(/^e2e-[a-z0-9]{1,13}$/u)),
+  database: Schema.optionalKey(Schema.Literals(["neon", "planetscale"])),
 });
 
 NodeRuntime.runMain(
@@ -20,7 +27,7 @@ NodeRuntime.runMain(
       const metadata = path.join(directory, "environment.json");
       const destroyed = path.join(directory, "destroyed.json");
       if (!(yield* fs.exists(metadata)) || (yield* fs.exists(destroyed))) continue;
-      const { slug } = yield* fs
+      const { slug, database } = yield* fs
         .readFileString(metadata)
         .pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(Environment))));
       if (slug !== entry)
@@ -35,8 +42,10 @@ NodeRuntime.runMain(
           stderr: "inherit",
         }),
       );
+      // A branch the destroy left must fail the job by name, whether or not the destroy succeeded.
+      if (database === "planetscale") yield* confirmBranchDeleted(slug).pipe(Effect.orDie);
       if (Number(code) !== 0) return yield* Effect.die(new Error(`Cleanup failed for ${slug}`));
       yield* fs.writeFileString(destroyed, "{}");
     }
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  }).pipe(Effect.scoped, Effect.provide([NodeServices.layer, FetchHttpClient.layer])),
 );

@@ -12,7 +12,6 @@ storage, UI, accounts and background work. Agents reach every app through the
 MCP tools `skills`, `search`, `describe`, `call` and `execute`, with each app's
 slug as its namespace. Credentials go only through Executor's secure connection
 links, never through chat or source code. Some calls pause for user approval.
-
 This is the Executor app's `executor` skill. Read its other skills with
 `skills({app: "executor", name: "code-mode"})`; `skills({})` lists them all.
 
@@ -20,7 +19,7 @@ This is the Executor app's `executor` skill. Read its other skills with
 
 `search({ query: "..." })` returns each tool's exact `path`, such as
 `tools.<slug>.<tool>`, and input type; `describe({ paths })` returns full
-signatures. Never guess argument names.
+signatures. Never guess argument names. Dashboard page links: `dashboard.md`.
 
 For a few independent calls, use `call({ calls: { path, input } })`; an array
 of calls runs concurrently. Each result has `ok` and its `value` or `error`.
@@ -28,32 +27,18 @@ of calls runs concurrently. Each result has `ok` and its `value` or `error`.
 Write a JavaScript program for `execute` when one call's result feeds another,
 or a large result should be filtered before it reaches you. Inside it, the same
 paths are async functions, and `tools.search` and `tools.search.describe` work
-as above. Return only the data you need. For depth, read the `code-mode` skill.
+as above. Return only the data you need. For depth, read the `code-mode` skill;
+it says how to see images, hear audio and read files tools return, not base64.
 When `call` or `execute` pauses for approval or input, show the request to the
-user and resume it; never repeat the call or run the program again.
-
-A result with a `resource_link` is a file. Read it with `resources/read` if your
-client supports that, else open the signed link a too-large read names or run
-`executor files get <id>`. Never ask a tool for file bytes in its result.
-
-To give a tool a file, upload it with `tools.executor.files.uploadUrl` and an HTTP PUT
-of the bytes (or `executor files put`), then pass the returned handle. Never inline
-large content: an approval request is capped at 100,000 bytes.
+user and resume it; never repeat the call or run the program again. Files: `files.md`.
 
 ## Build an app
 
 Build an app when no existing app provides the tools, data, UI or automation
 the user needs. For a known service, search the catalog first:
 `organization.catalog({ query: { search: "gmail", limit: "20" } })`, then
-`apps.install` a match or `apps.importCustom` a remote MCP URL. The dashboard
-shows the same catalog at `/org/<slug>/apps/add`. With a shell, use the
-`executor apps` CLI, else `execute`; read the `app-authoring` skill first.
-
-## Dashboard links
-
-Every dashboard page is under `/org/<slug>`, such as `/org/<slug>/apps/<appId>`;
-bare `/apps/<id>` does not exist. Prefer a URL a tool returned. The page table
-is in the docs, Organizations and access, "Dashboard URLs".
+`apps.install` a match or `apps.importCustom` a remote MCP URL. With a shell,
+use the `executor apps` CLI, else `execute`; read the `app-authoring` skill first.
 
 ## Send feedback
 

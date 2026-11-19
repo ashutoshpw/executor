@@ -5,6 +5,7 @@ import {
   type Browser as NativeBrowser,
   type BrowserType,
   type Page,
+  type Request,
 } from "playwright";
 import {
   Cause,
@@ -16,11 +17,11 @@ import {
   Exit,
   FileSystem,
   Layer,
-  Redacted,
   Result,
   Schedule,
 } from "effect";
 import { Target, driver, type DriverFailed } from "./platform.ts";
+import { reveal, safeText } from "./failure-text.ts";
 import { targetHosts } from "./role-hosts.ts";
 import { splitRoutedReads } from "./read-batches.ts";
 import { Evidence } from "./evidence.ts";
@@ -49,8 +50,27 @@ const visitorUserAgent = (browser: NativeBrowser) =>
       }
     : {};
 
+/**
+ * CI installs WebKit only on the e2e-cloud runner whose scenario patterns name Safari (`webkit`
+ * in .github/actions/e2e-tools). A WebKit scenario anywhere else stops here with the fix, instead
+ * of a redacted launch failure.
+ */
+const requireWebKit = Effect.gen(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  if (yield* fs.exists(webkit.executablePath()).pipe(Effect.orDie)) return;
+  return yield* Effect.die(
+    new Error(
+      "WebKit is not installed on this machine: run `bunx playwright install --with-deps webkit`. " +
+        "In CI, .github/actions/e2e-tools installs it only with `webkit: true`, which the e2e-cloud " +
+        "job passes when its scenario patterns name Safari. Name Safari in the scenario's title, or " +
+        "pass the input on the job that runs it.",
+    ),
+  );
+});
+
 const captureBrowser = (engine: BrowserType) =>
   Effect.gen(function* () {
+    if (engine === webkit) yield* requireWebKit;
     const target = yield* Target;
     return yield* launchBrowser(
       {
@@ -73,6 +93,31 @@ export class BrowserDriver extends Context.Service<BrowserDriver, NativeBrowser>
   static readonly webkitCaptureLayer = Layer.effect(BrowserDriver, captureBrowser(webkit));
 }
 /** A case-scoped browser with captured steps and a single isolated context. */
+/**
+ * One request a scenario's browser sent, in `page-requests.json`: its URL without query or fragment
+ * (they carry codes and state), when it started, when its response arrived and when it ended. A
+ * redirect's hops are separate rows; a request still open when the scenario ended has no `endedAt`.
+ */
+interface PageRequest {
+  readonly method: string;
+  readonly url: string;
+  readonly kind: string;
+  readonly startedAt: string;
+  status?: number;
+  respondedAt?: string;
+  endedAt?: string;
+  error?: string;
+}
+
+/** The most rows `page-requests.json` keeps; a scenario's pages send a few hundred. */
+const pageRequestLimit = 5000;
+
+/** A Chromium network error code, or `NETWORK_ERROR` for anything else. */
+const networkError = (request: Request) => {
+  const reason = request.failure()?.errorText;
+  return reason !== undefined && /^net::ERR_[A-Z_]+$/.test(reason) ? reason : "NETWORK_ERROR";
+};
+
 export class Browser extends Context.Service<
   Browser,
   {
@@ -123,6 +168,55 @@ export class Browser extends Context.Service<
       yield* driver("route batched reads through test routes", () =>
         splitRoutedReads(context, targetHosts(target).browser),
       );
+      // Every page's uncaught errors and console errors, masked, for the evidence of any case
+      // that raised one. The first 200 are kept.
+      const pageErrors: { kind: "page" | "console"; page: string; text: string }[] = [];
+      const pageError = (kind: "page" | "console", from: Page | null, text: string) => {
+        if (pageErrors.length < 200)
+          pageErrors.push({ kind, page: safeText(from?.url() ?? "unknown"), text: safeText(text) });
+      };
+      // Every request of every page, kept even when an OAuth scenario discards the network trace,
+      // so a page that waited shows which request it waited on and for how long.
+      const pageRequests: PageRequest[] = [];
+      const openRequests = new Map<Request, PageRequest>();
+      let requestsClosed = false;
+      const now = () => new Date(clock.currentTimeMillisUnsafe()).toISOString();
+      context.on("request", (request) => {
+        const url = new URL(request.url());
+        if (requestsClosed || pageRequests.length >= pageRequestLimit) return;
+        if (url.protocol !== "http:" && url.protocol !== "https:") return;
+        const row: PageRequest = {
+          method: request.method(),
+          url: `${url.origin}${url.pathname}`,
+          kind: request.resourceType(),
+          startedAt: now(),
+        };
+        pageRequests.push(row);
+        openRequests.set(request, row);
+      });
+      context.on("response", (response) => {
+        const row = openRequests.get(response.request());
+        if (requestsClosed || row === undefined) return;
+        row.status = response.status();
+        row.respondedAt = now();
+      });
+      context.on("requestfinished", (request) => {
+        const row = openRequests.get(request);
+        if (requestsClosed || row === undefined) return;
+        row.endedAt = now();
+        openRequests.delete(request);
+      });
+      context.on("requestfailed", (request) => {
+        const row = openRequests.get(request);
+        if (requestsClosed || row === undefined) return;
+        row.endedAt = now();
+        row.error = networkError(request);
+        openRequests.delete(request);
+      });
+      context.on("weberror", (error) => pageError("page", error.page(), String(error.error())));
+      context.on("console", (message) => {
+        if (message.type() === "error") pageError("console", message.page(), message.text());
+      });
       // `E2E_COVERAGE=1` records the JavaScript coverage of every page Chromium opens, from its first
       // script, for `e2e/coverage.ts` to map to the dashboards' sources.
       const fs = yield* FileSystem.FileSystem;
@@ -193,6 +287,8 @@ export class Browser extends Context.Service<
           const video = page?.video();
           // Coverage is evidence about the suite, not the scenario; it never fails one.
           yield* saveCoverage.pipe(Effect.ignore);
+          // Closing fails every open request; those stay open in the record.
+          requestsClosed = true;
           yield* driver("close browser context", () => context.close()).pipe(Effect.orDie);
           yield* driver("collect sanitized resource failures", () =>
             Promise.all(failureReads),
@@ -207,6 +303,8 @@ export class Browser extends Context.Service<
           }
           yield* evidence.json("navigation.json", navigations);
           yield* evidence.json("failed-resources.json", failedResources);
+          yield* evidence.json("page-requests.json", pageRequests);
+          if (pageErrors.length > 0) yield* evidence.json("page-errors.json", pageErrors);
           for (const id of traceIds) yield* evidence.browserTrace(id);
         }),
       );
@@ -281,14 +379,10 @@ export class Browser extends Context.Service<
           });
           current.on("requestfailed", (request) => {
             const url = new URL(request.url());
-            const reason = request.failure()?.errorText;
             failedResources.push({
               url: `${url.origin}${url.pathname}`,
               kind: request.resourceType(),
-              error:
-                reason !== undefined && /^net::ERR_[A-Z_]+$/.test(reason)
-                  ? reason
-                  : "NETWORK_ERROR",
+              error: networkError(request),
             });
           });
           return { page: current, focus, capture };
@@ -390,9 +484,7 @@ export class Browser extends Context.Service<
               Effect.gen(function* () {
                 yield* driver("clear browser cookies", () => context.clearCookies());
                 const cookies = yield* session.cookies;
-                yield* driver("set actor session", () =>
-                  context.addCookies([...Redacted.value(cookies)]),
-                );
+                yield* driver("set actor session", () => context.addCookies([...reveal(cookies)]));
               }),
             );
           }),

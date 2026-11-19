@@ -10,6 +10,7 @@ import {
 import { UserFacingError } from "@executor-js/utils/user-facing-error";
 import { DashboardAppBrowser } from "./app-browser.ts";
 import { DashboardWorkflows, DashboardWebhooks } from "./resources.ts";
+import { RequestRejection } from "@executor-js/sdk/core";
 import { AccountChoiceUnsupported, ToolKind, ToolKindMismatch } from "@executor-js/sdk/core";
 import { AppWorkflowsActive, AccountWorkflowsActive } from "@executor-js/sdk/core";
 import { DashboardSchedules } from "./schedules.ts";
@@ -30,6 +31,7 @@ import {
   AccountNotFound,
   AccountRequired,
   AccountSelectionInvalid,
+  MarkdownUnavailable,
   App,
   AppNotDeployed,
   AppEvaluationFailed,
@@ -89,7 +91,7 @@ import {
   type ProviderDefinition,
 } from "@executor-js/sdk";
 import {
-  CatalogEntry,
+  CatalogListing,
   CatalogImportFailed,
   CatalogUnavailable,
   CatalogImport,
@@ -128,9 +130,9 @@ export const DashboardUnauthorized = UserFacingError.define({
   title: "Browser pairing required",
   description: "This browser is not paired with this Executor instance.",
   recovery: {
-    action: "Run executor pair and open the new link, then return to account setup.",
+    action: "Run executor service pair and open the new link, then return to account setup.",
     instructions:
-      "Restore local browser pairing with executor pair and guide the user through the new pairing link. Then reopen the intended app’s account setup. Keep pairing credentials private and preserve pairing authorization.",
+      "Restore local browser pairing with executor service pair and guide the user through the new pairing link. Then reopen the intended app’s account setup. Keep pairing credentials private and preserve pairing authorization.",
   },
 });
 /** Parsed DashboardUnauthorized failure. */
@@ -423,6 +425,16 @@ export const DashboardOverview = Schema.Struct({
   apps: Schema.Array(App),
   /** The accounts linked to each app, oldest first. */
   links: Schema.Array(Schema.Struct({ app: AppId, account: AccountId })),
+  /** The app links of each app, oldest first. */
+  appLinks: Schema.Array(
+    Schema.Struct({
+      app: AppId,
+      requirement: Schema.String,
+      account: AccountId,
+      provider: ProviderId,
+      label: Schema.String,
+    }),
+  ),
   accounts: Schema.Array(DashboardAccount),
 });
 export type DashboardOverview = typeof DashboardOverview.Type;
@@ -490,7 +502,7 @@ const toolErrors = [
 ] as const;
 
 /** Product operations share typed session protection; programmatic SDK routes remain separate. */
-export const DashboardApi = HttpApi.make("local-dashboard").add(
+const dashboardApi = HttpApi.make("local-dashboard").add(
   HttpApiGroup.make("dashboard")
     .add(
       HttpApiEndpoint.get("mcpInstallation", "/dashboard/api/mcp-installation", {
@@ -689,12 +701,7 @@ export const DashboardApi = HttpApi.make("local-dashboard").add(
         },
       ),
     )
-    .add(
-      HttpApiEndpoint.get("catalog", "/dashboard/api/catalog", {
-        success: Schema.Array(CatalogEntry),
-        error: CatalogUnavailable,
-      }),
-    )
+    .add(HttpApiEndpoint.get("catalog", "/dashboard/api/catalog", { success: CatalogListing }))
     .add(
       HttpApiEndpoint.post("importApp", "/dashboard/api/catalog/import", {
         payload: Schema.Struct({ ...CatalogImport.fields, name: Schema.NonEmptyString }),
@@ -706,6 +713,7 @@ export const DashboardApi = HttpApi.make("local-dashboard").add(
           ...sourceErrors,
           VersionBuildFailed,
           BuildMemoryExceeded,
+          MarkdownUnavailable,
           SkillDefinitionInvalid,
           AppNameTaken,
           AppSlugTaken,
@@ -726,6 +734,7 @@ export const DashboardApi = HttpApi.make("local-dashboard").add(
           ...sourceErrors,
           VersionBuildFailed,
           BuildMemoryExceeded,
+          MarkdownUnavailable,
           SkillDefinitionInvalid,
           AppNameTaken,
           AppSlugTaken,
@@ -835,3 +844,5 @@ export const DashboardApi = HttpApi.make("local-dashboard").add(
   DashboardWebhooks.middleware(DashboardAccess),
   DashboardMcpConnections.middleware(DashboardAccess),
 );
+/** Every endpoint answers a request its schema rejects with `RequestInvalid`. */
+export const DashboardApi = dashboardApi.middleware(RequestRejection);

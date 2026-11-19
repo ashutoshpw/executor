@@ -1,5 +1,6 @@
 import { expect, layer } from "@effect/vitest";
-import { Effect, FileSystem, Schema, Schedule } from "effect";
+import { Effect, Redacted, Schema, Schedule } from "effect";
+import { HttpClient, HttpClientRequest } from "effect/http";
 import { scenarios } from "../test-plan.ts";
 import { App } from "../support/contracts.ts";
 import { Actors } from "../support/actors.ts";
@@ -7,29 +8,24 @@ import { Api, body } from "../support/api.ts";
 import { Evidence } from "../support/evidence.ts";
 import { Browser } from "../support/browser.ts";
 import { HostedLive, withCase, withHostedCase } from "../support/case.ts";
+import { analyticsEvents } from "../support/collector-events.ts";
 import { Target } from "../support/platform.ts";
 import { captureBrowserAnalytics, renderBrowserReplay } from "../support/product-analytics.ts";
 import { appsManifest } from "../support/apps-release.ts";
 import { Onboarding } from "../support/onboarding.ts";
+import { McpClient } from "../support/mcp-client.ts";
 
 const Event = Schema.Struct({
   event: Schema.String,
   distinct_id: Schema.optional(Schema.String),
   properties: Schema.Record(Schema.String, Schema.Json),
 });
-const Batch = Schema.Struct({ batch: Schema.Array(Event) });
 const isSnapshot = (event: Schema.Json) =>
   event !== null &&
   typeof event === "object" &&
   !Array.isArray(event) &&
   "event" in event &&
   event.event === "$snapshot";
-const readEvents = (text: string) =>
-  text
-    .trim()
-    .split("\n")
-    .filter(Boolean)
-    .flatMap((line) => Schema.decodeUnknownSync(Schema.fromJsonString(Batch))(line).batch);
 
 layer(HostedLive, { excludeTestServices: true })("Product analytics", (it) => {
   it.effect(scenarios.productAnalytics.title, (context) =>
@@ -39,16 +35,15 @@ layer(HostedLive, { excludeTestServices: true })("Product analytics", (it) => {
         const actors = yield* Actors,
           api = yield* Api,
           browser = yield* Browser,
-          target = yield* Target,
-          fs = yield* FileSystem.FileSystem;
+          target = yield* Target;
         expect(target.metadata.mode).toBe("managed");
         const actor = yield* body(
           Schema.Struct({ user: Schema.Struct({ id: Schema.String }) }),
           yield* api.request(actors.owner, "GET", "/api/auth/get-session"),
         );
-        const before = readEvents(
-          yield* fs.readFileString(`${target.directory}/analytics.ndjson`),
-        ).length;
+        // Cases share one collector, so only this case's organization is considered.
+        const organizationEvents = analyticsEvents({ organization: actors.organization.id });
+        const before = (yield* organizationEvents).length;
         const prefix = `/api/organizations/${actors.organization.id}`;
         // Reads are traced but never exported; dashboard refetches would otherwise dominate.
         expect((yield* api.request(actors.owner, "GET", `${prefix}/inventory`)).status).toBe(200);
@@ -56,13 +51,8 @@ layer(HostedLive, { excludeTestServices: true })("Product analytics", (it) => {
           message: "Synthetic feedback from the product analytics scenario",
         });
         expect(response.status).toBe(200);
-        // Cases share one collector, so only this case's organization is considered.
-        const events = yield* fs.readFileString(`${target.directory}/analytics.ndjson`).pipe(
-          Effect.map((text) =>
-            readEvents(text)
-              .slice(before)
-              .filter((event) => event.properties.organization_id === actors.organization.id),
-          ),
+        const events = yield* organizationEvents.pipe(
+          Effect.map((events) => events.slice(before)),
           Effect.repeat({
             schedule: Schedule.spaced("100 millis"),
             until: (events) =>
@@ -148,7 +138,12 @@ layer(HostedLive, { excludeTestServices: true })("Product analytics", (it) => {
           ),
         );
         yield* interact();
-        yield* recordedAfter(0);
+        // The stylesheet's recording is the first delivery; the checks after it read it.
+        yield* browser.use("Wait for the embedded stylesheet recording", () =>
+          expect
+            .poll(() => JSON.stringify(snapshots()), { timeout: 30000 })
+            .toContain("--replay-stylesheet-probe"),
+        );
         expect(capture.requests.filter((path) => path.includes("recorder"))).toEqual([]);
         // No browser file names the build; the page reads its release from the document.
         // Replay snapshots carry no event properties; every other browser event does.
@@ -158,11 +153,6 @@ layer(HostedLive, { excludeTestServices: true })("Product analytics", (it) => {
         expect(browserEvents.map((event) => event.event)).toContain("$identify");
         expect(browserEvents.map((event) => event.properties.release)).toEqual(
           browserEvents.map(() => target.metadata.commit),
-        );
-        yield* browser.use("Wait for the embedded stylesheet recording", () =>
-          expect
-            .poll(() => JSON.stringify(snapshots()), { timeout: 30000 })
-            .toContain("--replay-stylesheet-probe"),
         );
         const initialReplay = [...snapshots()];
         const liveLayout = yield* browser.use("Read live dashboard layout", (page) =>
@@ -177,7 +167,6 @@ layer(HostedLive, { excludeTestServices: true })("Product analytics", (it) => {
         expect(liveLayout.display).toBe("grid");
         expect(liveLayout.linkedStyle).toBe("linked");
         yield* browser.checkpoint("live-dashboard");
-        const first = snapshots().length;
         yield* browser.use("Insert ordinary content and synthetic secrets", (page) =>
           page.evaluate(() => {
             const region = document.createElement("section");
@@ -188,8 +177,7 @@ layer(HostedLive, { excludeTestServices: true })("Product analytics", (it) => {
             console.log("PRIVATE_CONSOLE");
           }),
         );
-        yield* interact();
-        yield* recordedAfter(first);
+        // One delivery after the insertion and the edits carries both.
         yield* browser.use("Update ordinary and secret fields, then reveal a token", (page) =>
           page
             .getByLabel("Replay password")
@@ -242,7 +230,6 @@ export default defineApp({}, async () => ({ tools: router({
             .then(() => page.getByRole("region", { name: "Tool result" }).innerText())
             .then((result) => expect(result).toContain("PRIVATE_TOOL_RESULT")),
         );
-        yield* recordedAfter(snapshots().length);
         yield* browser.checkpoint("tool-result-live");
         const toolError = yield* browser.use("Run a failing tool", (page) =>
           page
@@ -251,6 +238,8 @@ export default defineApp({}, async () => ({ tools: router({
             .then(() => page.getByRole("button", { name: "Run tool", exact: true }).click())
             .then(() => page.getByRole("alert").innerText()),
         );
+        // A delivery made after the failing run carries it, and whatever the passing run left
+        // buffered, before the page is left.
         yield* recordedAfter(snapshots().length);
         yield* browser.checkpoint("tool-error-live");
         yield* open(`/account/tokens?organization=${actors.organization.slug}`);
@@ -356,6 +345,120 @@ export default defineApp({}, async () => ({ tools: router({
     ),
   );
 
+  it.effect(scenarios.productAnalyticsMcpClient.title, (context) =>
+    withHostedCase(
+      context,
+      Effect.gen(function* () {
+        const actors = yield* Actors,
+          api = yield* Api,
+          evidence = yield* Evidence,
+          mcp = yield* McpClient,
+          target = yield* Target,
+          http = yield* HttpClient.HttpClient;
+        const prefix = `/api/organizations/${actors.organization.id}`;
+        const key = yield* body(
+          Schema.Struct({ id: Schema.String, key: Schema.RedactedFromValue(Schema.String) }),
+          yield* api.request(actors.owner, "POST", "/api/auth/api-key/create", {
+            name: "MCP client name",
+          }),
+        );
+        yield* Effect.addFinalizer(() =>
+          api
+            .request(actors.owner, "POST", "/api/auth/api-key/delete", { keyId: key.id })
+            .pipe(Effect.orDie),
+        );
+        const deployed = yield* api.request(actors.owner, "POST", `${prefix}/apps/deploy`, {
+          name: "MCP client name probe",
+          files: [
+            {
+              path: "index.ts",
+              content: `
+import { defineApp, query, object, string, router } from "apps";
+export default defineApp({}, async () => ({ tools: router({
+  echo: query({ input: object({ message: string() }) }, async (_, input) => input.message),
+}) }));`,
+            },
+            appsManifest,
+          ],
+        });
+        expect(deployed.status, JSON.stringify(deployed.body)).toBe(200);
+        const app = yield* body(App, deployed);
+        const code = (message: string) =>
+          `return await tools[${JSON.stringify(app.slug)}].echo({ message: ${JSON.stringify(message)} })`;
+
+        // 2026-07-28 has no initialize: the client names itself in every request's metadata.
+        const revision = "2026-07-28";
+        const stateless = "Stateless e2e client";
+        yield* evidence.step(
+          "A 2026-07-28 client calls a tool, naming itself in the request",
+          Effect.gen(function* () {
+            const response = yield* http.execute(
+              yield* HttpClientRequest.bodyJson(
+                HttpClientRequest.post(`${target.metadata.origin}/mcp`).pipe(
+                  HttpClientRequest.bearerToken(Redacted.value(key.key)),
+                  HttpClientRequest.setHeaders({
+                    accept: "application/json, text/event-stream",
+                    "mcp-protocol-version": revision,
+                    "mcp-method": "tools/call",
+                    "mcp-name": "execute",
+                    "x-executor-organization": actors.organization.id,
+                  }),
+                ),
+                {
+                  jsonrpc: "2.0",
+                  id: 1,
+                  method: "tools/call",
+                  params: {
+                    name: "execute",
+                    arguments: { code: code("stateless") },
+                    _meta: {
+                      "io.modelcontextprotocol/protocolVersion": revision,
+                      "io.modelcontextprotocol/clientCapabilities": {},
+                      "io.modelcontextprotocol/clientInfo": { name: stateless, version: "1" },
+                    },
+                  },
+                },
+              ),
+            );
+            const text = yield* response.text;
+            expect(response.status, text).toBe(200);
+            expect(text).toContain('"stateless"');
+          }).pipe(Effect.scoped, Effect.provideService(HttpClient.TracerPropagationEnabled, false)),
+        );
+
+        // An earlier version names the client once, at initialize.
+        const session = yield* mcp.connect(key.key, "client-name", {
+          organization: actors.organization.id,
+        });
+        const called = yield* session.use("An initialized client calls a tool", (client, signal) =>
+          client.callTool(
+            { name: "execute", arguments: { code: code("initialized") } },
+            undefined,
+            { signal },
+          ),
+        );
+        expect(JSON.stringify(called.structuredContent)).toContain('"initialized"');
+
+        const completed = yield* analyticsEvents({ app: app.id }).pipe(
+          Effect.map((events) =>
+            events.filter((event) => event.event === "tool_execution_completed"),
+          ),
+          Effect.repeat({
+            schedule: Schedule.spaced("100 millis"),
+            until: (events) => events.length >= 2,
+          }),
+          Effect.timeout("15 seconds"),
+        );
+        yield* evidence.json("mcp-client-names.json", completed);
+        expect(completed.map((event) => event.properties.client_name).sort()).toEqual(
+          ["executor-e2e", stateless].sort(),
+        );
+        for (const event of completed)
+          expect(event.properties).toMatchObject({ source: "mcp", ok: true });
+      }).pipe(Effect.provide(McpClient.layer)),
+    ),
+  );
+
   it.effect(scenarios.productAnalyticsOnboarding.title, (context) =>
     withCase(
       context,
@@ -411,16 +514,8 @@ export default defineApp({}, async () => ({ tools: router({
             expect(opened).toBe(path);
           });
 
-        yield* onboarding.emailSignIn(yield* onboarding.freshEmail);
-        yield* browser.use("Decline passkey enrollment when it is offered", (page) => {
-          const decline = page.getByRole("button", { name: "Not now", exact: true });
-          return decline
-            .or(page.getByLabel("Team name", { exact: true }))
-            .first()
-            .waitFor()
-            .then(() => decline.count())
-            .then((offered) => (offered > 0 ? decline.click() : undefined));
-        });
+        // Sign-in is walked by the sign-in scenarios; this one records what follows it.
+        yield* onboarding.signInByApi;
         yield* browser.use("Team creation is open", (page) =>
           page
             .getByLabel("Team name", { exact: true })
@@ -468,7 +563,6 @@ export default defineApp({}, async () => ({ tools: router({
             document.body.append(region);
           }),
         );
-        yield* recordedAfter(accounts);
         yield* browser.use("Wait for the inserted setup content", () =>
           expect.poll(() => recorded(accounts), { timeout: 30000 }).toContain("VISIBLE_SETUP_TEXT"),
         );

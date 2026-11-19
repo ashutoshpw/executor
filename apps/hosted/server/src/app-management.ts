@@ -7,7 +7,7 @@ import { StorageError, type App } from "@executor-js/sdk/core";
 import type { AppCapabilities } from "@executor-js/app-management/contracts";
 import { Context } from "effect";
 import { permitsAction, permittedAppIds } from "@executor-js/authorization";
-import { CurrentAuthorization } from "./contracts/authorization.ts";
+import { CurrentPolicy } from "./contracts/authorization.ts";
 import { OrganizationForbidden } from "./contracts/organization.ts";
 import { requireOrganizationAdmin } from "./implementation/access.ts";
 import { HostedAppAccess } from "./contracts/app-management.ts";
@@ -16,7 +16,7 @@ import { withOrganizationRequest } from "./implementation/organization.ts";
 import { AppIdentity, AppGitAccess, AppAccessDenied } from "@executor-js/app-management";
 import { Effect, Layer, Schema } from "effect";
 import { Base64 } from "effect/encoding";
-import { ApiAuthentication, Authentication } from "./contracts/auth.ts";
+import { BearerAuthentication, SessionAuthentication } from "./contracts/auth.ts";
 import { OrganizationTombstones } from "./contracts/organization-removal.ts";
 import {
   OrganizationReference,
@@ -68,8 +68,8 @@ export const hostedAppCapabilities = Effect.gen(function* () {
 export const hostedAppAccess = Layer.effect(
   HostedAppAccess,
   Effect.gen(function* () {
-    const api = yield* ApiAuthentication;
-    const auth = yield* Authentication;
+    const api = yield* BearerAuthentication;
+    const auth = yield* SessionAuthentication;
     const tombstones = yield* OrganizationTombstones;
     const domain = yield* PublishingDomain;
     return (response, { endpoint }) =>
@@ -81,7 +81,7 @@ export const hostedAppAccess = Layer.effect(
             )
               ? requireOrganizationAdmin
               : CurrentOrganization;
-            const policy = yield* CurrentAuthorization;
+            const policy = yield* CurrentPolicy;
             if (
               [
                 "create",
@@ -124,8 +124,8 @@ export const hostedAppAccess = Layer.effect(
             ? "read"
             : "manage",
       ).pipe(
-        Effect.provideService(Authentication, auth),
-        Effect.provideService(ApiAuthentication, api),
+        Effect.provideService(SessionAuthentication, auth),
+        Effect.provideService(BearerAuthentication, api),
         Effect.provideService(OrganizationTombstones, tombstones),
         Effect.provideService(PublishingDomain, domain),
       );
@@ -136,7 +136,7 @@ export const hostedAppAccess = Layer.effect(
 export const hostedAppGitAccess = Layer.effect(
   AppGitAccess,
   Effect.gen(function* () {
-    const api = yield* ApiAuthentication;
+    const api = yield* BearerAuthentication;
     const domain = yield* PublishingDomain;
     return AppGitAccess.of({
       authenticate: (request, scope) =>

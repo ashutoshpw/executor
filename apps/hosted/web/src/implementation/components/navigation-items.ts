@@ -1,4 +1,5 @@
 import {
+  Activity01Icon,
   BoxesIcon,
   File01Icon,
   FingerPrintIcon,
@@ -22,6 +23,7 @@ export const items = [
   { to: "/org/$organizationSlug/approvals", label: "Approvals", icon: Shield01Icon },
   { to: "/org/$organizationSlug/files", label: "Files", icon: File01Icon },
   { to: "/org/$organizationSlug/groups", label: "Groups", icon: UserGroupIcon },
+  { to: "/org/$organizationSlug/activity", label: "Activity", icon: Activity01Icon },
 ] as const;
 /** Pages only owners and admins see: task records can include other people's work. */
 export const adminItems = [

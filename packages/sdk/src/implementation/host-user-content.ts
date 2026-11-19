@@ -6,6 +6,7 @@
 import type { Fetcher } from "@cloudflare/workers-types";
 import { Effect, Option, Stream } from "effect";
 import { BlobStoreError, type BlobKey, type BlobStorage } from "../contracts/blobs.ts";
+import { removeEach } from "./blob-streams.ts";
 
 /** Where the host serves user-content objects, one path per key. */
 export const userContentPath = "/user-content/";
@@ -41,6 +42,8 @@ export const hostUserContentStore = (host: HostFetcher): BlobStorage => {
       try: async () => new Uint8Array(await response.arrayBuffer()),
       catch: (cause) => new BlobStoreError({ operation, cause }),
     });
+  const remove = (key: BlobKey) =>
+    send("remove", key, [204, 404], { method: "DELETE" }).pipe(Effect.asVoid);
   return {
     get: (key) =>
       send("get", key, [200, 404]).pipe(
@@ -89,7 +92,8 @@ export const hostUserContentStore = (host: HostFetcher): BlobStorage => {
         ),
       );
     },
-    remove: (key) => send("remove", key, [204, 404], { method: "DELETE" }).pipe(Effect.asVoid),
+    remove,
+    removeAll: (keys) => removeEach(keys, remove),
     // The runner never lists user content; the sweep walks the product's rows instead.
     list: () => Effect.fail(new BlobStoreError({ operation: "list" })),
     stream: (key, range) =>

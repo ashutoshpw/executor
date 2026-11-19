@@ -144,6 +144,7 @@ export function AppAccounts({
       <SharedAccounts
         app={app}
         accounts={accounts}
+        canEdit
         Failure={Failure}
         appAccounts={scopeAccounts("app", appLinks)}
         yourAccounts={scopeAccounts("user", userLinks)}
@@ -156,7 +157,9 @@ export function AppAccounts({
         }}
       >
         <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-[560px]">
-          <DialogTitle>Connect {connection?.requirement.definition.name}</DialogTitle>
+          <DialogTitle className="wrap-anywhere">
+            Connect {connection?.requirement.definition.name}
+          </DialogTitle>
           <DialogDescription className="sr-only">
             Connect an account for {app.name}.
           </DialogDescription>

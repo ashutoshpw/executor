@@ -225,7 +225,7 @@ layer(HostedLive, { excludeTestServices: true })("Account secret fields", (it) =
                   response.request().method() === "POST" &&
                   new URL(response.url()).pathname.endsWith("/credential-checks"),
               ),
-              connect.getByRole("button", { name: "Validate API key", exact: true }).click(),
+              connect.getByRole("button", { name: "Validate", exact: true }).click(),
             ]).then(([response]) => response.json() as Promise<unknown>),
           )
           .pipe(Effect.flatMap(Schema.decodeUnknownEffect(Check)));
@@ -284,7 +284,7 @@ layer(HostedLive, { excludeTestServices: true })("Account secret fields", (it) =
                   request.method() === "POST" &&
                   new URL(request.url()).pathname.endsWith("/credential-checks"),
               ),
-              connect.getByRole("button", { name: "Validate API key", exact: true }).click(),
+              connect.getByRole("button", { name: "Validate", exact: true }).click(),
             ]).then(([request]) =>
               connect
                 .getByRole("button", { name: /^Continue/ })
@@ -414,13 +414,6 @@ export default defineApp({ app: { accounts: { team: team.many() } } },
           );
         const hook = yield* settled("setup-required");
         const setupPath = `${prefix}/webhook-setup/${app.id}/${hook.id}`;
-        // Remove the webhook, set up or not, so the app can be removed.
-        yield* Effect.addFinalizer(() =>
-          Effect.gen(function* () {
-            yield* api.request(actors.owner, "DELETE", setupPath);
-            yield* api.request(actors.owner, "POST", `${setupPath}/confirm-removal`);
-          }).pipe(Effect.orDie),
-        );
         /** A synthetic signing secret that spans lines. It is not a real secret. */
         const secret = "synthetic+signing/secret==\nsecond line%2B é\n";
 

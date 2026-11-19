@@ -1,5 +1,7 @@
 import type { AuthContext } from "@better-auth/core";
+import { CurrentToolCallCaller } from "../contracts/tool-call-log.ts";
 import type { Principal } from "../contracts/auth.ts";
+import { requestAuthentication, requestTombstones } from "./batch-authentication.ts";
 import { accountOAuthRedirectUri } from "./auth.ts";
 import {
   CurrentUsage,
@@ -8,7 +10,7 @@ import {
   traceProductRead,
 } from "../contracts/product-analytics.ts";
 import { CurrentApiKey } from "../contracts/usage.ts";
-import { RequiredAction, CurrentAuthorization } from "../contracts/authorization.ts";
+import { RequiredAction, CurrentPolicy } from "../contracts/authorization.ts";
 import {
   fullAuthority,
   permitsAction,
@@ -17,24 +19,36 @@ import {
 } from "@executor-js/authorization";
 import { AppId } from "@executor-js/sdk/core";
 import { Context } from "effect";
-import { currentResourceAuthority, visibleAccountsAs, visibleAppsAs } from "./resource-policy.ts";
+import {
+  currentResourceAuthority,
+  policyDatabase,
+  visibleAccountsAs,
+  visibleAppsAs,
+} from "./resource-policy.ts";
 import { readOrganizationIconUpload } from "./organization-icons.ts";
 import { OrganizationTombstones } from "../contracts/organization-removal.ts";
 import { requireOrganizationAdmin } from "./access.ts";
-import { callerLinkedAccounts } from "./app-accounts.ts";
+import { appLinkedAccounts, callerLinkedAccounts } from "./app-accounts.ts";
 import { CurrentPrincipal, CurrentUserId } from "../contracts/auth.ts";
+import {
+  recordCaller,
+  recordNoSession,
+  recordSessionCredential,
+  refuse,
+  refusedAs,
+} from "./auth-telemetry.ts";
 import { APIError } from "better-auth/api";
 import { ErrorReporter, Effect, Layer, Schema } from "effect";
 import { HttpApiBuilder } from "effect/http-api";
 import type { OwnerId } from "@executor-js/sdk/core";
 import { HostedApi } from "../contracts/api.ts";
-import { filterCatalog } from "@executor-js/catalog/contracts";
+import { CatalogUnavailable, filterCatalog } from "@executor-js/catalog/contracts";
 import { HostedCatalog } from "../contracts/catalog.ts";
 import { HostedExecutor } from "../contracts/executor.ts";
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/http";
 import {
-  ApiAuthentication,
-  Authentication,
+  BearerAuthentication,
+  SessionAuthentication,
   AuthenticationUnavailable,
   Forbidden,
   Unauthorized,
@@ -101,9 +115,11 @@ export const lookupOrganizationSlug = (call: () => Promise<unknown>) =>
  * organization that is being erased.
  */
 const refuseRemoved = (organization: OrganizationId) =>
-  Effect.flatMap(OrganizationTombstones, (removed) => removed(organization)).pipe(
+  Effect.flatMap(requestTombstones, (removed) => removed(organization)).pipe(
     Effect.mapError(() => new AuthenticationUnavailable()),
-    Effect.flatMap((gone) => (gone ? Effect.fail(new OrganizationForbidden()) : Effect.void)),
+    Effect.flatMap((gone) =>
+      gone ? refuse("organization_not_found", new OrganizationForbidden()) : Effect.void,
+    ),
   );
 
 /**
@@ -123,44 +139,55 @@ export const withOrganizationRequest = <E, R>(
   action?: import("@executor-js/authorization").Action,
 ) =>
   Effect.gen(function* () {
-    const auth = yield* Authentication;
-    const api = yield* ApiAuthentication;
+    const auth = yield* SessionAuthentication;
+    const api = yield* BearerAuthentication;
     const request = yield* HttpServerRequest.HttpServerRequest;
     const headers = new Headers(request.headers);
     const domain = yield* PublishingDomain;
     const params = yield* HttpRouter.params;
     const reference = yield* Schema.decodeUnknownEffect(OrganizationReference)(
       params.organization,
-    ).pipe(Effect.mapError(() => new OrganizationForbidden()));
+    ).pipe(
+      Effect.mapError(() => new OrganizationForbidden()),
+      refusedAs("organization_not_found"),
+    );
     if (headers.has("authorization")) {
       if (request.headers.origin !== undefined && request.headers.origin !== auth.origin)
-        return yield* new Forbidden();
+        return yield* refuse("origin_mismatch", new Forbidden());
       const grant = yield* api.authenticate(headers, reference);
       // The request's span records the organization's opaque ID, never the route's reference,
-      // which can be its slug.
-      yield* Effect.annotateCurrentSpan("executor.organization.id", grant.access.organization);
+      // which can be its slug, and the caller's user ID: an OAuth grant's user or a key's. The
+      // bearer check returns only an organization it authorized for the caller, so the refusals
+      // below, a removed organization or a key's policy, keep both.
+      yield* recordCaller(grant.access.organization, grant.userId);
       yield* refuseRemoved(grant.access.organization);
-      if (!permitsAction(grant.policy, action)) return yield* new OrganizationForbidden();
+      if (!permitsAction(grant.policy, action))
+        return yield* refuse("insufficient_scope", new OrganizationForbidden());
       if (params.app !== undefined) {
         const app = yield* Schema.decodeUnknownEffect(AppId)(params.app).pipe(
           Effect.mapError(() => new OrganizationForbidden()),
+          refusedAs("insufficient_scope"),
         );
-        if (!permitsApp(grant.policy, app)) return yield* new OrganizationForbidden();
+        if (!permitsApp(grant.policy, app))
+          return yield* refuse("insufficient_scope", new OrganizationForbidden());
       }
       if (grant.key !== undefined)
-        yield* Effect.annotateCurrentSpan({
-          "executor.api_key.id": grant.key.id,
-          "executor.user.id": grant.userId,
-        });
+        yield* Effect.annotateCurrentSpan("executor.api_key.id", grant.key.id);
       const scope = Effect.succeed(publishingScope(grant.organizationSlug, domain));
       return (yield* response(scope).pipe(
         Effect.tapCause(ErrorReporter.report),
-        Effect.provideService(CurrentAuthorization, grant.policy),
+        Effect.provideService(CurrentPolicy, grant.policy),
         Effect.provideService(CurrentOrganization, grant.access),
         Effect.provideService(CurrentOrganizationNamespace, scope),
         Effect.provideService(CurrentUserId, grant.userId),
         Effect.provideService(CurrentUsage, { source: "api" }),
         Effect.provideService(CurrentApiKey, grant.key?.id),
+        Effect.provideService(
+          CurrentToolCallCaller,
+          grant.key !== undefined
+            ? { source: "api-key", sourceId: grant.key.id }
+            : { source: "agent", sourceId: grant.grant?.id },
+        ),
       )).pipe(privateByDefault);
     }
     if (
@@ -168,16 +195,27 @@ export const withOrganizationRequest = <E, R>(
       request.method !== "HEAD" &&
       request.headers.origin !== auth.origin
     )
-      return yield* new Forbidden();
-    const principal = yield* auth.current(headers);
-    if (principal === null) return yield* new Unauthorized();
-    const organization = yield* auth.organization(reference);
-    yield* Effect.annotateCurrentSpan("executor.organization.id", organization);
+      return yield* refuse("origin_mismatch", new Forbidden());
+    const identity = yield* requestAuthentication(auth);
+    const principal = yield* identity.current(headers);
+    if (principal === null)
+      return yield* Effect.andThen(recordNoSession(headers), Effect.fail(new Unauthorized()));
+    yield* recordSessionCredential(principal);
+    const organization = yield* identity
+      .organization(reference)
+      .pipe(refusedAs("organization_not_found"));
     // Removal is reported before membership. The reads run one after the other: on Cloud they
     // share the event's one SQL connection, and overlapping them would open a second one, a TLS
     // login that costs far more than the few milliseconds the second read waits.
     yield* refuseRemoved(organization);
-    const membership = yield* auth.membership(principal, organization);
+    const membership = yield* identity
+      .membership(principal, organization)
+      .pipe(refusedAs("not_member"));
+    // The route's reference resolves to any organization, so the request names it, and the session's
+    // user, only once the membership shows it is the caller's own. A request refused before then,
+    // for an organization the caller does not belong to or one being removed, names neither, and so
+    // never counts against that organization's failures or among its users.
+    yield* recordCaller(organization, principal.userId);
     const access = {
       organization,
       owner: organizationOwner(organization),
@@ -192,8 +230,9 @@ export const withOrganizationRequest = <E, R>(
       Effect.provideService(CurrentOrganizationNamespace, scope),
       Effect.provideService(CurrentUserId, principal.userId),
       Effect.provideService(CurrentUsage, { source: "dashboard" }),
+      Effect.provideService(CurrentToolCallCaller, { source: "dashboard" }),
       Effect.provideService(CurrentPrincipal, principal),
-      Effect.provideService(CurrentAuthorization, fullAuthority),
+      Effect.provideService(CurrentPolicy, fullAuthority),
     )).pipe(privateByDefault);
   });
 
@@ -201,8 +240,8 @@ export const withOrganizationRequest = <E, R>(
 export const requireOrganizationLive = Layer.effect(
   RequireOrganization,
   Effect.gen(function* () {
-    const auth = yield* Authentication;
-    const api = yield* ApiAuthentication;
+    const auth = yield* SessionAuthentication;
+    const api = yield* BearerAuthentication;
     const tombstones = yield* OrganizationTombstones;
     const domain = yield* PublishingDomain;
     return (response, { endpoint, group }) =>
@@ -223,8 +262,8 @@ export const requireOrganizationLive = Layer.effect(
         },
         Context.getOrUndefined(endpoint.annotations, RequiredAction),
       ).pipe(
-        Effect.provideService(Authentication, auth),
-        Effect.provideService(ApiAuthentication, api),
+        Effect.provideService(SessionAuthentication, auth),
+        Effect.provideService(BearerAuthentication, api),
         Effect.provideService(OrganizationTombstones, tombstones),
         Effect.provideService(PublishingDomain, domain),
       );
@@ -240,7 +279,7 @@ export const noOrganizationRemovals = Layer.succeed(OrganizationTombstones, () =
 export const inventory = (owner: OwnerId) =>
   Effect.gen(function* () {
     const executor = yield* Effect.flatten(HostedExecutor);
-    const policy = yield* CurrentAuthorization;
+    const policy = yield* CurrentPolicy;
     const listedApps = yield* executor.apps.list({ owner, ids: permittedAppIds(policy) });
     // Membership is read once for both the app and the account policies.
     const actor = yield* currentResourceAuthority;
@@ -250,30 +289,51 @@ export const inventory = (owner: OwnerId) =>
           .list({ owner })
           .pipe(Effect.flatMap((listed) => visibleAccountsAs(actor, listed)))
       : [];
-    const linked = yield* callerLinkedAccounts(apps.map((app) => app.id));
+    const ids = apps.map((app) => app.id);
+    const linked = yield* callerLinkedAccounts(ids);
     // An account linked to several requirements of one app is listed once for it.
     const links = [
       ...new Map(
         linked.map((link) => [`${link.app}\u0000${link.id}`, { app: link.app, account: link.id }]),
       ).values(),
     ];
-    // Checks are reported for the apps the caller linked each account to.
+    // App links follow app access, so every listed app's are shown, with the label the app's
+    // accounts page shows its users.
+    const appLinks = (yield* appLinkedAccounts(yield* policyDatabase, ids)).map((link) => ({
+      app: link.app,
+      requirement: link.requirement,
+      account: link.id,
+      provider: link.provider,
+      label: link.label,
+    }));
+    // Checks are reported for the apps each account is linked to, in either scope.
+    const checked = [
+      ...new Map(
+        [...links, ...appLinks].map((link) => [
+          `${link.app}\u0000${link.account}`,
+          { app: link.app, account: link.account },
+        ]),
+      ).values(),
+    ];
     const health = new Map(
-      (accounts.length === 0 ? [] : yield* executor.accounts.listHealth({ owner, links })).map(
-        (entry) => [entry.account, entry],
-      ),
+      (accounts.length === 0
+        ? []
+        : yield* executor.accounts.listHealth({ owner, links: checked })
+      ).map((entry) => [entry.account, entry]),
     );
     const withHealth = (listedAccounts: typeof accounts) =>
       listedAccounts.map((account) => {
         const checks = health.get(account.id);
         return checks === undefined ? account : { ...account, health: checks };
       });
-    if (policy.tools.kind === "all") return { apps, accounts: withHealth(accounts), links };
+    if (policy.tools.kind === "all")
+      return { apps, accounts: withHealth(accounts), links, appLinks };
     const selected = new Set(links.map((link) => link.account));
     return {
       apps,
       accounts: withHealth(accounts.filter((account) => selected.has(account.id))),
       links,
+      appLinks,
     };
   });
 /** Organization routes do not own app/account operations. */
@@ -282,42 +342,51 @@ export const hostedOrganizationHandlers = HttpApiBuilder.group(
   "organization",
   (handlers) =>
     Effect.gen(function* () {
-      const authentication = yield* Authentication;
-      return handlers
-        .handleRaw("uploadIcon", () =>
-          Effect.gen(function* () {
-            const organization = yield* requireOrganizationAdmin;
-            const image = yield* readOrganizationIconUpload;
-            return yield* (yield* OrganizationIcons).upload(organization.organization, image);
-          }),
-        )
-        .handle("icon", ({ params }) =>
-          Effect.gen(function* () {
-            const organization = yield* CurrentOrganization;
-            const image = yield* (yield* OrganizationIcons).read(
-              organization.organization,
-              params.key,
-            );
-            return HttpServerResponse.uint8Array(image.bytes, {
-              contentType: image.contentType,
-              headers: { "x-content-type-options": "nosniff" },
-            });
-          }),
-        )
-        .handle("catalog", ({ query }) =>
-          Effect.flatMap(HostedCatalog, (catalog) => catalog.list).pipe(
-            Effect.map((entries) => filterCatalog(entries, query)),
-          ),
-        )
-        .handle("access", () => CurrentOrganization)
-        .handle("inventory", () =>
-          Effect.gen(function* () {
-            const organization = yield* CurrentOrganization;
-            return {
-              ...(yield* inventory(organization.owner)),
-              accountSetup: { redirectUri: accountOAuthRedirectUri(authentication) },
-            };
-          }),
-        );
+      const authentication = yield* SessionAuthentication;
+      return (
+        handlers
+          .handleRaw("uploadIcon", () =>
+            Effect.gen(function* () {
+              const organization = yield* requireOrganizationAdmin;
+              const image = yield* readOrganizationIconUpload;
+              return yield* (yield* OrganizationIcons).upload(organization.organization, image);
+            }),
+          )
+          .handle("icon", ({ params }) =>
+            Effect.gen(function* () {
+              const organization = yield* CurrentOrganization;
+              const image = yield* (yield* OrganizationIcons).read(
+                organization.organization,
+                params.key,
+              );
+              return HttpServerResponse.uint8Array(image.bytes, {
+                contentType: image.contentType,
+                headers: { "x-content-type-options": "nosniff" },
+              });
+            }),
+          )
+          // Agents and API keys keep the array this operation has always returned: a feed that
+          // cannot be read fails it with the error and its recovery. Only the dashboards' session
+          // listing carries the feed's state beside the built-in apps.
+          .handle("catalog", ({ query }) =>
+            Effect.flatMap(HostedCatalog, (catalog) => catalog.list).pipe(
+              Effect.flatMap((listing) =>
+                listing.feed.status === "unavailable"
+                  ? Effect.fail(new CatalogUnavailable())
+                  : Effect.succeed(filterCatalog(listing.apps, query)),
+              ),
+            ),
+          )
+          .handle("access", () => CurrentOrganization)
+          .handle("inventory", () =>
+            Effect.gen(function* () {
+              const organization = yield* CurrentOrganization;
+              return {
+                ...(yield* inventory(organization.owner)),
+                accountSetup: { redirectUri: accountOAuthRedirectUri(authentication) },
+              };
+            }),
+          )
+      );
     }),
 );

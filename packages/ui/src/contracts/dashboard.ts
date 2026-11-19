@@ -18,6 +18,7 @@ import {
   missingRequirements,
   usedAccounts,
   type AppAccountLink,
+  type SharedAppLink,
   type RequirementAccounts,
 } from "./app-accounts.ts";
 import type {
@@ -61,6 +62,8 @@ export interface Inventory {
   readonly apps: readonly App[];
   /** The caller's linked accounts for each listed app. */
   readonly links: readonly AppAccountLink[];
+  /** The app links of each listed app, oldest first. */
+  readonly appLinks: readonly SharedAppLink[];
   readonly accounts: readonly AccountSummary[];
 }
 /** Any Effect Atom source, including a live stream or a one-shot HTTP query. */
@@ -127,7 +130,7 @@ export const AppViewFromUrl = Schema.Union([
 export const AssistantId = Schema.Literals([
   "claude",
   "chatgpt",
-  "cursor",
+  "opencode",
   "claude-code",
   "codex",
   "devin",
@@ -267,6 +270,10 @@ export function providerDisplayUrl(definition: ProviderDefinition | undefined): 
   const host = hosts.length === 1 ? hosts[0] : undefined;
   if (host === undefined || host.startsWith("*.") || !URL.canParse(`https://${host}`)) return null;
   const url = new URL(`https://${host}`);
-  const domain = parse(url.hostname);
-  return domain.isIcann && domain.domain !== null ? url.origin : null;
+  // Logo only if faviconUrl's lookup (ICANN domain: foo.github.io → github.io) is this host or www.
+  const lookup = parse(url.hostname, { allowPrivateDomains: false });
+  if (!lookup.isIcann || lookup.domain === null) return null;
+  return url.hostname === lookup.domain || url.hostname === `www.${lookup.domain}`
+    ? url.origin
+    : null;
 }

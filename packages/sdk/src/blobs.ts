@@ -7,6 +7,7 @@ export {
   collectBytes,
   pageOf,
   rangeWindow,
+  removeEach,
   windowed,
 } from "./implementation/blob-streams.ts";
 /** User-content file handles: the product-owned metadata, limits and lifetime beside the store. */

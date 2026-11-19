@@ -2,7 +2,12 @@ import { useEffect, useState } from "react";
 import { ArrowDown01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { Cause, Exit, Option, Redacted } from "effect";
-import type { Account, OAuthClientId, OAuthConnectOptions } from "@executor-js/sdk";
+import {
+  OAuthSetupFailed,
+  type Account,
+  type OAuthClientId,
+  type OAuthConnectOptions,
+} from "@executor-js/sdk";
 import type { OAuthSubmission } from "../../contracts/credentials.ts";
 import type { FailureProps, Query } from "../../contracts/dashboard.ts";
 import type { ComponentType, ReactNode } from "react";
@@ -24,6 +29,7 @@ import { undeclaredError } from "@executor-js/utils/connection-failure";
 import { ErrorNotice } from "./error-notice.tsx";
 import { OAuthClientOrigin, sharesClientId } from "./oauth-client-origin.tsx";
 import { useQuery } from "./context.tsx";
+import { SetupHelp } from "./markdown.tsx";
 
 /** Keep forms mounted through cached setup reads, refresh failures, and retries. */
 export function OAuthSetup<E extends UserFacingError>({
@@ -115,9 +121,15 @@ export function OAuthFields<A, E>({
   setupAction,
   registerClient = false,
   editClient,
+  clientGuide,
   disabled = false,
 }: {
   readonly providerName: string;
+  /**
+   * The app's Markdown on creating an OAuth client at this service, shown under Executor's own
+   * line and redirect URL when someone enters a client.
+   */
+  readonly clientGuide?: string | undefined;
   readonly account?: Pick<Account, "label">;
   readonly redirectUri: string;
   readonly start: (input: OAuthSubmission) => Promise<Exit.Exit<A, E>>;
@@ -183,6 +195,15 @@ export function OAuthFields<A, E>({
     : acceptsSecret
       ? "client ID (and secret, if it has one)"
       : "client ID";
+  // The instance's own client matches the service but may not ask for these scopes, so the person
+  // enters their own; that explanation takes the place of the line of help.
+  const refusal =
+    setup !== "unresolved" && setup.operatorScopeRefusal !== undefined
+      ? new OAuthSetupFailed({
+          reason: "operator_scope_refused",
+          operatorScopes: setup.operatorScopeRefusal,
+        })
+      : undefined;
   // Client entry's one line of help; a failure, which carries its own recovery, replaces it.
   const guidance = serviceAccount
     ? `Create a service account in ${providerName}’s console and download its JSON key. Paste the whole file; Executor stores it encrypted and never shows it to apps.`
@@ -337,6 +358,8 @@ export function OAuthFields<A, E>({
       {prominent && clientSelect}
       {error ? (
         <Failure cause={error} layout="compact" />
+      ) : manual && refusal !== undefined ? (
+        <ErrorNotice error={refusal} layout="compact" context="While connecting an account." />
       ) : (
         manual && (
           <p className="text-[13px] leading-5 text-pretty text-muted-foreground">{guidance}</p>
@@ -359,6 +382,7 @@ export function OAuthFields<A, E>({
           </div>
         </div>
       )}
+      {manual && clientGuide && <SetupHelp label="OAuth client guide">{clientGuide}</SetupHelp>}
       {manual && serviceAccount && (
         <>
           <label className="field-label flex flex-col gap-2.25 text-[13px] font-medium">

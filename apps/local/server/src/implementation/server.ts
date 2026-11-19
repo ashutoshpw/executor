@@ -1,11 +1,12 @@
 import { localSourceFormatter } from "@executor-js/app-management/source-format";
+import { mcpWhoamiPath } from "@executor-js/mcp-auth";
 import {
   publishedSkillRoutes,
   readExecutorSkills,
   annotateSkillRead,
 } from "@executor-js/app-templates/executor";
 import { localAppBrowserHandlers } from "./app-browser.ts";
-import { accountChoiceRefusal } from "./account-choice.ts";
+import { accountChoiceRejections } from "./account-choice.ts";
 import { localAppsFramework } from "./apps-framework.ts";
 import { startupPhase } from "./startup-diagnostics.ts";
 import {
@@ -44,6 +45,7 @@ import {
   CurrentActor,
   hostedExecutorOrigin,
   remoteRegistry,
+  requestRejections,
 } from "@executor-js/sdk/core";
 import { filesystemBlobStore, nodeSha256, workerdApps } from "@executor-js/sdk/node";
 import {
@@ -55,7 +57,8 @@ import {
   resourceReadBytesConfig,
   type UserContentOptions,
 } from "@executor-js/sdk/blobs";
-import { officialCatalogUrl } from "@executor-js/catalog";
+import { markdownRefusals } from "@executor-js/sdk/markdown";
+import { catalogFeedSetting } from "@executor-js/catalog";
 import {
   Config,
   Effect,
@@ -199,6 +202,7 @@ export const localApi = (
         secret: config.encryptionKey,
         origin: config.webhookOrigin ?? config.browserOrigin ?? `http://localhost:${config.port}`,
         git: repositories,
+        markdown: markdownRefusals,
         hooks: localResourceLifecycle(Deferred.await(ready), sql),
         blobs,
         userContent: userContentOptions,
@@ -410,7 +414,7 @@ export const localApi = (
             }),
           ),
           // A choice the contract cannot decode is refused as a decoded one is.
-          Layer.provide(accountChoiceRefusal.layer),
+          Layer.provide(accountChoiceRejections),
         ),
         HttpApiBuilder.layer(LocalFeedbackApi).pipe(
           Layer.provide(
@@ -469,7 +473,6 @@ export const localApi = (
         HttpRouter.add("POST", "/_executor/api/telemetry/logs", ui.telemetry("logs")),
         HttpRouter.add("GET", appSignInCallbackPath, signIn.callback),
         HttpRouter.add("GET", "/_executor/version", ui.versions),
-        HttpRouter.add("GET", "/_executor/watch.js", ui.watch),
         HttpRouter.add("GET", "/_executor/assets/:version/*", ui.asset),
         // Keep the GET/HEAD SPA fallback out of host-owned namespaces. Unregistered methods already return 404.
         HttpRouter.add("GET", "/_executor/*", notFound),
@@ -487,9 +490,7 @@ export const localApi = (
         auth,
         egress,
         {
-          catalogFeedUrl: yield* Config.String("EXECUTOR_CATALOG_URL").pipe(
-            Config.withDefault(officialCatalogUrl),
-          ),
+          catalogFeedUrl: yield* catalogFeedSetting,
           managedApp: managed.app,
           managedAccount: managed.account,
           ownerMigration: Ref.get(ownerMigration),
@@ -529,6 +530,7 @@ export const localApi = (
         HttpRouter.add("POST", "/dashboard/api/telemetry/logs", browserTelemetry(config, "logs")),
         programmatic,
         HttpRouter.add("*", "/mcp", mcp.http),
+        HttpRouter.add("GET", mcpWhoamiPath, mcp.whoami),
         HttpRouter.add("*", "/api/auth/*", oauth.handler),
         HttpRouter.add("GET", "/.well-known/oauth-protected-resource", oauth.protectedResource),
         HttpRouter.add("GET", "/.well-known/oauth-protected-resource/mcp", oauth.protectedResource),
@@ -582,7 +584,8 @@ export const localApi = (
         HttpRouter.add("GET", "/favicon.png", web.favicon),
         HttpRouter.add("GET", "/assets/:name", web.asset),
         HttpRouter.add("GET", "*", web.fallback),
-      );
+        // Every product API answers a request its schema rejects with `RequestInvalid`.
+      ).pipe(Layer.provide(requestRejections));
       // Each virtual host needs its own router, not the enclosing server's memoized router service.
       const appHandler = yield* HttpRouter.toHttpEffect(appRoutes).pipe(
         Effect.provideService(Layer.CurrentMemoMap, yield* Layer.makeMemoMap),

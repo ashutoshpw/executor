@@ -11,6 +11,7 @@ import {
   WorkflowValue,
 } from "apps/contracts";
 import { WorkflowSeed } from "./workflow-runtime.ts";
+import { HostApiCheck } from "./host-api.ts";
 import { RetainedWorkerBuild, WorkerBundle, WorkerFramework } from "./worker-build.ts";
 import { CodeFiles } from "./source.ts";
 import {
@@ -27,6 +28,8 @@ import type { RpcTarget } from "capnweb";
 export const WorkerInvocation = Schema.Struct({
   app: Schema.NonEmptyString,
   build: Schema.NonEmptyString,
+  /** The host API revision the app's cache belongs to, for an app that reads it; see `HostApiCheck`. */
+  hostApi: Schema.optionalKey(HostApiCheck),
   database: Schema.Boolean,
   command: HostRequest,
   accounts: HostAccounts,
@@ -91,6 +94,12 @@ export const CompileWorkerResult = Schema.Union([
 export interface WorkerdAppApi {
   cancel(): Promise<void>;
   compile(input: string): Promise<string>;
+  /**
+   * GET `path` on the npm registry builds install from, as builds read it: the apps Worker's
+   * global `fetch`, with no header and no redirect followed. The registry's status and body, or
+   * 502 when it was not reached, and 400 for a path that is not absolute.
+   */
+  readRegistry(path: string): Promise<{ readonly status: number; readonly body: string }>;
   invoke(input: string, callbacks: AppHostCallbacks): Promise<string>;
 }
 /** Background runs use finite host requests; no step callback or Promise lives in Node. */

@@ -107,24 +107,38 @@ layer(HostedLive, { excludeTestServices: true })("Scoped MCP connections", (it) 
         expect(connection.policy.apps).toEqual([
           { app: app.id, runsAs: [{ kind: "app" }], tools: { kind: "readOnly" } },
         ]);
-        // Bearer credentials cannot manage connections, including a full-access grant.
+        // An agent with a full-access grant reads the member's connections through the Executor
+        // app, but gets no tool that changes them: changing one could widen its own access.
         yield* browser.login(actors.owner);
         const full = yield* evidence.step(
           "Authorize the full-access URL for comparison",
           oauth.authorize,
         );
-        const fullBearer = {
-          authorization: `Bearer ${Redacted.value(full.tokens).access_token}`,
-        };
+        const fullRun = executor(
+          yield* mcp.connect(Redacted.make(Redacted.value(full.tokens).access_token), "full"),
+        );
+        const agentListed = yield* fullRun(
+          "The agent lists the member's connections",
+          `return await tools.executor.mcpConnections.list(${JSON.stringify({ path: { organization: actors.organization.id } })});`,
+        );
+        expect(agentListed.execution.ok, JSON.stringify(agentListed)).toBe(true);
         expect(
-          (yield* api.request(
-            yield* api.session(),
-            "GET",
-            `${prefix}/mcp-connections`,
-            undefined,
-            fullBearer,
-          )).status,
-        ).toBe(401);
+          (yield* Schema.decodeUnknownEffect(Schema.Array(Schema.Struct({ id: Schema.String })))(
+            agentListed.execution.value,
+          )).map((listedConnection) => listedConnection.id),
+        ).toContain(connection.id);
+        const changeTools = ["create", "update", "revoke", "agents", "revokeAgent"].map(
+          (operation) => `tools.executor.mcpConnections.${operation}`,
+        );
+        const described = yield* fullRun(
+          "The agent has no tool that changes a connection",
+          `return await tools.search.describe({ paths: ${JSON.stringify(changeTools)} });`,
+        );
+        expect(
+          (yield* Schema.decodeUnknownEffect(
+            Schema.Struct({ missing: Schema.Array(Schema.Struct({ path: Schema.String })) }),
+          )(described.execution.value)).missing.map((item) => item.path),
+        ).toEqual(changeTools);
         const grant = yield* evidence.step(
           "Authorize the connection's own URL through browser consent",
           oauth.authorizeConnection(connection.id),
@@ -192,11 +206,28 @@ layer(HostedLive, { excludeTestServices: true })("Scoped MCP connections", (it) 
               ok: true,
               value: { message: "ok", receipt: hidden.receipt },
             });
-            // A connection's token cannot be used at another URL, even the full-access one.
-            const moved = yield* Effect.exit(
-              mcp.connect(Redacted.make(Redacted.value(grant.tokens).access_token), "moved"),
+            // At the full-access URL, a connection's token still reaches only its connection: the
+            // grant's record, not the URL, decides what it serves.
+            const moved = executor(
+              yield* mcp.connect(Redacted.make(Redacted.value(grant.tokens).access_token), "moved"),
             );
-            expect(Exit.isFailure(moved)).toBe(true);
+            const [movedRead, movedWrite, movedOther] = yield* Effect.all(
+              [
+                moved("Read at the full-access URL", `return await ${appPath}.read({})`),
+                moved(
+                  "Write at the full-access URL",
+                  `return await ${appPath}.write({message: "denied"})`,
+                ),
+                moved(
+                  "Another app at the full-access URL",
+                  `return await ${hiddenPath}.echo({message: "denied"})`,
+                ),
+              ],
+              { concurrency: 3 },
+            );
+            expect(movedRead.execution).toEqual({ ok: true, value: { read: receipt } });
+            expect(movedWrite.execution.ok).toBe(false);
+            expect(movedOther.execution.ok).toBe(false);
           }),
         );
         yield* evidence.step(
@@ -300,7 +331,7 @@ export default defineApp({ user: { accounts: { service } } }, async () => ({ too
               actors.owner,
               "POST",
               connectionsPath(path, "user", "service"),
-              { destination: { kind: "personal" } },
+              {},
             );
             expect(connection.status, JSON.stringify(connection.body)).toBe(200);
             const request = yield* body(Resource, connection);
@@ -421,7 +452,7 @@ export default defineApp({ user: { accounts: { service } } }, async () => ({ too
               actors.owner,
               "POST",
               connectionsPath(path, "user", "service"),
-              { destination: { kind: "personal" } },
+              {},
             );
             expect(connection.status, JSON.stringify(connection.body)).toBe(200);
             const request = yield* body(Resource, connection);
@@ -455,7 +486,6 @@ export default defineApp({ user: { accounts: { service } } }, async () => ({ too
                 name: "execute",
                 arguments: {
                   code: `const first = await ${tools}.who({});
-await ${tools}.enter({});
 await ${tools}.hold({});
 let second;
 try { second = await ${tools}.who({}); } catch (error) { second = { refused: String(error.message) }; }
@@ -476,7 +506,7 @@ return { first, second };`,
               ),
             );
         yield* untilHeld(
-          call("entered", "query").pipe(
+          call("holding", "query").pipe(
             Effect.flatMap((response) => body(Schema.Boolean, response)),
           ),
         );
@@ -563,9 +593,22 @@ return { first, second };`,
           .request(actors.owner, "GET", `${prefix}/mcp-connections`)
           .pipe(Effect.flatMap((response) => body(Schema.Array(ConnectionView), response)));
         yield* browser.login(actors.owner);
+        // LAN HTTP exposes getRandomValues, but not randomUUID. Keep the real API and UI.
+        if (target.metadata.target === "self-host")
+          yield* browser.use("Reproduce missing native UUIDs on HTTP", (page) =>
+            page.addInitScript(() => {
+              Reflect.deleteProperty(Crypto.prototype, "randomUUID");
+            }),
+          );
         yield* browser.use("Open Connections", (page) =>
           page.goto(`/org/${actors.organization.slug}/connect`),
         );
+        if (target.metadata.target === "self-host")
+          expect(
+            yield* browser.use("Native browser UUIDs are unavailable", (page) =>
+              page.evaluate(() => typeof crypto.randomUUID),
+            ),
+          ).toBe("undefined");
         yield* browser.use("Connect with full access", (page) =>
           page
             .getByRole("listitem", { name: "Full access" })
@@ -597,6 +640,25 @@ return { first, second };`,
             page.evaluate(() => navigator.clipboard.readText()),
           ),
         ).toBe(`codex mcp add executor --url '${targetHosts(target).mcp}/mcp'`);
+        yield* browser.use("Switch to OpenCode", (page) =>
+          page.getByRole("button", { name: "OpenCode", exact: true }).click(),
+        );
+        yield* browser.use("Copy the OpenCode command", (page) =>
+          page.getByRole("button", { name: "Copy assistant setup", exact: true }).click(),
+        );
+        expect(
+          yield* browser.use("Read the copied OpenCode command", (page) =>
+            page.evaluate(() => navigator.clipboard.readText()),
+          ),
+        ).toBe(`opencode mcp add executor --url '${targetHosts(target).mcp}/mcp'`);
+        yield* browser.use("Copy the OpenCode sign-in command", (page) =>
+          page.getByRole("button", { name: "Copy sign-in command", exact: true }).click(),
+        );
+        expect(
+          yield* browser.use("Read the copied OpenCode sign-in command", (page) =>
+            page.evaluate(() => navigator.clipboard.readText()),
+          ),
+        ).toBe("opencode mcp auth executor");
         yield* browser.use("Switch to Claude", (page) =>
           page.getByRole("button", { name: "Claude", exact: true }).click(),
         );
@@ -630,27 +692,40 @@ return { first, second };`,
             .getByRole("img")
             .waitFor({ state: "visible" }),
         );
-        // Radix paints the dialog before the effect that makes it the topmost layer and moves focus
-        // into it. Escape pressed before that effect closes the setup dialog beneath it instead.
+        // Radix paints the dialog and moves focus into it before the render that makes it the
+        // topmost layer: until then the setup dialog beneath still owns Escape, and Escape closes
+        // both. That render is the one where the setup dialog stops taking pointer input and the
+        // full-size screenshot starts to.
         yield* browser.use("The full-size screenshot takes focus", (page) =>
           page
             .getByRole("dialog", { name: "Claude’s Add custom connector dialog" })
             .and(page.locator(":focus-within"))
             .waitFor(),
         );
+        yield* browser.use("The full-size screenshot is the topmost dialog", (page) =>
+          page.waitForFunction(
+            ({ top, beneath }) => {
+              const dialog = (title: string) =>
+                [...document.querySelectorAll('[role="dialog"]')].find(
+                  (element) =>
+                    document.getElementById(element.getAttribute("aria-labelledby") ?? "")
+                      ?.textContent === title,
+                );
+              const screenshot = dialog(top),
+                setup = dialog(beneath);
+              return (
+                screenshot !== undefined &&
+                setup !== undefined &&
+                getComputedStyle(screenshot).pointerEvents === "auto" &&
+                getComputedStyle(setup).pointerEvents === "none"
+              );
+            },
+            { top: "Claude’s Add custom connector dialog", beneath: "Connect Full access" },
+          ),
+        );
         yield* browser.use("Close the full-size screenshot", (page) =>
           page.keyboard.press("Escape"),
         );
-        yield* browser.use("Choose Cursor plugin setup", (page) =>
-          page.getByRole("button", { name: "Cursor", exact: true }).click(),
-        );
-        expect(
-          yield* browser.use("Cursor links to our published plugin", (page) =>
-            page
-              .getByRole("link", { name: "Install Executor for Cursor", exact: true })
-              .getAttribute("href"),
-          ),
-        ).toBe("https://cursor.com/marketplace/usefulsoftwareco");
         yield* browser.use("Choose Grok Bot setup", (page) =>
           page.getByRole("button", { name: "Grok Bot", exact: true }).click(),
         );
@@ -709,6 +784,9 @@ return { first, second };`,
             .waitFor({ state: "visible" }),
         );
         const [saved] = yield* list;
+        expect(saved?.id).toMatch(
+          /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+        );
         expect(saved?.policy.apps).toEqual([
           { app: app.id, runsAs: [{ kind: "app" }], tools: { kind: "readOnly" } },
         ]);
@@ -819,9 +897,7 @@ export default defineApp({ app: { accounts: { team } } }, async () => ({ tools: 
           actors.owner,
           "POST",
           connectionsPath(path, "app", "team"),
-          {
-            destination: { kind: "personal" },
-          },
+          {},
         );
         expect(started.status, JSON.stringify(started.body)).toBe(200);
         const submitted = yield* api.request(

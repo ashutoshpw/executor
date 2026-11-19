@@ -11,7 +11,7 @@ import { Effect, Schema } from "effect";
 import { HttpApiBuilder } from "effect/http-api";
 import { Base64Url } from "effect/encoding";
 import { CurrentUserId } from "../contracts/auth.ts";
-import { CurrentAuthorization } from "../contracts/authorization.ts";
+import { CurrentPolicy } from "../contracts/authorization.ts";
 import { HostedApi } from "../contracts/api.ts";
 import { HostedExecutor } from "../contracts/executor.ts";
 import type { GroupDatabase } from "../contracts/groups.ts";
@@ -105,7 +105,7 @@ const decodeCursor = (value: string) =>
 
 /** A credential limited to some apps' tools reaches no file: files belong to the organization. */
 const requireUnlimitedCredential = Effect.gen(function* () {
-  const policy = yield* CurrentAuthorization;
+  const policy = yield* CurrentPolicy;
   if (policy.tools.kind !== "all") return yield* new OrganizationForbidden();
 });
 

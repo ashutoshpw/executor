@@ -21,7 +21,8 @@ import { RecordedMessage } from "@executor-js/utils/recorded-message";
 import { BuildStage, SourceLocation, type BuildMemoryExceeded } from "./version.ts";
 import type { CodeFiles } from "./source.ts";
 import { BuildId, Json } from "./shared.ts";
-import type { BlobKey, BlobRange } from "./blobs.ts";
+import type { BlobKey, BlobRange, BlobStoreError } from "./blobs.ts";
+import type { HostApiCheck } from "./host-api.ts";
 
 /**
  * Runtimes report that an invocation invalidated or explicitly refreshed the app's cached
@@ -146,6 +147,25 @@ export const RuntimeCallTimings = Context.Reference<
 >("executor/RuntimeCallTimings", { defaultValue: () => undefined });
 
 /**
+ * What a failed call names as its cause, recorded as `executor.failure.source`. `app`: the app's
+ * code or declarations. `upstream`: a service the app calls. `runtime`: Executor's app runtime or
+ * host, which got no usable answer from the app's code, such as a lost reply or a Worker limit.
+ * `storage`: the app's data or cache, or Executor's own storage. `approval`: an approval or the
+ * tool's approval policy. `other`: anything else, such as an account the call cannot use. The
+ * app's code chooses or can cause every kind, so this says what the call failed with, not who is at
+ * fault.
+ */
+export type CallFailureSource = "app" | "upstream" | "runtime" | "storage" | "approval" | "other";
+
+/**
+ * Receives the source of each runtime failure within one tool call, before the failure becomes
+ * the caller's error, whose kind can no longer tell them apart. Telemetry only.
+ */
+export const CallFailureSources = Context.Reference<
+  ((source: CallFailureSource) => void) | undefined
+>("executor/CallFailureSources", { defaultValue: () => undefined });
+
+/**
  * Told when the host hands an invocation to the app's runner. From then on the app's code may have
  * run, its factory included, and may have made external changes, whatever the invocation later
  * reports: every failure it reports passes through code the app controls. Only the host calls it,
@@ -239,7 +259,8 @@ export const boundBuildMessage = (message: string) =>
     : `${message.slice(0, maxBuildMessageLength - 1)}…`;
 /**
  * Describe an underlying failure as `Name: message`, bounded. Executor's own wrappers of an
- * underlying failure contribute only their message.
+ * underlying failure contribute only their message; a runtime failure without one, its kind's
+ * fixed description.
  */
 export const describeBuildCause = (cause: unknown) =>
   boundBuildMessage(
@@ -248,7 +269,9 @@ export const describeBuildCause = (cause: unknown) =>
         ? Schema.is(RuntimeProtocolFailed)(cause) || Schema.is(HostDeclarationInvalid)(cause)
           ? cause.message
           : `${cause.name}: ${cause.message}`
-        : cause.name
+        : Schema.is(RuntimeProtocolFailed)(cause) && cause.reason !== undefined
+          ? runtimeFailures[cause.reason]
+          : cause.name
       : typeof cause === "string"
         ? cause
         : (JSON.stringify(cause) ?? String(cause)),
@@ -269,8 +292,10 @@ export class RuntimeBuildFailed extends Schema.TaggedError<RuntimeBuildFailed>()
     message: Schema.optional(BuildMessage),
     location: Schema.optional(SourceLocation),
     /**
-     * The compiler did not answer in time: a host failure that says nothing about the source, and
-     * that building again may not repeat.
+     * The host's compiler or runner did not answer: the compiler did not reply in time, or a call
+     * to the compiler or to the runner that reads the build's requirements failed before it
+     * replied. A host failure that says nothing about the source, and that building again may not
+     * repeat. Set only where the host made the call, never from an error's text.
      */
     unanswered: Schema.optional(Schema.Literal(true)),
   },
@@ -302,6 +327,7 @@ export const RuntimeFailure = Schema.Literals([
   "invalid-reply",
   "too-large",
   "data",
+  "unloading",
   "build",
   "unsupported",
   "managed",
@@ -322,6 +348,7 @@ export const runtimeFailures: Record<RuntimeFailure, string> = {
   "invalid-reply": "The app's reply does not match its host protocol",
   "too-large": "A value crossing Workers RPC for the app exceeded its size limit",
   data: "The app's data supervisor failed the call",
+  unloading: "The app's previous Worker did not finish unloading",
   build: "The app's build could not be read",
   unsupported: "The app's build speaks a host protocol this host does not run",
   managed:
@@ -336,7 +363,17 @@ export const runtimeFailures: Record<RuntimeFailure, string> = {
  */
 export class RuntimeProtocolFailed extends Schema.TaggedError<RuntimeProtocolFailed>()(
   "RuntimeProtocolFailed",
-  { reason: Schema.optional(RuntimeFailure), message: Schema.optional(BuildMessage) },
+  {
+    reason: Schema.optional(RuntimeFailure),
+    message: Schema.optional(BuildMessage),
+    /**
+     * Nothing of the failed exchange left the host: its connection never formed, so the runtime
+     * received no work. Only the host's own transport sets it, from its socket's state, never from
+     * an error's text, so an app cannot produce it. Its `reason` stays `disconnected`, the value
+     * older readers know; they drop this field.
+     */
+    notSent: Schema.optional(Schema.Literal(true)),
+  },
 ) {
   get [RecordedMessage]() {
     return this.reason === undefined && !this.message
@@ -381,6 +418,7 @@ export type RuntimeLoadError =
   | RuntimeProtocolUnsupported;
 
 /** Framework-facing operations, independent of Node or Cloudflare bindings. */
+
 export interface Runtime<Requirements = never> {
   /** Optional cross-process invalidation feed. The initial event follows registration.
    * A revision identifies all writes before that event; unversioned hosts emit void.
@@ -394,7 +432,7 @@ export interface Runtime<Requirements = never> {
    *
    * `retain: false` compiles and declares without writing anything: the build is neither
    * retained nor cached, so its id names nothing and must not be loaded. For checks that must
-   * not create anything, such as the v1 import's dry run.
+   * not create anything.
    */
   readonly build: (input: {
     readonly files: CodeFiles;
@@ -405,7 +443,9 @@ export interface Runtime<Requirements = never> {
     | RuntimeBuildFailed
     | RuntimeProtocolUnsupported
     | RuntimeAppsDependencyMissing
-    | BuildMemoryExceeded,
+    | BuildMemoryExceeded
+    // Keeping the build failed in storage: nothing about the app, and building again may succeed.
+    | BlobStoreError,
     Requirements
   >;
   readonly asset?: (input: {
@@ -421,6 +461,8 @@ export interface Runtime<Requirements = never> {
     input: {
       readonly app: string;
       readonly build: BuildId;
+      /** Set for an app that reads the host API; see `HostApiCheck`. */
+      readonly hostApi: HostApiCheck | undefined;
       readonly sources?: boolean;
     } & HostContext,
   ) => Effect.Effect<SkillCatalog, RuntimeLoadError | typeof HostInspectError.Type, Requirements>;
@@ -429,6 +471,8 @@ export interface Runtime<Requirements = never> {
     input: {
       readonly app: string;
       readonly build: BuildId;
+      /** Set for an app that reads the host API; see `HostApiCheck`. */
+      readonly hostApi: HostApiCheck | undefined;
       readonly tools?: readonly string[];
       /** Describe only declared operations with schedules. Send only to scheduledTools builds. */
       readonly scheduled?: true;
@@ -442,7 +486,12 @@ export interface Runtime<Requirements = never> {
   ) => Effect.Effect<HostedCatalog, RuntimeLoadError | typeof HostInspectError.Type, Requirements>;
   /** List the current tools without their schemas. */
   readonly index: (
-    input: { readonly app: string; readonly build: BuildId } & HostContext,
+    input: {
+      readonly app: string;
+      readonly build: BuildId;
+      /** Set for an app that reads the host API; see `HostApiCheck`. */
+      readonly hostApi: HostApiCheck | undefined;
+    } & HostContext,
   ) => Effect.Effect<
     HostedCatalogSummary,
     RuntimeLoadError | typeof HostInspectError.Type,
@@ -452,6 +501,8 @@ export interface Runtime<Requirements = never> {
     input: {
       readonly app: string;
       readonly build: BuildId;
+      /** Set for an app that reads the host API; see `HostApiCheck`. */
+      readonly hostApi: HostApiCheck | undefined;
       readonly database: boolean;
       /** Report the storage revision read by this successful query, never an authored result. */
       readonly observeRevision?: (revision: number) => void;
@@ -463,6 +514,8 @@ export interface Runtime<Requirements = never> {
     input: {
       readonly app: string;
       readonly build: BuildId;
+      /** Set for an app that reads the host API; see `HostApiCheck`. */
+      readonly hostApi: HostApiCheck | undefined;
       readonly database: boolean;
       readonly name: string;
       readonly input: Json;
@@ -473,6 +526,8 @@ export interface Runtime<Requirements = never> {
     input: {
       readonly app: string;
       readonly build: BuildId;
+      /** Set for an app that reads the host API; see `HostApiCheck`. */
+      readonly hostApi: HostApiCheck | undefined;
       readonly database: boolean;
       readonly command: WebhookCommand;
     } & HostContext,
@@ -482,6 +537,8 @@ export interface Runtime<Requirements = never> {
     input: {
       readonly app: string;
       readonly build: BuildId;
+      /** Set for an app that reads the host API; see `HostApiCheck`. */
+      readonly hostApi: HostApiCheck | undefined;
       readonly command: WorkflowCommand;
     } & HostContext,
   ) => Effect.Effect<Json, RuntimeLoadError | typeof HostCallError.Type, Requirements>;
@@ -489,6 +546,8 @@ export interface Runtime<Requirements = never> {
     input: {
       readonly app: string;
       readonly build: BuildId;
+      /** Set for an app that reads the host API; see `HostApiCheck`. */
+      readonly hostApi: HostApiCheck | undefined;
       readonly database: boolean;
       readonly tool: string;
       /** Decides the storage mode before the app runs; the host verifies it. */
@@ -504,6 +563,8 @@ export interface Runtime<Requirements = never> {
     input: {
       readonly app: string;
       readonly build: BuildId;
+      /** Set for an app that reads the host API; see `HostApiCheck`. */
+      readonly hostApi: HostApiCheck | undefined;
       readonly requirement: string;
     } & HostContext,
   ) => Effect.Effect<

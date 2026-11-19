@@ -17,7 +17,7 @@ import { appsVersion } from "../support/apps-release.ts";
 import { publishedOnlyNpmRegistry } from "../support/npm-registry.ts";
 import { serverControl } from "../support/server-control.ts";
 
-/** The last release npm holds before this checkout's, speaking protocol 13 without `ctx.blobs`. */
+/** A release npm holds that predates this checkout's, speaking protocol 13 without `ctx.blobs`. */
 const published = "0.0.1-beta.91";
 
 /** Reports whether the framework gives the app `ctx.blobs`, and what the host stores through it. */

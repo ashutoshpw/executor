@@ -22,6 +22,11 @@ services:
       # JSON array of exact HTTP(S) origins allowed to resolve to private addresses.
       EXECUTOR_URL_ALLOW_HTTP_ORIGINS:
       EXECUTOR_APPS_ALLOW_PRIVATE_FETCH:
+      # Comma-separated addresses of reverse proxies in front of the host; a CIDR range only if it
+      # holds proxies and nothing else. Requests from them take the client's address, which rate
+      # limits count, from X-Forwarded-For, so anything at a listed address can choose its own.
+      # A proxy on this host connects from this network's gateway (`docker inspect`, Gateway).
+      EXECUTOR_TRUSTED_PROXIES:
       # Most app and data Workers kept loaded (default 64). Idle ones above it unload and reload
       # on their next call. An app with a database runs its calls in a data Worker, which counts.
       EXECUTOR_APP_WORKERS:
@@ -30,19 +35,30 @@ services:
       # Set to true to install every apps release from npm, including the version this image ships.
       # EXECUTOR_APPS_FRAMEWORK_DIR is for the Node host only; this image always serves its own build.
       EXECUTOR_APPS_FRAMEWORK_DISABLED:
+      # Most MCP clients (API keys or OAuth grants in use) kept at once (default 512), and most
+      # per member (default 256). Past either, the least recently used idle one is forgotten.
+      EXECUTOR_MCP_CLIENTS:
+      EXECUTOR_MCP_CLIENTS_PER_USER:
       EXECUTOR_OAUTH_CALLBACK_URL:
       # Off by default. <BETTER_AUTH_URL>/oauth/client-metadata.json serves a client metadata
       # document there, which authorization servers must be able to fetch over public HTTPS.
       EXECUTOR_OAUTH_CLIENT_METADATA_URL:
-      # Upstream app registry that Add app lists beside this server's own apps (read-only).
+      # The official app feed's index.json that onboarding and Add app list. The default is
+      # https://catalog.executor.sh/index.json; set it to off without outbound internet access.
+      EXECUTOR_CATALOG_URL:
+      # Public app registry origin that Add app lists beside this server's own apps (read-only).
       # The default is https://api.executor.sh.
       EXECUTOR_REGISTRY_URL:
       # Domain after an organization's slug in published package names. The default is
       # executor.community.
       EXECUTOR_PUBLISHING_DOMAIN:
+      # Set to 1 to turn off the daily check for a newer release, which asks the npm registry
+      # (EXECUTOR_NPM_REGISTRY) for the executor package's dist-tags and sends nothing about this
+      # instance.
+      EXECUTOR_NO_UPDATE_CHECK:
       # Optional HTTPS app origin base. Localhost derives it from BETTER_AUTH_URL.
       EXECUTOR_APP_UI_BASE_URL:
-      # Unset passthrough entries stay absent; the default is bundled Motel.
+      # Unset passthrough entries stay absent; the default is the bundled collector.
       OTEL_EXPORTER_OTLP_ENDPOINT:
       OTEL_EXPORTER_OTLP_HEADERS:
       OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:

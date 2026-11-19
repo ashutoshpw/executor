@@ -1,25 +1,44 @@
 /** CLI composition root: Effect owns server processes, Vitest, raw evidence and target isolation. */
-import { Config, Console, Effect, FileSystem, Option, Path, Redacted, Schema } from "effect";
+import {
+  Cause,
+  Config,
+  ConfigProvider,
+  Console,
+  Effect,
+  Exit,
+  FileSystem,
+  Option,
+  Path,
+  Redacted,
+  Schema,
+} from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 import { randomBytes } from "node:crypto";
-import {
-  patternForTarget,
-  scenariosForSuite,
-  type CloudMode,
-  type TestPlan,
-} from "../test-plan.ts";
-import { readEvidence, combineEvidenceReports } from "../evidence-results.ts";
+import { scenariosForSuite, type CloudMode, type TestPlan } from "../test-plan.ts";
+import { readEvidence, combineEvidenceReports, reportRuntimeCrashes } from "../evidence-results.ts";
 import { type EvidenceReport, type RunMetadata } from "../report-model.ts";
 import { startCloudEnvironment } from "../support/cloud-environment.ts";
+import {
+  cloudNotesDescriptions,
+  cloudNotesModes,
+  type CloudNotesSource,
+} from "../support/cloud-release-notes.ts";
+import { removalRevocationBudgetMs } from "../support/removal-revocation-budget.ts";
 import { lockedNpmRegistry } from "../support/npm-registry.ts";
 import { publicCatalogs } from "../support/public-catalogs.ts";
 import { type FixtureControl, fixtureControlEnvironment } from "./fixtures.ts";
 import { RecordingPaceMs, Target } from "../support/platform.ts";
 import { roleHost } from "../support/role-hosts.ts";
 import { prepareCloudScenarios } from "./prepare-scenarios.ts";
+import { attachedStage, axiomSpans } from "../support/axiom.ts";
+import { sweepSpan } from "../support/webhook-sweep.ts";
+import { removalSettlementFile, settleRemovals } from "./removal-settlement.ts";
+import { removalStallsFile } from "./removal-evidence.ts";
+import { holdRun, pruneRuns } from "./run-retention.ts";
 
 class RunFailed extends Schema.TaggedError<RunFailed>()("RunFailed", { message: Schema.String }) {}
 import { freePort } from "../support/ports.ts";
+import { reveal, secret } from "../support/failure-text.ts";
 
 /**
  * Managed Cloud workers share one local Cloud Worker and one telemetry collector, so more cores add
@@ -51,6 +70,8 @@ export const runSuite = ({
   authRateLimit = false,
   rollback = false,
   oauthProxyPreview = false,
+  removalRevocationBudget = false,
+  releaseNotes,
   attachment,
 }: {
   readonly target: "self-host" | "local" | "cloud" | "all" | "hosted";
@@ -71,8 +92,19 @@ export const runSuite = ({
    * signs in through it, for the scenarios that prove the proxy.
    */
   readonly oauthProxyPreview?: boolean;
+  /**
+   * Start managed Cloud with organization removal's revocation budget shortened to
+   * `removalRevocationBudgetMs`, for the scenarios that run it out.
+   */
+  readonly removalRevocationBudget?: boolean;
+  /**
+   * Start managed Cloud with its dashboard built from these notes instead of the fixed ones
+   * (`CloudNotesSource`), for the scenarios that show them.
+   */
+  readonly releaseNotes?: CloudNotesSource | undefined;
   readonly attachment?: {
     readonly origin: string;
+    readonly directory?: string;
     readonly fixtures: typeof FixtureControl.Type;
     readonly emulators: string;
     readonly appUiBaseUrl?: string;
@@ -134,6 +166,31 @@ export const runSuite = ({
           message:
             "The OAuth proxy preview runs only on managed Cloud, without --auth-rate-limit or --rollback. Use --target cloud without E2E_CLOUD_URL.",
         });
+      if (
+        removalRevocationBudget &&
+        (authRateLimit ||
+          rollback ||
+          oauthProxyPreview ||
+          selected !== "cloud" ||
+          Option.isSome(cloud))
+      )
+        return yield* new RunFailed({
+          message:
+            "The shortened revocation budget runs only on managed Cloud, without --auth-rate-limit, --rollback or --oauth-proxy-preview. Use --target cloud without E2E_CLOUD_URL.",
+        });
+      if (
+        releaseNotes !== undefined &&
+        (authRateLimit ||
+          rollback ||
+          oauthProxyPreview ||
+          removalRevocationBudget ||
+          selected !== "cloud" ||
+          Option.isSome(cloud))
+      )
+        return yield* new RunFailed({
+          message:
+            "--release-notes runs only on managed Cloud, without --auth-rate-limit, --rollback, --oauth-proxy-preview or --removal-revocation-budget. Use --target cloud without E2E_CLOUD_URL.",
+        });
       const interactive = yield* Config.Boolean("E2E_INTERACTIVE").pipe(Config.withDefault(false));
       const observeUI = yield* Config.Boolean("E2E_UI_OBSERVE").pipe(Config.withDefault(false));
       if (observeUI && (selected !== "cloud" || Option.isSome(cloud)))
@@ -159,6 +216,10 @@ export const runSuite = ({
         `${new Date().toISOString().replaceAll(":", "-")}-${selected}-${randomBytes(3).toString("hex")}`,
       );
       yield* fs.makeDirectory(root, { recursive: true, mode: 0o700 });
+      yield* holdRun(root);
+      // CI jobs run several suites in one checkout and upload every run folder afterwards.
+      if (!process.env.CI)
+        yield* pruneRuns({ workspace: process.cwd(), current: path.basename(root) });
       const commit = (yield* processes.string(
         ChildProcess.make("git", ["rev-parse", "HEAD"]),
       )).trim();
@@ -174,7 +235,11 @@ export const runSuite = ({
             ? "rolled-back"
             : oauthProxyPreview
               ? "oauth-proxy-preview"
-              : "managed";
+              : removalRevocationBudget
+                ? "revocation-budget"
+                : releaseNotes !== undefined
+                  ? cloudNotesModes[releaseNotes]
+                  : "managed";
       const plan = scenariosForSuite(selected === "hosted" ? "hosted" : "all", cloudMode);
       const filter = yield* Effect.try({
         try: () => new RegExp(name),
@@ -221,7 +286,7 @@ export const runSuite = ({
                 runtime:
                   target === "cloud"
                     ? managedCloud
-                      ? `Local Cloud Worker + Postgres · no saved credentials · auth rate limit ${authRateLimit ? "on" : "off"}${rollback ? " · sign-in on the deployment origin" : ""}${oauthProxyPreview ? " · a test stage signing in through a second local Cloud's OAuth proxy" : ""}`
+                      ? `Local Cloud Worker + Postgres · no saved credentials · auth rate limit ${authRateLimit ? "on" : "off"}${rollback ? " · sign-in on the deployment origin" : ""}${oauthProxyPreview ? " · a test stage signing in through a second local Cloud's OAuth proxy" : ""}${removalRevocationBudget ? ` · organization removal revocation budget ${removalRevocationBudgetMs} ms` : ""}${releaseNotes === undefined ? "" : ` · ${cloudNotesDescriptions[releaseNotes]}`}`
                       : "Cloud endpoint"
                     : target === "local" && Option.isSome(packagedEntry)
                       ? "Installed npm CLI + PGlite per scenario"
@@ -237,7 +302,7 @@ export const runSuite = ({
                   onSome: (production) => ({ oauthProxyProduction: production }),
                 }),
               };
-              const apiKey = Redacted.make(randomBytes(32).toString("hex"));
+              const apiKey = secret(randomBytes(32).toString("hex"));
               yield* fs.writeFileString(`${directory}/run.json`, JSON.stringify(metadata, null, 2));
               yield* Console.log(
                 `Testing ${target}: ${target === "cloud" ? origin : target === "local" && Option.isSome(packagedEntry) ? `installed CLI at ${packagedEntry.value}` : "isolated server per scenario"} · ${interactive || observeUI ? 1 : targetWorkers} workers`,
@@ -282,6 +347,8 @@ export const runSuite = ({
                         commit,
                         observeUI,
                         authRateLimit,
+                        ...(removalRevocationBudget ? { removalRevocationBudgetMs } : {}),
+                        ...(releaseNotes === undefined ? {} : { releaseNotes }),
                         browserOrigin: rollback ? "deployment" : "app",
                         ...Option.match(production, {
                           onNone: () => ({}),
@@ -292,6 +359,9 @@ export const runSuite = ({
                         }),
                       })
                     : undefined;
+                  // Spans of an attached stage are read from Axiom by its stage name; an origin
+                  // that does not name it fails here, once.
+                  const stage = attachment === undefined ? undefined : yield* attachedStage(origin);
                   const preparedScenarios =
                     attachment?.appUiBaseUrl === undefined
                       ? {}
@@ -306,7 +376,27 @@ export const runSuite = ({
                             fixtures: attachment.fixtures,
                           }),
                           appUiBaseUrl: attachment.appUiBaseUrl,
+                          fixtures: attachment.fixtures,
                           workers: targetWorkers,
+                          sweepPasses: (since) =>
+                            axiomSpans(stage).pipe(
+                              Effect.flatMap((spans) =>
+                                spans.search(sweepSpan, {}, undefined, since),
+                              ),
+                              Effect.provide(
+                                ConfigProvider.layer(
+                                  ConfigProvider.fromUnknown(
+                                    attachment.axiom === undefined
+                                      ? {}
+                                      : {
+                                          E2E_AXIOM_TOKEN: reveal(attachment.axiom.token),
+                                          E2E_AXIOM_DATASET: attachment.axiom.dataset,
+                                          E2E_AXIOM_ORG_ID: attachment.axiom.organization,
+                                        },
+                                  ),
+                                ),
+                              ),
+                            ),
                           scenarios: plan
                             .filter(
                               (scenario: typeof TestPlan.Type) =>
@@ -323,22 +413,10 @@ export const runSuite = ({
                     `${directory}/prepared-scenarios.json`,
                     JSON.stringify(preparedScenarios, null, 2),
                   );
-                  return yield* processes.exitCode(
+                  const exit = yield* processes.exitCode(
                     ChildProcess.make(
                       "node",
-                      [
-                        "node_modules/vitest/vitest.mjs",
-                        "run",
-                        "--config",
-                        "e2e/vitest.config.ts",
-                        "--testNamePattern",
-                        patternForTarget(
-                          target,
-                          selected === "hosted" ? "hosted" : "all",
-                          name,
-                          cloudMode,
-                        ),
-                      ],
+                      ["node_modules/vitest/vitest.mjs", "run", "--config", "e2e/vitest.config.ts"],
                       {
                         extendEnv: false,
                         env: {
@@ -375,7 +453,6 @@ export const runSuite = ({
                           ...(process.env.E2E_COVERAGE === undefined
                             ? {}
                             : { E2E_COVERAGE: process.env.E2E_COVERAGE }),
-                          E2E_PREPARED_SCENARIOS: JSON.stringify(preparedScenarios),
                           E2E_TEST_NAME: name,
                           E2E_WORKERS: String(interactive || observeUI ? 1 : targetWorkers),
                           E2E_TARGET: target,
@@ -385,7 +462,7 @@ export const runSuite = ({
                             ? {}
                             : { E2E_PUBLIC_CATALOGS: catalogs.origin }),
                           EXECUTOR_E2E_RUN: directory,
-                          EXECUTOR_E2E_API_KEY: Redacted.value(apiKey),
+                          EXECUTOR_E2E_API_KEY: reveal(apiKey),
                           E2E_FIXTURES:
                             environment === undefined
                               ? attachment === undefined
@@ -394,7 +471,7 @@ export const runSuite = ({
                               : fixtureControlEnvironment(environment.fixtures),
                           ...(attachment?.axiom !== undefined
                             ? {
-                                E2E_AXIOM_TOKEN: Redacted.value(attachment.axiom.token),
+                                E2E_AXIOM_TOKEN: reveal(attachment.axiom.token),
                                 E2E_AXIOM_DATASET: attachment.axiom.dataset,
                                 E2E_AXIOM_ORG_ID: attachment.axiom.organization,
                               }
@@ -419,6 +496,21 @@ export const runSuite = ({
                       },
                     ),
                   );
+                  // Scenarios return once their organization's removal is accepted; the erasure is
+                  // checked once here, before this scope or the deployment's tears the Cloud down.
+                  const fixtures = environment?.fixtures ?? attachment?.fixtures;
+                  if (target !== "cloud" || fixtures === undefined) return Number(exit);
+                  const settled = yield* settleRemovals(fixtures, {
+                    report: path.join(directory, "report", removalSettlementFile),
+                    // Where the fixture process was started: the stage's directory when deployed.
+                    stalls: path.join(attachment?.directory ?? directory, removalStallsFile),
+                  }).pipe(Effect.exit);
+                  if (Exit.isSuccess(settled)) return Number(exit);
+                  const failure = Cause.squash(settled.cause);
+                  yield* Console.error(
+                    `End-of-run removal check failed: ${failure instanceof Error ? failure.message : String(failure)}`,
+                  );
+                  return Number(exit) === 0 ? 1 : Number(exit);
                 }),
               );
               return { target, code, metadata, directory };
@@ -429,6 +521,7 @@ export const runSuite = ({
       const results = yield* Effect.forEach(captures, ({ target, code, metadata, directory }) =>
         Effect.gen(function* () {
           const entries = yield* readEvidence(directory);
+          yield* reportRuntimeCrashes(directory, entries);
           const report: EvidenceReport = { runs: [metadata], entries, plan };
           return { target, code, report };
         }),
@@ -437,16 +530,19 @@ export const runSuite = ({
         results.map(({ target, report }) => ({ report, prefix: `${target}/report` })),
         plan,
       );
-      yield* fs.writeFileString(path.join(root, "evidence.json"), JSON.stringify(report, null, 2));
+      const failure = results.some((result) => result.report.entries.length === 0)
+        ? "No scenarios produced evidence for a selected target. Check the test filter."
+        : results.some((result) => result.code !== 0)
+          ? "One or more targets failed. Their evidence is retained."
+          : undefined;
+      // The outcome this run reports; pruning removes early only runs that passed.
+      const outcome = failure === undefined ? "passed" : "failed";
+      yield* fs.writeFileString(
+        path.join(root, "evidence.json"),
+        JSON.stringify({ ...report, outcome }, null, 2),
+      );
       yield* Console.log(`Raw test evidence: ${root}`);
       yield* Console.log(`Render on request: bun run e2e:render --directory ${root}`);
-      if (results.some((result) => result.report.entries.length === 0))
-        return yield* new RunFailed({
-          message: "No scenarios produced evidence for a selected target. Check the test filter.",
-        });
-      if (results.some((result) => result.code !== 0))
-        return yield* new RunFailed({
-          message: "One or more targets failed. Their evidence is retained.",
-        });
+      if (failure !== undefined) return yield* new RunFailed({ message: failure });
     }),
   );

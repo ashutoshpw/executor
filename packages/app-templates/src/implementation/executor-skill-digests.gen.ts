@@ -3,19 +3,21 @@
 /** SHA-256 of each file the Executor app publishes as a skill, keyed by `<skill>/<file>`. */
 export const executorSkillDigests: Readonly<Record<string, string>> = {
   "app-authoring/SKILL.md": "916996df32a22548d2172aac4941dcee425a0fcf421f3fe88d28a99b7970ff0e",
-  "app-authoring/accounts.md": "c1164b365ce162337653efe59a337066b9d65ba071cab224f0e5fe9d7f448933",
-  "app-authoring/deploy.md": "60d075ca99b0c1a37c011d656f26908569f0a9baaab5df3ec887c0b57b5cba6b",
-  "app-authoring/events.md": "8f7465e35c6c94b06978b89680181df60c741225de3ba8158f22f76ee7e91a5a",
-  "app-authoring/integrations.md": "3f9cecb591465a71c95c98046dab960750000c05a900fde3550aac4ea3a0171a",
+  "app-authoring/accounts.md": "b91f8f254bf446e3f32c9f988a3eb3a1d1692b1f2724600a8f1c41e27be46f22",
+  "app-authoring/deploy.md": "43cce90d6fcc31d70c11cd718e5cb845916964b5e35314e92728284c2ba9d039",
+  "app-authoring/events.md": "421c322f147a6da7a0bdc5513367e25b96667cf34f74b71918c84fdbe91727d1",
+  "app-authoring/integrations.md": "1788ddee892c69a9d895a2d8c7bec63f1d41963ed5b00ed3e6f0b5c4a671d867",
   "app-authoring/starter.md": "382bd769d7b10e9c09eaa2367755f23153a31a484aaca9c449ab4aac7d61e224",
   "app-authoring/storage.md": "d2c2288c8a6dafa0a88f09e7e91409d9afc08158205ea6d25064d0dee67a33df",
-  "app-authoring/tools.md": "aca84b403ba21fbca355efd89efba8bfcff771200db046369c5171306cc81cba",
+  "app-authoring/tools.md": "f30be5542a053aff37f9e79a1b807c6de782917bfda05a26f28de2fa3c5e359c",
   "app-authoring/ui.md": "2b6e53b38d05f11a8eef9c4f06f96f3a447f92e359d9e31d143670b51ea6a7b1",
   "app-authoring/upgrades/0.0.1-beta.38.md": "0e0e38e0334fbece5bdb8264a32be4f36cef9c51705e8f6b749dc0d3b86dcdb5",
   "app-authoring/upgrades/0.0.1-beta.90.md": "38c727888b2773efa1d83795e8704f7c38ad9ec27c62fcdd89b5177ec5e338c3",
   "app-authoring/webhooks.md": "8b6e4fa3fbc1641bfa741bc449d8ff1b1db7c7923c2ddec0a134be7a2f7de5d8",
   "app-authoring/workflows.md": "96f6e59d62314916d8a06f7063e5966ba506340cfff82c2648166006d0058669",
-  "code-mode/SKILL.md": "25ab74dd0e7a8091322c646994d63129577842dc7d7f596d52d31ec0b0f423e9",
-  "executor/SKILL.md": "5e3be4c3db930ad7a43b09f16f93043c84e29a29511085280f693e3773f11473",
-  "executor/feedback.md": "11397bd260917e5a21e92897a19368d0426bf5944a7c081adc2c061d1ea797cd"
+  "code-mode/SKILL.md": "de9bef2143bca0a48feeb25f69d73e270c4366e072fe12373e7018b9352ef89f",
+  "executor/SKILL.md": "be4ce5d3173b46def3caec6831aaabcec08cf1e7f481b54b851a455a699aeb89",
+  "executor/dashboard.md": "f83ff38e33a402c1cb5584ae69414341a612905b4e9103ee28d9c9070c85c72a",
+  "executor/feedback.md": "11397bd260917e5a21e92897a19368d0426bf5944a7c081adc2c061d1ea797cd",
+  "executor/files.md": "0d5e6b1d35d942e1cb631aef97b5f8960933d74ee0ca07d7470fa152ac7ea411"
 };

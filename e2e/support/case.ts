@@ -9,14 +9,26 @@ import { BrowserDriver, Browser } from "./browser.ts";
 import { Evidence, evidenceLayer, Telemetry } from "./evidence.ts";
 import { RecordingFocus } from "./recording-focus.ts";
 import { Terminal } from "./terminal.ts";
+import { processCoverageLayer } from "./process-coverage.ts";
+import { holdSecret } from "./failure-text.ts";
+import { ScenarioDeadline } from "./scenario-deadline.ts";
 
 /** Build per-case layers using the shared runtime from Effect Vitest's layer helper. */
 export const withCase = <A, E, R>(context: TestContext, program: Effect.Effect<A, E, R>) =>
   Effect.gen(function* () {
+    // Vitest times the scenario from when it calls the body, just before this; its time-out is
+    // the scenario's (`e2e/timeouts.ts`, or its own). A wait that must report what it saw ends
+    // before it, so the time is taken before any per-case layer is built.
+    const timeout = context.task.timeout;
+    const deadline = timeout > 0 ? Date.now() + timeout : undefined;
     const lifetime = scenarioLifetime(context);
     const target = lifetime.target;
+    // The case's API key is masked in every failure text, like each secret the harness reveals.
+    holdSecret(target.apiKey);
     const scope = yield* Scope.fork(lifetime.scope);
-    const runtime = SessionClients.layer.pipe(Layer.provideMerge(Layer.succeed(Target, target)));
+    const runtime = Layer.mergeAll(SessionClients.layer, processCoverageLayer).pipe(
+      Layer.provideMerge(Layer.succeed(Target, target)),
+    );
     return yield* Effect.gen(function* () {
       const services = yield* Layer.buildWithScope(
         Layer.fresh(
@@ -39,7 +51,11 @@ export const withCase = <A, E, R>(context: TestContext, program: Effect.Effect<A
           Effect.onError((cause) => Context.get(services, Evidence).failed(cause)),
         ),
       );
-      return yield* program.pipe(Effect.provideContext(services), Scope.provide(tests));
+      return yield* program.pipe(
+        Effect.provideContext(services),
+        Effect.provideService(ScenarioDeadline, deadline),
+        Scope.provide(tests),
+      );
     }).pipe(Effect.onExit((exit) => Effect.sync(() => lifetime.completed(exit))));
   });
 

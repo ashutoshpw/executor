@@ -1,7 +1,6 @@
-import { CurrentOrganization, OrganizationForbidden } from "../contracts/organization.ts";
+import { OrganizationForbidden } from "../contracts/organization.ts";
 /** Shared product policy; local does not acquire organizations to reuse webhook execution. */
-import { Authentication, ApiAuthentication, CurrentUserId } from "../contracts/auth.ts";
-import { HttpServerRequest } from "effect/http";
+import { SessionAuthentication, BearerAuthentication, CurrentUserId } from "../contracts/auth.ts";
 import { HttpServerResponse } from "effect/http";
 import { Effect } from "effect";
 import { HttpApiBuilder } from "effect/http-api";
@@ -20,12 +19,13 @@ import {
 } from "@executor-js/sdk/core";
 import { HostedApi } from "../contracts/api.ts";
 import { HostedExecutor } from "../contracts/executor.ts";
-import { CurrentAuthorization } from "../contracts/authorization.ts";
+import { CurrentPolicy } from "../contracts/authorization.ts";
 import { ScheduleWakeup } from "../contracts/schedules.ts";
 import {
   actorManagerOwner,
   appReaderOwner,
   checkAccounts,
+  currentOrganizationSlug,
   currentOwner,
   selectedApp,
   usableApp,
@@ -68,7 +68,7 @@ const failedToRead = <E extends { readonly _tag: string }>(
  */
 const listedIn = (executor: Executor, owner: OwnerId, app: AppId) =>
   Effect.gen(function* () {
-    const policy = yield* CurrentAuthorization;
+    const policy = yield* CurrentPolicy;
     if (!permitsAction(policy, "read") || !permitsApp(policy, app)) return [];
     yield* appReaderOwner(app);
     yield* executor.apps.get({ owner, app });
@@ -134,8 +134,8 @@ const managedSource = (executor: Executor, input: { app: AppId; account: Account
 /** Management uses current organization authority before any app code runs. */
 export const hostedWebhookHandlers = HttpApiBuilder.group(HostedApi, "webhooks", (handlers) =>
   Effect.gen(function* () {
-    const auth = yield* Authentication;
-    const api = yield* ApiAuthentication;
+    const auth = yield* SessionAuthentication;
+    const api = yield* BearerAuthentication;
     return (
       handlers
         .handle("get", ({ params }) =>
@@ -158,12 +158,7 @@ export const hostedWebhookHandlers = HttpApiBuilder.group(HostedApi, "webhooks",
             const executor = yield* Effect.flatten(HostedExecutor);
             yield* managedSubscription(executor, params);
             yield* executor.webhookSetup.read(params);
-            const request = yield* HttpServerRequest.HttpServerRequest;
-            const headers = new Headers(request.headers);
-            const slug = headers.has("authorization")
-              ? (yield* api.authenticate(headers, (yield* CurrentOrganization).organization))
-                  .organizationSlug
-              : yield* auth.organizationSlug(headers, (yield* CurrentOrganization).organization);
+            const slug = yield* currentOrganizationSlug(auth, api);
             return {
               url: `${auth.origin}/org/${encodeURIComponent(slug)}/webhooks/${encodeURIComponent(params.app)}/${encodeURIComponent(params.subscription)}`,
             };

@@ -8,9 +8,12 @@ import {
   clientCredentialsScheme,
   credentialEchoUpstream,
   deployPublicApp,
+  hujsonPolicy,
   invalidSchemaDocument,
+  jsonAnswers,
   jsonLines,
   malformedSwaggerDocument,
+  mediaTypeUpstream,
   openapi32Upstream,
   otherHostDocument,
   requestEchoUpstream,
@@ -113,7 +116,10 @@ const unnamedDocument = {
 /**
  * An operation, then a sibling the API adds later whose name normalizes to the same one: another
  * version of the path, the path without its parameter, and an operationId equal to a refined name.
+ * In `taken`, the sibling collides with `/forks` and its refined name is one `/starred` already
+ * holds by its own operationId.
  */
+const repos = (operationId: string) => ({ ...ok, operationId, tags: ["repos"] });
 const collisions = {
   version: [{ "/v1/items": { get: ok } }, { "/v2/items": { get: ok } }],
   parameter: [
@@ -123,6 +129,10 @@ const collisions = {
   operationId: [
     { "/items/{id}": { parameters: pathParameters("id"), get: ok } },
     { "/items/lookup": { get: { ...ok, operationId: "getItemsById" } } },
+  ],
+  taken: [
+    { "/forks": { get: repos("list") }, "/starred": { get: repos("listStars") } },
+    { "/stars": { get: repos("list") } },
   ],
 };
 const itemsDocument = (paths: Record<string, unknown>) => ({
@@ -758,6 +768,80 @@ export default defineApp({}, async ({ cache, fetch, signal }) => ({
     ),
   );
 
+  it.effect(scenarios.liveOpenapiHujson.title, (context) =>
+    withHostedCase(
+      context,
+      Effect.gen(function* () {
+        const upstream = yield* mediaTypeUpstream;
+        const app = yield* deployPublicApp(`import { defineApp } from "apps";
+import { liveOpenapiRouter } from "apps/openapi";
+export default defineApp({}, async ({ cache, fetch, signal }) => ({
+  tools: liveOpenapiRouter({ cache, fetch, signal,
+    source: { document: ${JSON.stringify(upstream.document)} },
+    allowedOrigin: ${JSON.stringify(upstream.origin)},
+    securitySchemes: {}, methods: {}, oauth: [] }),
+}));
+`);
+        const call = (tool: string, input: unknown) =>
+          app
+            .call(tool, "mutation", input)
+            .pipe(
+              Effect.tap((response) =>
+                Effect.sync(() => expect(response.status, JSON.stringify(response.body)).toBe(200)),
+              ),
+            );
+        const set = (input: unknown) => call("policy.setPolicyFile", input);
+        // HuJSON is text: the policy goes out as written, comment and trailing commas included.
+        yield* set({ contentType: "application/hujson", body: hujsonPolicy });
+        // JSON, the first declared type, and a +json type are still sent as JSON.
+        yield* set({ body: { grants: [] } });
+        yield* set({ contentType: "application/merge-patch+json", body: { grants: null } });
+        // AWS's JSON protocols and a +json type outside `application` take their declared object
+        // and answer it as parsed JSON, not as a base64 file.
+        const json = [
+          ["aws.listTables", "/aws/json-1.0", { Limit: 1 }],
+          ["aws.listStreams", "/aws/json-1.1", { Limit: 2 }],
+          ["scene.putScene", "/scene", { scenes: [{ nodes: [0] }] }],
+        ] as const;
+        for (const [tool, path, input] of json) {
+          const answered = yield* call(tool, { body: input });
+          expect(answered.body).toEqual(jsonAnswers[path].body);
+        }
+        expect(yield* upstream.requests).toEqual([
+          {
+            method: "POST",
+            url: "/policy",
+            contentType: "application/hujson",
+            body: hujsonPolicy,
+          },
+          {
+            method: "POST",
+            url: "/policy",
+            contentType: "application/json",
+            body: '{"grants":[]}',
+          },
+          {
+            method: "POST",
+            url: "/policy",
+            contentType: "application/merge-patch+json",
+            body: '{"grants":null}',
+          },
+          ...json.map(([, path, input]) => ({
+            method: "POST",
+            url: path,
+            contentType: jsonAnswers[path].contentType,
+            body: JSON.stringify(input),
+          })),
+        ]);
+
+        // A HuJSON answer comes back as its text, not parsed as JSON or returned as a file.
+        const read = yield* app.call("policy.getPolicyFile", "query", {});
+        expect(read.status, JSON.stringify(read.body)).toBe(200);
+        expect(yield* body(Schema.String, read)).toBe(hujsonPolicy);
+      }),
+    ),
+  );
+
   it.effect(scenarios.liveOpenapiNaming.title, (context) =>
     withHostedCase(
       context,
@@ -837,10 +921,19 @@ export default defineApp({}, async ({ cache, fetch, signal }) => ({
             "GET /items/{id} items.getItems",
             ["GET /items/lookup items.getItemsById", "GET /items/{id} items.getItems"],
           ],
+          // `repos.listStars` keeps calling `/starred`; the sibling is refined past the held name.
+          taken: [
+            ["GET /forks repos.list", "GET /starred repos.listStars"],
+            [
+              "GET /forks repos.listForks",
+              "GET /starred repos.listStars",
+              "GET /stars repos.listGet",
+            ],
+          ],
         } as const;
         const expected: Record<string, readonly string[]> = {};
         for (const [name, [alone, added]] of Object.entries(released)) {
-          expected[`${name} alone`] = [alone, status].sort();
+          expected[`${name} alone`] = [...[alone].flat(), status].sort();
           expected[`${name} added`] = [status, ...added].sort();
           expected[`${name} reordered`] = [status, ...added].sort();
         }

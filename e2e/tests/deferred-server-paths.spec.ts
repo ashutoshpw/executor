@@ -138,7 +138,9 @@ layer(HostedLive, { excludeTestServices: true })("Deferred server paths", (it) =
         ]);
         expect(skills.find((skill) => skill.name === "executor")?.files.toSorted()).toEqual([
           "SKILL.md",
+          "dashboard.md",
           "feedback.md",
+          "files.md",
         ]);
         expect(skills.find((skill) => skill.name === "app-authoring")?.files).toContain("SKILL.md");
         for (const skill of skills)
